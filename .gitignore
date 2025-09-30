@@ -1,0 +1,9 @@
+# Dependências do Node.js
+node_modules/
+
+# Arquivo do banco de dados
+# database.db
+
+# Arquivos de log e ambiente
+*.log
+.env
