@@ -7,3 +7,4 @@ node_modules/
 # Arquivos de log e ambiente
 *.log
 .env
+.vercel
