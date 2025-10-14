@@ -110,6 +110,113 @@ app.get('/api/grade', async (req, res) => {
   }
 });
 
+// --- ROTAS DE MATRÍCULA ---
+
+// Rota para buscar todas as matrículas de um aluno específico
+app.get('/api/matriculas/aluno/:id', async (req, res) => {
+  const { id } = req.params;
+  console.log(`GET /api/matriculas/aluno/${id} - Buscando matrículas do aluno...`);
+
+  try {
+    // A query agora une as tabelas para trazer informações mais completas
+    const sql = `
+      SELECT
+        m.idmatricula,
+        m.idaluno,
+        m.idatividades,
+        atv.nome AS nome_atividade,
+        p.nome AS nome_professor,
+        m.turno,
+        m.horario,
+        m.dia_semana,
+        m.status
+      FROM matricula AS m
+      JOIN atividades AS atv ON m.idatividades = atv.idatividades
+      JOIN professores AS p ON atv.idprofessor = p.id
+      WHERE m.idaluno = ? AND m.status = 'ativo'
+    `;
+    const [results] = await pool.query(sql, [id]);
+    res.json(results);
+  } catch (err) {
+    console.error(`Erro em GET /api/matriculas/aluno/${id}:`, err);
+    res.status(500).json({ error: 'Erro ao buscar as matrículas do aluno: ' + err.message });
+  }
+});
+
+// Rota para matricular um aluno em uma nova atividade
+app.post('/api/matriculas', async (req, res) => {
+  const { idaluno, idatividades, turno, horario, dia_semana } = req.body;
+  console.log('POST /api/matriculas - Criando nova matrícula...');
+
+  if (!idaluno || !idatividades || !turno || !horario || !dia_semana) {
+    return res.status(400).json({ error: 'Todos os campos são obrigatórios: idaluno, idatividades, turno, horario, dia_semana.' });
+  }
+
+  try {
+    const sql = `
+      INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, status)
+      VALUES (?, ?, ?, ?, ?, 'ativo')
+    `;
+    const [result] = await pool.query(sql, [idaluno, idatividades, turno, horario, dia_semana]);
+    res.status(201).json({ idmatricula: result.insertId, message: 'Aluno matriculado com sucesso!' });
+  } catch (err) {
+    console.error("Erro em POST /api/matriculas:", err);
+    res.status(500).json({ error: 'Erro ao criar matrícula: ' + err.message });
+  }
+});
+
+// Rota para atualizar uma matrícula (ex: trocar de atividade)
+app.put('/api/matriculas/:id', async (req, res) => {
+  const { id } = req.params;
+  const { idatividades, turno, horario, dia_semana } = req.body;
+  console.log(`PUT /api/matriculas/${id} - Atualizando matrícula...`);
+
+  if (!idatividades && !turno && !horario && !dia_semana) {
+    return res.status(400).json({ error: 'Pelo menos um campo deve ser fornecido para atualização.' });
+  }
+
+  try {
+    // Constrói a query dinamicamente para atualizar apenas os campos fornecidos
+    const fields = [];
+    const values = [];
+    if (idatividades) { fields.push('idatividades = ?'); values.push(idatividades); }
+    if (turno) { fields.push('turno = ?'); values.push(turno); }
+    if (horario) { fields.push('horario = ?'); values.push(horario); }
+    if (dia_semana) { fields.push('dia_semana = ?'); values.push(dia_semana); }
+    values.push(id); // Adiciona o ID da matrícula no final para a cláusula WHERE
+
+    const sql = `UPDATE matricula SET ${fields.join(', ')} WHERE idmatricula = ?`;
+
+    const [result] = await pool.query(sql, values);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Matrícula não encontrada.' });
+    }
+
+    res.json({ message: 'Matrícula atualizada com sucesso!' });
+  } catch (err) {
+    console.error(`Erro em PUT /api/matriculas/${id}:`, err);
+    res.status(500).json({ error: 'Erro ao atualizar matrícula: ' + err.message });
+  }
+});
+
+// Rota para apagar (soft delete) uma matrícula
+app.delete('/api/matriculas/:id', async (req, res) => {
+  const { id } = req.params;
+  console.log(`DELETE /api/matriculas/${id} - Inativando matrícula...`);
+  try {
+    const sql = "UPDATE matricula SET status = 'inativo' WHERE idmatricula = ?";
+    const [result] = await pool.query(sql, [id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Matrícula não encontrada.' });
+    }
+    res.status(200).json({ message: 'Matrícula inativada com sucesso!' });
+  } catch (err) {
+    console.error(`Erro em DELETE /api/matriculas/${id}:`, err);
+    res.status(500).json({ error: 'Erro ao inativar matrícula: ' + err.message });
+  }
+});
+
 // Inicia o servidor na porta definida
 const HOST = '0.0.0.0';
 app.listen(PORT, HOST, () => {
