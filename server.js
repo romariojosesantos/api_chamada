@@ -82,6 +82,34 @@ app.post('/api/presenca', async (req, res) => {
   }
 });
 
+// Rota para buscar a grade de horários completa
+app.get('/api/grade', async (req, res) => {
+  console.log('GET /api/grade - Enviando a grade de horários...');
+  try {
+    const sql = `
+      SELECT
+          m.idaluno,
+          a.nome AS nome_aluno,
+          m.idatividades AS id_atividade,
+          atv.nome AS nome_atividade,
+          m.turno,
+          m.horario,
+          m.dia_semana,
+          p.nome AS nome_professor
+      FROM
+          matricula AS m
+      JOIN alunos AS a ON m.idaluno = a.id
+      JOIN atividades AS atv ON m.idatividades = atv.idatividades
+      JOIN professores AS p ON atv.idprofessor = p.id
+    `;
+    const [results] = await pool.query(sql);
+    res.json(results);
+  } catch (err) {
+    console.error("Erro em GET /api/grade:", err);
+    res.status(500).json({ error: 'Erro ao buscar a grade de horários: ' + err.message });
+  }
+});
+
 // Inicia o servidor na porta definida
 const HOST = '0.0.0.0';
 app.listen(PORT, HOST, () => {
