@@ -38,6 +38,17 @@ async function setupDatabase() {
       ) ENGINE=InnoDB;
     `;
 
+    const createMatriculaTable = `
+      CREATE TABLE IF NOT EXISTS matricula (
+        idmatricula INT PRIMARY KEY AUTO_INCREMENT,
+        idaluno INT,
+        idatividades INT,
+        turno VARCHAR(45),
+        horario VARCHAR(45),
+        dia_semana VARCHAR(45),
+        status VARCHAR(20) DEFAULT 'ativo'
+      ) ENGINE=InnoDB;
+    `;
     // 3. Executa as queries em sequência
     await db.query(createAlunosTable);
     console.log('Tabela "alunos" pronta.');
@@ -47,6 +58,9 @@ async function setupDatabase() {
 
     await db.query(createChamadaConexaoTable);
     console.log('Tabela "chamada_conexao" pronta.');
+
+    await db.query(createMatriculaTable);
+    console.log('Tabela "matricula" pronta.');
 
     // 4. Popula a tabela de alunos com dados iniciais
     const alunos = [
@@ -64,8 +78,9 @@ async function setupDatabase() {
 
     // Limpa as tabelas antes de inserir para evitar duplicatas (ordem: filho, depois pai)
     await db.query('TRUNCATE TABLE presenca');
+    await db.query('TRUNCATE TABLE matricula');
     await db.query('TRUNCATE TABLE alunos');
-    console.log('Tabelas "alunos" e "presenca" limpas.');
+    console.log('Tabelas "alunos", "presenca" e "matricula" limpas.');
 
     const insertAlunosSQL = 'INSERT INTO alunos (nome, telefone, turno, transporte) VALUES ?';
     const alunosValues = alunos.map(a => [a.nome, a.telefone, a.turno, a.transporte]);

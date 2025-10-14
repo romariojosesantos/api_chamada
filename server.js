@@ -128,12 +128,11 @@ app.get('/api/matriculas/aluno/:id', async (req, res) => {
         p.nome AS nome_professor,
         m.turno,
         m.horario,
-        m.dia_semana,
-        m.status
+        m.dia_semana
       FROM matricula AS m
       JOIN atividades AS atv ON m.idatividades = atv.idatividades
       JOIN professores AS p ON atv.idprofessor = p.id
-      WHERE m.idaluno = ? AND m.status = 'ativo'
+      WHERE m.idaluno = ?
     `;
     const [results] = await pool.query(sql, [id]);
     res.json(results);
