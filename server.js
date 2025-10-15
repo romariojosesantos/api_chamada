@@ -199,17 +199,17 @@ app.put('/api/matriculas/:id', async (req, res) => {
   }
 });
 
-// Rota para apagar (soft delete) uma matrícula
+// Rota para apagar uma matrícula
 app.delete('/api/matriculas/:id', async (req, res) => {
   const { id } = req.params;
-  console.log(`DELETE /api/matriculas/${id} - Inativando matrícula...`);
+  console.log(`DELETE /api/matriculas/${id} - Apagando matrícula...`);
   try {
-    const sql = "UPDATE matricula SET status = 'inativo' WHERE idmatricula = ?";
+    const sql = "DELETE FROM matricula WHERE idmatricula = ?";
     const [result] = await pool.query(sql, [id]);
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Matrícula não encontrada.' });
     }
-    res.status(200).json({ message: 'Matrícula inativada com sucesso!' });
+    res.status(200).json({ message: 'Matrícula apagada com sucesso!' });
   } catch (err) {
     console.error(`Erro em DELETE /api/matriculas/${id}:`, err);
     res.status(500).json({ error: 'Erro ao inativar matrícula: ' + err.message });
