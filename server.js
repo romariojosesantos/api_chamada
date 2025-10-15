@@ -153,8 +153,8 @@ app.post('/api/matriculas', async (req, res) => {
 
   try {
     const sql = `
-      INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, status)
-      VALUES (?, ?, ?, ?, ?, 'ativo')
+      INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana)
+      VALUES (?, ?, ?, ?, ?)
     `;
     const [result] = await pool.query(sql, [idaluno, idatividades, turno, horario, dia_semana]);
     res.status(201).json({ idmatricula: result.insertId, message: 'Aluno matriculado com sucesso!' });
