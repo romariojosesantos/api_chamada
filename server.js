@@ -62,6 +62,34 @@ app.post('/api/alunos', async (req, res) => {
   }
 });
 
+
+// Rota para DELETAR um aluno
+app.delete('/api/alunos/:id', async (req, res) => {
+  const { id } = req.params;
+  console.log(`DELETE /api/alunos/${id} - Excluindo aluno...`);
+
+  try {
+    // Primeiro, delete as matrículas associadas a este aluno para evitar erros de chave estrangeira
+    const deleteMatriculasSql = 'DELETE FROM matriculas WHERE idaluno = ?';
+    await pool.query(deleteMatriculasSql, [id]);
+    console.log(`Matrículas do aluno ${id} excluídas.`);
+
+    // Agora, delete o aluno
+    const deleteAlunoSql = 'DELETE FROM alunos WHERE id = ?';
+    const [result] = await pool.query(deleteAlunoSql, [id]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Aluno não encontrado.' });
+    }
+
+    res.json({ message: 'Aluno e suas matrículas foram excluídos com sucesso!' });
+  } catch (err) {
+    console.error(`Erro em DELETE /api/alunos/${id}:`, err);
+    res.status(500).json({ error: 'Erro ao excluir aluno: ' + err.message });
+  }
+});
+
+
 // Rota para buscar os registros de presença
 app.get('/api/presenca', async (req, res) => {
   console.log('GET /api/presenca - Enviando registros de presença...');
