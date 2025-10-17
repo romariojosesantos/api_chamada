@@ -39,6 +39,29 @@ app.get('/api/alunos', async (req, res) => {
   }
 });
 
+// Rota para criar um novo aluno
+app.post('/api/alunos', async (req, res) => {
+  const { nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf } = req.body;
+  console.log('POST /api/alunos - Criando novo aluno...');
+
+  // Validação básica
+  if (!nome) {
+    return res.status(400).json({ error: 'O campo "nome" é obrigatório.' });
+  }
+
+  try {
+    const sql = `
+      INSERT INTO alunos (nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    const [result] = await pool.query(sql, [nome, data_nascimento || null, sexo || null, telefone || null, turma || null, turno || null, transporte || null, Inf || null]);
+    res.status(201).json({ id: result.insertId, message: 'Aluno criado com sucesso!' });
+  } catch (err) {
+    console.error("Erro em POST /api/alunos:", err);
+    res.status(500).json({ error: 'Erro ao criar aluno: ' + err.message });
+  }
+});
+
 // Rota para buscar os registros de presença
 app.get('/api/presenca', async (req, res) => {
   console.log('GET /api/presenca - Enviando registros de presença...');
