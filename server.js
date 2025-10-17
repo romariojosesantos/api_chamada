@@ -70,7 +70,7 @@ app.delete('/api/alunos/:id', async (req, res) => {
 
   try {
     // Primeiro, delete as matrículas associadas a este aluno para evitar erros de chave estrangeira
-    const deleteMatriculasSql = 'DELETE FROM matriculas WHERE idaluno = ?';
+    const deleteMatriculasSql = 'DELETE FROM matricula WHERE idaluno = ?';
     await pool.query(deleteMatriculasSql, [id]);
     console.log(`Matrículas do aluno ${id} excluídas.`);
 
