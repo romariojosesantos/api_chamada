@@ -62,6 +62,79 @@ app.post('/api/alunos', async (req, res) => {
   }
 });
 
+// Rota para importação em lote (Bulk Import) de alunos
+app.post('/api/alunos/bulk', async (req, res) => {
+  const alunos = req.body;
+  console.log('POST /api/alunos/bulk - Iniciando importação em lote...');
+
+  if (!Array.isArray(alunos)) {
+    return res.status(400).json({ error: 'O corpo da requisição deve ser um array de alunos.' });
+  }
+
+  let adicionados = 0;
+  let ignorados = 0;
+  let erros = [];
+
+  for (const aluno of alunos) {
+    try {
+      // 1. Validação Básica
+      if (!aluno.nome) {
+        erros.push({ item: aluno, motivo: 'Nome ausente' });
+        continue;
+      }
+
+      // 2. Normalização (Ex: Sexo)
+      let sexo = aluno.sexo;
+      if (sexo && typeof sexo === 'string') {
+        sexo = sexo.substring(0, 1).toUpperCase();
+      } else {
+        sexo = null;
+      }
+
+      // 3. Verificação de Duplicidade (por Nome)
+      const checkSql = 'SELECT id FROM alunos WHERE nome = ? LIMIT 1';
+      const [existing] = await pool.query(checkSql, [aluno.nome]);
+
+      if (existing.length > 0) {
+        ignorados++;
+        continue;
+      }
+
+      // 4. Inserção
+      const insertSql = `
+        INSERT INTO alunos (nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+      const values = [
+        aluno.nome,
+        aluno.data_nascimento || null,
+        sexo,
+        aluno.telefone || null,
+        aluno.turma || null,
+        aluno.turno || null,
+        aluno.transporte || null,
+        aluno.Inf || null
+      ];
+
+      await pool.query(insertSql, values);
+      adicionados++;
+
+    } catch (error) {
+      console.error(`Erro ao importar aluno ${aluno.nome}:`, error);
+      erros.push({ nome: aluno.nome, motivo: 'Erro interno ao salvar: ' + error.message });
+    }
+  }
+
+  res.status(200).json({
+    message: 'Processamento concluído',
+    resumo: {
+      total_recebido: alunos.length,
+      adicionados: adicionados,
+      ignorados: ignorados,
+      erros: erros
+    }
+  });
+});
 
 // Rota para DELETAR um aluno
 app.delete('/api/alunos/:id', async (req, res) => {
