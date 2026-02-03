@@ -91,6 +91,21 @@ app.post('/api/alunos/bulk', async (req, res) => {
         sexo = null;
       }
 
+      // Normalização de Data de Nascimento (Correção para datas do Excel)
+      let data_nascimento = aluno.data_nascimento;
+      // Verifica se é um valor numérico (serial Excel) e não uma string de data formatada
+      if (data_nascimento && !isNaN(data_nascimento)) {
+        const serial = parseFloat(data_nascimento);
+        // Seriais de datas recentes (2000+) são > 36000. Evita tratar anos (ex: "2015") como serial.
+        if (serial > 10000) {
+          // 25569 é o offset Excel->Unix. +43200000ms (12h) compensa fuso horário/arredondamento
+          const dateObj = new Date(((serial - 25569) * 86400000) + 43200000);
+          try {
+            data_nascimento = dateObj.toISOString().split('T')[0];
+          } catch (e) { /* Mantém o valor original se falhar */ }
+        }
+      }
+
       // 3. Verificação de Duplicidade (por Nome)
       const checkSql = 'SELECT id FROM alunos WHERE nome = ? LIMIT 1';
       const [existing] = await pool.query(checkSql, [aluno.nome]);
@@ -107,7 +122,7 @@ app.post('/api/alunos/bulk', async (req, res) => {
       `;
       const values = [
         aluno.nome,
-        aluno.data_nascimento || null,
+        data_nascimento || null,
         sexo,
         aluno.telefone || null,
         aluno.turma || null,
