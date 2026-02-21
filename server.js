@@ -71,6 +71,17 @@ app.post('/api/alunos/bulk', async (req, res) => {
     return res.status(400).json({ error: 'O corpo da requisição deve ser um array de alunos.' });
   }
 
+  // 0. Carregar mapa de atividades (Nome -> ID) para permitir envio por nome
+  const atividadesMap = new Map();
+  try {
+    const [atvs] = await pool.query('SELECT idatividades, nome FROM atividades');
+    atvs.forEach(a => {
+      if (a.nome) atividadesMap.set(a.nome.trim().toLowerCase(), a.idatividades);
+    });
+  } catch (err) {
+    console.warn('Aviso: Não foi possível carregar lista de atividades para mapeamento.', err.message);
+  }
+
   let adicionados = 0;
   let ignorados = 0;
   let erros = [];
@@ -131,8 +142,37 @@ app.post('/api/alunos/bulk', async (req, res) => {
         aluno.Inf || null
       ];
 
-      await pool.query(insertSql, values);
+      const [result] = await pool.query(insertSql, values);
+      const newAlunoId = result.insertId;
       adicionados++;
+
+      // 5. Matrícula Automática (se houver array 'matriculas' no JSON do aluno)
+      if (aluno.matriculas && Array.isArray(aluno.matriculas) && aluno.matriculas.length > 0) {
+        const matriculasValues = [];
+
+        for (const m of aluno.matriculas) {
+          let idAtividade = m.idatividades;
+          // Se o ID não foi informado, tenta encontrar pelo nome da atividade (ex: "Futebol")
+          if (!idAtividade && m.nome_atividade) {
+            idAtividade = atividadesMap.get(m.nome_atividade.trim().toLowerCase());
+          }
+
+          if (idAtividade) {
+            matriculasValues.push([
+              newAlunoId, // ID do aluno que acabou de ser criado
+              idAtividade, // ID da atividade resolvido
+              m.turno || aluno.turno || null,
+              m.horario || null,
+              m.dia_semana || null
+            ]);
+          }
+        }
+
+        if (matriculasValues.length > 0) {
+          const insertMatriculaSql = 'INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana) VALUES ?';
+          await pool.query(insertMatriculaSql, [matriculasValues]);
+        }
+      }
 
     } catch (error) {
       console.error(`Erro ao importar aluno ${aluno.nome}:`, error);
@@ -146,6 +186,65 @@ app.post('/api/alunos/bulk', async (req, res) => {
       total_recebido: alunos.length,
       adicionados: adicionados,
       ignorados: ignorados,
+      erros: erros
+    }
+  });
+});
+
+// Rota para exclusão em lote (Bulk Delete) de alunos
+app.post('/api/alunos/bulk-delete', async (req, res) => {
+  const alunos = req.body;
+  console.log('POST /api/alunos/bulk-delete - Iniciando exclusão em lote...');
+
+  if (!Array.isArray(alunos)) {
+    return res.status(400).json({ error: 'O corpo da requisição deve ser um array de alunos.' });
+  }
+
+  let deletados = 0;
+  let naoEncontrados = 0;
+  let erros = [];
+
+  for (const aluno of alunos) {
+    try {
+      let alunoId = aluno.id;
+
+      // Se não tiver ID, tenta buscar pelo nome (útil para planilhas que só têm o nome)
+      if (!alunoId && aluno.nome) {
+        const [rows] = await pool.query('SELECT id FROM alunos WHERE nome = ? LIMIT 1', [aluno.nome]);
+        if (rows.length > 0) {
+          alunoId = rows[0].id;
+        }
+      }
+
+      if (!alunoId) {
+        naoEncontrados++;
+        continue;
+      }
+
+      // 1. Excluir matrículas associadas (para manter consistência e evitar erros de FK se não houver CASCADE)
+      await pool.query('DELETE FROM matricula WHERE idaluno = ?', [alunoId]);
+
+      // 2. Excluir o aluno
+      const [result] = await pool.query('DELETE FROM alunos WHERE id = ?', [alunoId]);
+
+      if (result.affectedRows > 0) {
+        deletados++;
+      } else {
+        naoEncontrados++;
+      }
+
+    } catch (error) {
+      console.error(`Erro ao excluir aluno ${aluno.nome}:`, error);
+      erros.push({ nome: aluno.nome, motivo: error.message });
+    }
+  }
+
+  res.status(200).json({
+    message: 'Processamento de exclusão concluído',
+    resumo: {
+      total_recebido: alunos.length,
+      deletados: deletados,
+      nao_encontrados: naoEncontrados,
       erros: erros
     }
   });
@@ -250,6 +349,152 @@ app.get('/api/grade', async (req, res) => {
 });
 
 // --- ROTAS DE MATRÍCULA ---
+
+// Rota para importação em lote (Bulk Import) de matrículas
+app.post('/api/matriculas/bulk', async (req, res) => {
+  const matriculas = req.body;
+  console.log('POST /api/matriculas/bulk - Iniciando importação de matrículas em lote...');
+
+  if (!Array.isArray(matriculas)) {
+    return res.status(400).json({ error: 'O corpo da requisição deve ser um array de matrículas.' });
+  }
+
+  // Helper para normalizar nomes (remove espaços duplicados e converte para minúsculo)
+  const normalize = (str) => String(str || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+  // Pré-carrega mapas para eficiência e evitar múltiplas queries no loop
+  const alunosMap = new Map();
+  const atividadesMap = new Map();
+  const professoresMap = new Map();
+  const existingMatriculas = new Set();
+
+  try {
+    const [alunosDB] = await pool.query('SELECT id, nome FROM alunos');
+    alunosDB.forEach(a => alunosMap.set(normalize(a.nome), a.id));
+
+    const [atividadesDB] = await pool.query('SELECT idatividades, nome FROM atividades');
+    atividadesDB.forEach(a => atividadesMap.set(normalize(a.nome), a.idatividades));
+
+    const [professoresDB] = await pool.query('SELECT id, nome FROM professores');
+    professoresDB.forEach(p => professoresMap.set(normalize(p.nome), p.id));
+
+    // Carrega matrículas existentes para evitar duplicatas
+    const [dbMatriculas] = await pool.query('SELECT idaluno, idatividades, dia_semana, horario FROM matricula');
+    dbMatriculas.forEach(m => {
+      const key = `${m.idaluno}-${m.idatividades}-${m.dia_semana}-${m.horario}`;
+      existingMatriculas.add(key);
+    });
+
+  } catch (err) {
+    console.error("Erro ao pré-carregar dados para importação em lote:", err);
+    return res.status(500).json({ error: 'Erro ao preparar o servidor para a importação: ' + err.message });
+  }
+
+  let adicionadas = 0;
+  let ignoradas = 0;
+  let erros = [];
+  const matriculasParaInserir = [];
+
+  for (const m of matriculas) {
+    // Normaliza as chaves do objeto para minúsculas para flexibilidade
+    const matricula = {};
+    for (const key in m) {
+      matricula[key.toLowerCase().trim()] = m[key];
+    }
+
+    // 1. Validação dos campos obrigatórios
+    if (!matricula.nome_aluno || !matricula.nome_atividade || !matricula.dia_semana || !matricula.horario) {
+      erros.push({ item: m, motivo: 'Campos obrigatórios ausentes (nome_aluno, nome_atividade, dia_semana, horario).' });
+      continue;
+    }
+
+    // 1.5. Processar Professor (se fornecido na planilha)
+    let idProfessor = null;
+    const nomeProfessor = matricula.nome_professor || matricula.professor; // Aceita "nome_professor" ou "professor"
+
+    if (nomeProfessor) {
+      const nomeProfNorm = normalize(nomeProfessor);
+      idProfessor = professoresMap.get(nomeProfNorm);
+
+      if (!idProfessor) {
+        try {
+          const [resultProf] = await pool.query('INSERT INTO professores (nome) VALUES (?)', [nomeProfessor.trim()]);
+          idProfessor = resultProf.insertId;
+          professoresMap.set(nomeProfNorm, idProfessor); // Atualiza mapa
+        } catch (err) {
+          console.error(`Erro ao criar professor automático "${nomeProfessor}":`, err.message);
+        }
+      }
+    }
+
+    // 2. Busca os IDs a partir dos nomes (usando os mapas)
+    const idAluno = alunosMap.get(normalize(matricula.nome_aluno));
+    let idAtividade = atividadesMap.get(normalize(matricula.nome_atividade));
+
+    if (!idAluno) {
+      erros.push({ item: m, motivo: `Aluno "${matricula.nome_aluno}" não encontrado.` });
+      continue;
+    }
+    if (!idAtividade) {
+      // Se a atividade não existe, cria automaticamente no banco de dados
+      try {
+        // Agora inclui o idProfessor na criação
+        const [resultAtv] = await pool.query('INSERT INTO atividades (nome, idprofessor) VALUES (?, ?)', [matricula.nome_atividade.trim(), idProfessor]);
+        idAtividade = resultAtv.insertId;
+        atividadesMap.set(normalize(matricula.nome_atividade), idAtividade); // Atualiza o mapa para as próximas linhas
+      } catch (err) {
+        erros.push({ item: m, motivo: `Erro ao criar atividade automática "${matricula.nome_atividade}": ${err.message}` });
+        continue;
+      }
+    } else if (idProfessor) {
+      // Se a atividade já existe e temos um professor na planilha, atualizamos o vínculo
+      try {
+        await pool.query('UPDATE atividades SET idprofessor = ? WHERE idatividades = ?', [idProfessor, idAtividade]);
+      } catch (err) {
+        console.error(`Erro ao atualizar professor da atividade ${matricula.nome_atividade}:`, err.message);
+      }
+    }
+
+    // 3. Verifica se a matrícula já existe (no banco ou no próprio arquivo)
+    const matriculaKey = `${idAluno}-${idAtividade}-${matricula.dia_semana}-${matricula.horario}`;
+    if (existingMatriculas.has(matriculaKey)) {
+      ignoradas++;
+      continue;
+    }
+
+    // 4. Adiciona à lista para inserção em lote
+    matriculasParaInserir.push([
+      idAluno,
+      idAtividade,
+      matricula.turno || null,
+      matricula.horario,
+      matricula.dia_semana
+    ]);
+    existingMatriculas.add(matriculaKey); // Evita duplicatas dentro do mesmo arquivo
+  }
+
+  // 5. Insere todas as novas matrículas de uma vez
+  if (matriculasParaInserir.length > 0) {
+    try {
+      const insertMatriculaSql = 'INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana) VALUES ?';
+      const [result] = await pool.query(insertMatriculaSql, [matriculasParaInserir]);
+      adicionadas = result.affectedRows;
+    } catch (error) {
+      console.error(`Erro no bulk insert de matrículas:`, error);
+      erros.push({ item: 'GERAL', motivo: 'Falha na inserção em lote no banco de dados: ' + error.message });
+    }
+  }
+
+  res.status(200).json({
+    message: 'Processamento de matrículas concluído',
+    resumo: {
+      total_recebido: matriculas.length,
+      adicionadas: adicionadas,
+      ignoradas_por_duplicidade: ignoradas,
+      erros: erros
+    }
+  });
+});
 
 // Rota para buscar todas as matrículas de um aluno específico
 app.get('/api/matriculas/aluno/:id', async (req, res) => {
