@@ -276,6 +276,40 @@ app.delete('/api/alunos/:id', async (req, res) => {
   }
 });
 
+// Rota para atualizar uma coluna específica de um aluno pelo nome
+app.patch('/api/alunos/update-by-name', async (req, res) => {
+  const { nome, campo, valor } = req.body;
+  console.log(`PATCH /api/alunos/update-by-name - Atualizando campo '${campo}' para o aluno '${nome}'`);
+
+  // 1. Validação básica
+  if (!nome || !campo) {
+    // O 'valor' pode ser nulo ou uma string vazia, então não validamos sua existência aqui.
+    return res.status(400).json({ error: 'Os campos "nome" e "campo" são obrigatórios.' });
+  }
+
+  // 2. Whitelist de colunas para segurança
+  const colunasPermitidas = ['data_nascimento', 'sexo', 'telefone', 'turma', 'turno', 'transporte', 'Inf'];
+  if (!colunasPermitidas.includes(campo)) {
+    return res.status(400).json({ error: `O campo "${campo}" não pode ser atualizado por esta rota.` });
+  }
+
+  try {
+    // 3. Construção e execução da query
+    const sql = 'UPDATE alunos SET ?? = ? WHERE nome = ?';
+    const [result] = await pool.query(sql, [campo, valor, nome]);
+
+    // 4. Verificação do resultado
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: `Aluno com o nome "${nome}" não encontrado.` });
+    }
+
+    res.json({ message: `Aluno "${nome}" atualizado com sucesso. Campo "${campo}" definido como "${valor}".` });
+  } catch (err) {
+    console.error("Erro em PATCH /api/alunos/update-by-name:", err);
+    res.status(500).json({ error: 'Erro ao atualizar aluno: ' + err.message });
+  }
+});
+
 
 // Rota para buscar os registros de presença
 app.get('/api/presenca', async (req, res) => {
