@@ -530,6 +530,136 @@ app.post('/api/matriculas/bulk', async (req, res) => {
   });
 });
 
+// Rota para criar/atualizar matrículas em lote (Upsert) sem precisar do ID da matrícula
+app.post('/api/matriculas/upsert-bulk', async (req, res) => {
+  const matriculas = req.body;
+  console.log('POST /api/matriculas/upsert-bulk - Iniciando upsert de matrículas em lote...');
+
+  if (!Array.isArray(matriculas)) {
+    return res.status(400).json({ error: 'O corpo da requisição deve ser um array de matrículas.' });
+  }
+
+  // Helper para normalizar nomes
+  const normalize = (str) => String(str || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+  // Pré-carrega mapas para eficiência
+  const alunosMap = new Map();
+  const atividadesMap = new Map();
+  const professoresMap = new Map();
+
+  let connection;
+  try {
+    // Pega uma conexão do pool para realizar a transação
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [alunosDB] = await connection.query('SELECT id, nome FROM alunos');
+    alunosDB.forEach(a => alunosMap.set(normalize(a.nome), a.id));
+
+    const [atividadesDB] = await connection.query('SELECT idatividades, nome FROM atividades');
+    atividadesDB.forEach(a => atividadesMap.set(normalize(a.nome), a.idatividades));
+
+    const [professoresDB] = await connection.query('SELECT id, nome FROM professores');
+    professoresDB.forEach(p => professoresMap.set(normalize(p.nome), p.id));
+
+    let criadas = 0;
+    let atualizadas = 0;
+    let erros = [];
+
+    for (const m of matriculas) {
+      // Normaliza as chaves do objeto para minúsculas
+      const matricula = {};
+      for (const key in m) {
+        matricula[key.toLowerCase().trim()] = m[key];
+      }
+
+      const { nome_aluno, turno, dia_semana, horario, nome_atividade } = matricula;
+      const nomeProfessor = matricula.professor || matricula.nome_professor;
+
+      // 1. Validação dos campos obrigatórios
+      if (!nome_aluno || !nome_atividade || !dia_semana || !horario || !nomeProfessor) {
+        erros.push({ item: m, motivo: 'Campos obrigatórios ausentes (nome_aluno, nome_atividade, dia_semana, horario, professor).' });
+        continue;
+      }
+
+      // 2. Encontrar Aluno
+      const idAluno = alunosMap.get(normalize(nome_aluno));
+      if (!idAluno) {
+        erros.push({ item: m, motivo: `Aluno "${nome_aluno}" não encontrado no banco de dados.` });
+        continue;
+      }
+
+      // 3. Encontrar ou Criar Professor
+      let idProfessor = professoresMap.get(normalize(nomeProfessor));
+      if (!idProfessor) {
+        try {
+          const [resultProf] = await connection.query('INSERT INTO professores (nome) VALUES (?)', [nomeProfessor.trim()]);
+          idProfessor = resultProf.insertId;
+          professoresMap.set(normalize(nomeProfessor), idProfessor); // Atualiza mapa para as próximas linhas
+        } catch (err) {
+          erros.push({ item: m, motivo: `Erro ao criar novo professor "${nomeProfessor}": ${err.message}` });
+          continue;
+        }
+      }
+
+      // 4. Encontrar ou Criar/Atualizar Atividade
+      let idAtividade = atividadesMap.get(normalize(nome_atividade));
+      if (!idAtividade) {
+        try {
+          const [resultAtv] = await connection.query('INSERT INTO atividades (nome, idprofessor) VALUES (?, ?)', [nome_atividade.trim(), idProfessor]);
+          idAtividade = resultAtv.insertId;
+          atividadesMap.set(normalize(nome_atividade), idAtividade); // Atualiza mapa
+        } catch (err) {
+          erros.push({ item: m, motivo: `Erro ao criar nova atividade "${nome_atividade}": ${err.message}` });
+          continue;
+        }
+      } else {
+        // Se a atividade já existe, garante que o professor está correto
+        await connection.query('UPDATE atividades SET idprofessor = ? WHERE idatividades = ?', [idProfessor, idAtividade]);
+      }
+
+      // 5. Lógica de UPSERT da Matrícula
+      const findSql = 'SELECT idmatricula FROM matricula WHERE idaluno = ? AND dia_semana = ? AND horario = ?';
+      const [existingMatricula] = await connection.query(findSql, [idAluno, dia_semana, horario]);
+
+      if (existingMatricula.length > 0) {
+        // ATUALIZAR
+        const idMatriculaExistente = existingMatricula[0].idmatricula;
+        const updateSql = 'UPDATE matricula SET idatividades = ?, turno = ? WHERE idmatricula = ?';
+        await connection.query(updateSql, [idAtividade, turno || null, idMatriculaExistente]);
+        atualizadas++;
+      } else {
+        // CRIAR
+        const insertSql = 'INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana) VALUES (?, ?, ?, ?, ?)';
+        await connection.query(insertSql, [idAluno, idAtividade, turno || null, horario, dia_semana]);
+        criadas++;
+      }
+    }
+
+    // Se tudo deu certo, commita a transação
+    await connection.commit();
+
+    res.status(200).json({
+      message: 'Processamento de matrículas (Upsert) concluído',
+      resumo: {
+        total_recebido: matriculas.length,
+        criadas: criadas,
+        atualizadas: atualizadas,
+        erros: erros
+      }
+    });
+
+  } catch (err) {
+    // Se deu algum erro, faz rollback
+    if (connection) await connection.rollback();
+    console.error("Erro em POST /api/matriculas/upsert-bulk:", err);
+    res.status(500).json({ error: 'Erro geral no processamento em lote: ' + err.message });
+  } finally {
+    // Libera a conexão de volta para o pool
+    if (connection) connection.release();
+  }
+});
+
 // Rota para buscar todas as matrículas de um aluno específico
 app.get('/api/matriculas/aluno/:id', async (req, res) => {
   const { id } = req.params;
