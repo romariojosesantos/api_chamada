@@ -191,6 +191,144 @@ app.post('/api/alunos/bulk', async (req, res) => {
   });
 });
 
+// Rota para Importação/Atualização em Lote de Alunos (Upsert)
+app.post('/api/alunos/upsert-bulk', async (req, res) => {
+  const alunos = req.body; // Array de alunos enviado pelo frontend
+  console.log('POST /api/alunos/upsert-bulk - Iniciando upsert de alunos em lote...');
+
+  if (!Array.isArray(alunos)) {
+    return res.status(400).json({ error: 'O corpo da requisição deve ser um array de alunos.' });
+  }
+
+  // Objeto para retornar o resumo da operação
+  const resumo = {
+    total_recebido: alunos.length,
+    criados: 0,
+    atualizados: 0,
+    erros: []
+  };
+
+  let connection;
+  try {
+    // Obtém uma conexão do pool para realizar a transação
+    connection = await pool.getConnection();
+    await connection.beginTransaction(); // Inicia uma transação
+
+    for (const aluno of alunos) {
+      try {
+        // Normalização de Data de Nascimento (Correção para datas do Excel)
+        let data_nascimento = aluno.data_nascimento;
+        // Verifica se é um valor numérico (serial Excel) e não uma string de data formatada
+        if (data_nascimento && !isNaN(data_nascimento)) {
+          const serial = parseFloat(data_nascimento);
+          // Seriais de datas recentes (2000+) são > 10000. Evita tratar anos (ex: "2015") como serial.
+          if (serial > 10000) {
+            // 25569 é o offset Excel->Unix. +43200000ms (12h) compensa fuso horário/arredondamento
+            const dateObj = new Date(((serial - 25569) * 86400000) + 43200000);
+            try {
+              data_nascimento = dateObj.toISOString().split('T')[0];
+            } catch (e) { /* Mantém o valor original se falhar */ }
+          }
+        }
+
+        // 1. Verifica se o aluno já existe pelo NOME (ignorando maiúsculas/minúsculas)
+        const [checkRes] = await connection.query(
+          'SELECT id FROM alunos WHERE LOWER(nome) = LOWER(?) LIMIT 1',
+          [aluno.nome]
+        );
+
+        let alunoId;
+
+        if (checkRes.length > 0) {
+          // --- CENÁRIO: ALUNO EXISTE -> ATUALIZAR ---
+          alunoId = checkRes[0].id;
+
+          await connection.query(
+            `UPDATE alunos SET 
+              data_nascimento = ?,
+              sexo = ?,
+              telefone = ?,
+              turma = ?,
+              turno = ?,
+              transporte = ?,
+              Inf = ?
+             WHERE id = ?`,
+            [
+              data_nascimento || null,
+              aluno.sexo,
+              aluno.telefone,
+              aluno.turma,
+              aluno.turno,
+              aluno.transporte,
+              aluno.Inf,
+              alunoId
+            ]
+          );
+          resumo.atualizados++;
+        } else {
+          // --- CENÁRIO: ALUNO NÃO EXISTE -> CRIAR ---
+          const [insertRes] = await connection.query(
+            `INSERT INTO alunos (nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              aluno.nome,
+              data_nascimento || null,
+              aluno.sexo,
+              aluno.telefone,
+              aluno.turma,
+              aluno.turno,
+              aluno.transporte,
+              aluno.Inf
+            ]
+          );
+          alunoId = insertRes.insertId;
+          resumo.criados++;
+        }
+
+        // 2. Processar Matrículas (se houver na planilha)
+        if (aluno.matriculas && Array.isArray(aluno.matriculas)) {
+          for (const mat of aluno.matriculas) {
+            // Verifica se a matrícula já existe para evitar duplicatas
+            const [checkMat] = await connection.query(
+              `SELECT idmatricula FROM matricula 
+               WHERE idaluno = ? AND idatividades = ? AND dia_semana = ? AND horario = ?`,
+              [alunoId, mat.idatividades, mat.dia_semana, mat.horario]
+            );
+
+            if (checkMat.length === 0) {
+              await connection.query(
+                `INSERT INTO matricula (idaluno, idatividades, dia_semana, horario, turno)
+                 VALUES (?, ?, ?, ?, ?)`,
+                [alunoId, mat.idatividades, mat.dia_semana, mat.horario, mat.turno || null]
+              );
+            }
+          }
+        }
+
+      } catch (err) {
+        console.error(`Erro ao processar aluno ${aluno.nome}:`, err);
+        resumo.erros.push({ nome: aluno.nome, erro: err.message });
+      }
+    }
+
+    await connection.commit(); // Confirma todas as alterações
+    res.json({ message: 'Processamento concluído com sucesso.', resumo });
+
+  } catch (error) {
+    // Se a conexão existir e a transação foi iniciada, tenta fazer o rollback.
+    // Envolve em um try-catch pois o rollback pode falhar se a conexão já foi perdida (ex: timeout).
+    try {
+      if (connection) await connection.rollback();
+    } catch (rollbackError) {
+      console.error("Erro ao tentar fazer rollback na rota de alunos:", rollbackError);
+    }
+    console.error("Erro fatal na rota upsert-bulk:", error);
+    res.status(500).json({ error: "Erro interno ao processar a lista." });
+  } finally {
+    if (connection) connection.release(); // Libera a conexão
+  }
+});
+
 // Rota para exclusão em lote (Bulk Delete) de alunos
 app.post('/api/alunos/bulk-delete', async (req, res) => {
   const alunos = req.body;
@@ -650,8 +788,14 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
     });
 
   } catch (err) {
-    // Se deu algum erro, faz rollback
-    if (connection) await connection.rollback();
+    // Se a conexão existir e a transação foi iniciada, tenta fazer o rollback.
+    // Envolve em um try-catch pois o rollback pode falhar se a conexão já foi perdida (ex: timeout).
+    try {
+      if (connection) await connection.rollback();
+    } catch (rollbackError) {
+      console.error("Erro ao tentar fazer rollback na rota de matrículas:", rollbackError);
+    }
+
     console.error("Erro em POST /api/matriculas/upsert-bulk:", err);
     res.status(500).json({ error: 'Erro geral no processamento em lote: ' + err.message });
   } finally {
