@@ -39,6 +39,56 @@ app.get('/api/alunos', async (req, res) => {
   }
 });
 
+// Rota para buscar alunos que têm aula em um dia específico (por data ou nome do dia)
+app.get('/api/alunos/por-dia', async (req, res) => {
+  const { dia_semana, data } = req.query;
+
+  let diaDaSemanaParaBusca;
+
+  if (data) {
+    // Se a data for fornecida (ex: '2024-05-23'), calcula o dia da semana correspondente.
+    try {
+      // Adiciona 'T00:00:00' para garantir que a data seja interpretada no fuso horário local do servidor,
+      // evitando que a data mude para o dia anterior/posterior.
+      const dateObj = new Date(`${data}T00:00:00`);
+      if (isNaN(dateObj.getTime())) {
+        return res.status(400).json({ error: 'Formato de data inválido. Use AAAA-MM-DD.' });
+      }
+      
+      const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+      diaDaSemanaParaBusca = dias[dateObj.getDay()];
+
+    } catch (e) {
+      return res.status(400).json({ error: 'Erro ao processar a data. Use o formato AAAA-MM-DD.' });
+    }
+  } else if (dia_semana) {
+    // Se não houver data, usa o dia_semana fornecido diretamente.
+    diaDaSemanaParaBusca = dia_semana;
+  } else {
+    // Se nenhum dos dois for fornecido, retorna um erro.
+    return res.status(400).json({ error: 'O parâmetro "data" (formato AAAA-MM-DD) ou "dia_semana" é obrigatório.' });
+  }
+
+  console.log(`GET /api/alunos/por-dia - Buscando alunos para o dia: ${diaDaSemanaParaBusca} (a partir de: ${data || dia_semana})`);
+
+  try {
+    // A query usa DISTINCT para garantir que cada aluno apareça apenas uma vez,
+    // mesmo que tenha várias aulas no mesmo dia.
+    // TRIM é usado para limpar espaços em branco no campo dia_semana, como "Quarta   ".
+    const sql = `
+      SELECT DISTINCT a.*
+      FROM alunos a
+      JOIN matricula m ON a.id = m.idaluno
+      WHERE TRIM(m.dia_semana) = ?
+    `;
+    const [results] = await pool.query(sql, [diaDaSemanaParaBusca]);
+    res.json(results);
+  } catch (err) {
+    console.error("Erro em GET /api/alunos/por-dia:", err);
+    res.status(500).json({ error: 'Erro ao buscar alunos por dia: ' + err.message });
+  }
+});
+
 // Rota para criar um novo aluno
 app.post('/api/alunos', async (req, res) => {
   const { nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf } = req.body;
@@ -757,19 +807,21 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
       }
 
       // 5. Lógica de UPSERT da Matrícula
-      const findSql = 'SELECT idmatricula FROM matricula WHERE idaluno = ? AND dia_semana = ? AND horario = ?';
-      const [existingMatricula] = await connection.query(findSql, [idAluno, dia_semana, horario]);
+      // A busca usa TRIM() para ser resiliente a espaços em branco (ex: "Quarta" vs "Quarta   ")
+      const findSql = 'SELECT idmatricula FROM matricula WHERE idaluno = ? AND TRIM(dia_semana) = ? AND horario = ?';
+      const [existingMatricula] = await connection.query(findSql, [idAluno, (dia_semana || '').trim(), horario]);
 
       if (existingMatricula.length > 0) {
         // ATUALIZAR
         const idMatriculaExistente = existingMatricula[0].idmatricula;
         const updateSql = 'UPDATE matricula SET idatividades = ?, turno = ? WHERE idmatricula = ?';
-        await connection.query(updateSql, [idAtividade, turno || null, idMatriculaExistente]);
+        await connection.query(updateSql, [idAtividade, (turno || '').trim() || null, idMatriculaExistente]);
         atualizadas++;
       } else {
         // CRIAR
         const insertSql = 'INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana) VALUES (?, ?, ?, ?, ?)';
-        await connection.query(insertSql, [idAluno, idAtividade, turno || null, horario, dia_semana]);
+        // Salva os dados com TRIM para manter a consistência no banco
+        await connection.query(insertSql, [idAluno, idAtividade, (turno || '').trim() || null, horario, (dia_semana || '').trim()]);
         criadas++;
       }
     }
