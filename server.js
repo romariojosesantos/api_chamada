@@ -255,11 +255,14 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
     total_recebido: alunos.length,
     criados: 0,
     atualizados: 0,
+    deletados: 0,
     erros: []
   };
 
   let connection;
   try {
+    const processedIds = []; // Lista para guardar IDs que devem ser mantidos
+
     // Obtém uma conexão do pool para realizar a transação
     connection = await pool.getConnection();
     await connection.beginTransaction(); // Inicia uma transação
@@ -335,6 +338,8 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
           resumo.criados++;
         }
 
+        processedIds.push(alunoId);
+
         // 2. Processar Matrículas (se houver na planilha)
         if (aluno.matriculas && Array.isArray(aluno.matriculas)) {
           for (const mat of aluno.matriculas) {
@@ -359,6 +364,25 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
         console.error(`Erro ao processar aluno ${aluno.nome}:`, err);
         resumo.erros.push({ nome: aluno.nome, erro: err.message });
       }
+    }
+
+    // --- 3. EXCLUSÃO DE ALUNOS NÃO MENCIONADOS ---
+    // Remove alunos que não estão na lista de IDs processados nesta rodada.
+    try {
+      if (processedIds.length > 0) {
+        // Primeiro remove as matrículas para evitar violação de integridade
+        await connection.query('DELETE FROM matricula WHERE idaluno NOT IN (?)', [processedIds]);
+        const [delRes] = await connection.query('DELETE FROM alunos WHERE id NOT IN (?)', [processedIds]);
+        resumo.deletados = delRes.affectedRows;
+      } else {
+        // Se a lista enviada estiver vazia, remove tudo
+        await connection.query('DELETE FROM matricula');
+        const [delRes] = await connection.query('DELETE FROM alunos');
+        resumo.deletados = delRes.affectedRows;
+      }
+    } catch (delErr) {
+      console.error("Erro ao realizar a limpeza de alunos excedentes:", delErr);
+      throw new Error("Falha ao sincronizar banco de dados (limpeza): " + delErr.message);
     }
 
     await connection.commit(); // Confirma todas as alterações
