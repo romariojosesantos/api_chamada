@@ -370,12 +370,14 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
     // Remove alunos que não estão na lista de IDs processados nesta rodada.
     try {
       if (processedIds.length > 0) {
-        // Primeiro remove as matrículas para evitar violação de integridade
+        // Remove chamadas e matrículas APENAS dos alunos que não estão na lista processada (serão deletados)
+        await connection.query('DELETE FROM presenca WHERE aluno_id NOT IN (?)', [processedIds]);
         await connection.query('DELETE FROM matricula WHERE idaluno NOT IN (?)', [processedIds]);
         const [delRes] = await connection.query('DELETE FROM alunos WHERE id NOT IN (?)', [processedIds]);
         resumo.deletados = delRes.affectedRows;
       } else {
         // Se a lista enviada estiver vazia, remove tudo
+        await connection.query('DELETE FROM presenca');
         await connection.query('DELETE FROM matricula');
         const [delRes] = await connection.query('DELETE FROM alunos');
         resumo.deletados = delRes.affectedRows;
