@@ -440,36 +440,12 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
             // Nota: Contar criadas/atualizadas aqui seria complexo, pois é por aluno dentro de um loop de alunos.
             // A rota principal /api/matriculas/upsert-bulk é melhor para contagens detalhadas de matrículas.
           }
-        } else {
-            // Se nenhuma matrícula for fornecida para um aluno existente, exclui todas as suas matrículas
-            await connection.query('DELETE FROM matricula WHERE idaluno = ?', [alunoId]);
         }
 
       } catch (err) {
         console.error(`Erro ao processar aluno ${aluno.nome}:`, err);
         resumo.erros.push({ nome: aluno.nome, erro: err.message });
       }
-    }
-
-    // --- 3. EXCLUSÃO DE ALUNOS NÃO MENCIONADOS ---
-    // Remove alunos que não estão na lista de IDs processados nesta rodada.
-    try {
-      if (processedIds.length > 0) {
-        // Remove chamadas e matrículas APENAS dos alunos que não estão na lista processada (serão deletados)
-        await connection.query('DELETE FROM presenca WHERE aluno_id NOT IN (?)', [processedIds]);
-        await connection.query('DELETE FROM matricula WHERE idaluno NOT IN (?)', [processedIds]);
-        const [delRes] = await connection.query('DELETE FROM alunos WHERE id NOT IN (?)', [processedIds]);
-        resumo.deletados = delRes.affectedRows;
-      } else {
-        // Se a lista enviada estiver vazia, remove tudo
-        await connection.query('DELETE FROM presenca');
-        await connection.query('DELETE FROM matricula');
-        const [delRes] = await connection.query('DELETE FROM alunos');
-        resumo.deletados = delRes.affectedRows;
-      }
-    } catch (delErr) {
-      console.error("Erro ao realizar a limpeza de alunos excedentes:", delErr);
-      throw new Error("Falha ao sincronizar banco de dados (limpeza): " + delErr.message);
     }
 
     await connection.commit(); // Confirma todas as alterações
