@@ -403,24 +403,6 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
             currentStudentMatriculaKeys.add(`${normalizedDiaSemana}|||${normalizedHorario}`);
           }
 
-          // Exclui matrículas existentes para este aluno que não estão no lote atual
-          const [existingMatriculasForStudent] = await connection.query(
-            'SELECT idmatricula, dia_semana, horario FROM matricula WHERE idaluno = ?',
-            [alunoId]
-          );
-
-          const matriculasToDeleteIds = [];
-          for (const existingMatricula of existingMatriculasForStudent) {
-            const existingKey = `${(existingMatricula.dia_semana || '').trim()}|||${existingMatricula.horario}`;
-            if (!currentStudentMatriculaKeys.has(existingKey)) {
-              matriculasToDeleteIds.push(existingMatricula.idmatricula);
-            }
-          }
-
-          if (matriculasToDeleteIds.length > 0) {
-            await connection.query('DELETE FROM matricula WHERE idmatricula IN (?)', [matriculasToDeleteIds]);
-          }
-
           // Upsert as matrículas recebidas para este aluno
           for (const mat of matriculasToUpsertForStudent) {
             const insertUpdateSql = `
@@ -976,34 +958,6 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
       }
       // Usa um delimitador único para evitar problemas se o horário contiver um hífen
       studentMatriculaKeys.get(idAluno).add(`${normalizedDiaSemana}|||${normalizedHorario}`);
-    }
-
-    // --- Fase de Exclusão ---
-    // Para cada aluno que teve matrículas na entrada, exclui suas matrículas antigas
-    // que NÃO estão presentes no lote atual.
-    for (const [idaluno, currentMatriculaKeysSet] of studentMatriculaKeys.entries()) {
-      const diaHorarioPairs = Array.from(currentMatriculaKeysSet).map(key => {
-        const [dia_semana_part, horario_part] = key.split('|||'); // Divide usando o delimitador único
-        return [dia_semana_part, horario_part];
-      });
-
-      let deleteSql = 'DELETE FROM matricula WHERE idaluno = ?';
-      const deleteParams = [idaluno];
-
-      if (diaHorarioPairs.length > 0) {
-        // Constrói a cláusula NOT IN para (dia_semana, horario)
-        const placeholders = diaHorarioPairs.map(() => '(?, ?)').join(', ');
-        deleteSql += ` AND (TRIM(dia_semana), horario) NOT IN (${placeholders})`;
-        diaHorarioPairs.forEach(pair => deleteParams.push(pair[0], pair[1]));
-      }
-      // Se diaHorarioPairs estiver vazio, significa que a entrada não tem matrículas para este aluno,
-      // então todas as matrículas existentes para este aluno devem ser excluídas.
-      // A condição `if (diaHorarioPairs.length > 0)` lida com isso corretamente.
-      // Se diaHorarioPairs estiver vazio, a parte `AND (TRIM(dia_semana), horario) NOT IN (...)` é ignorada,
-      // e se torna `DELETE FROM matricula WHERE idaluno = ?`, o que está correto.
-
-      const [deleteResult] = await connection.query(deleteSql, deleteParams);
-      resumo.deletadas += deleteResult.affectedRows;
     }
 
     // --- Fase de Upsert ---
