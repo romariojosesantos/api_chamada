@@ -259,6 +259,11 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
     erros: []
   };
 
+  // Helper para normalizar nomes e Maps para cache
+  const normalize = (str) => String(str || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const atividadesMap = new Map();
+  const professoresMap = new Map();
+
   let connection;
   try {
     const processedIds = []; // Lista para guardar IDs que devem ser mantidos
@@ -266,6 +271,13 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
     // Obtém uma conexão do pool para realizar a transação
     connection = await pool.getConnection();
     await connection.beginTransaction(); // Inicia uma transação
+
+    // Pré-carrega mapas para eficiência (necessário para processar matrículas aninhadas)
+    const [atividadesDB] = await connection.query('SELECT idatividades, nome FROM atividades');
+    atividadesDB.forEach(a => atividadesMap.set(normalize(a.nome), a.idatividades));
+
+    const [professoresDB] = await connection.query('SELECT id, nome FROM professores');
+    professoresDB.forEach(p => professoresMap.set(normalize(p.nome), p.id));
 
     for (const aluno of alunos) {
       try {
@@ -424,7 +436,7 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
               mat.turno,
               mat.horario,
               mat.dia_semana
-            );
+            ]);
             // Nota: Contar criadas/atualizadas aqui seria complexo, pois é por aluno dentro de um loop de alunos.
             // A rota principal /api/matriculas/upsert-bulk é melhor para contagens detalhadas de matrículas.
           }
