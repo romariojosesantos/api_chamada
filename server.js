@@ -341,23 +341,96 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
         processedIds.push(alunoId);
 
         // 2. Processar Matrículas (se houver na planilha)
+        // Implementa a lógica de sincronização para as matrículas deste aluno
         if (aluno.matriculas && Array.isArray(aluno.matriculas)) {
-          for (const mat of aluno.matriculas) {
-            // Verifica se a matrícula já existe para evitar duplicatas
-            const [checkMat] = await connection.query(
-              `SELECT idmatricula FROM matricula 
-               WHERE idaluno = ? AND idatividades = ? AND dia_semana = ? AND horario = ?`,
-              [alunoId, mat.idatividades, mat.dia_semana, mat.horario]
-            );
+          const currentStudentMatriculaKeys = new Set(); // Set de strings "dia_semana|||horario" para este aluno da entrada
+          const matriculasToUpsertForStudent = []; // Matrículas processadas para este aluno
 
-            if (checkMat.length === 0) {
-              await connection.query(
-                `INSERT INTO matricula (idaluno, idatividades, dia_semana, horario, turno)
-                 VALUES (?, ?, ?, ?, ?)`,
-                [alunoId, mat.idatividades, mat.dia_semana, mat.horario, mat.turno || null]
-              );
+          for (const mat of aluno.matriculas) {
+            // Resolve idatividades (assumindo que atividadesMap e professoresMap estão disponíveis do escopo externo)
+            let idAtividade = mat.idatividades;
+            // Se o ID não foi informado, tenta encontrar pelo nome da atividade
+            if (!idAtividade && mat.nome_atividade) {
+              idAtividade = atividadesMap.get(normalize(mat.nome_atividade));
+            }
+            // Se a atividade ainda não foi encontrada, ou o professor não foi encontrado, lida com o erro ou pula
+            if (!idAtividade) {
+                // Esta é uma manipulação de erro simplificada. Em uma aplicação real, você pode querer coletar esses erros.
+                console.warn(`Atividade "${mat.nome_atividade}" não encontrada para aluno ${aluno.nome}. Matrícula ignorada.`);
+                continue;
+            }
+
+            // Se o professor for fornecido na matrícula, garante que a atividade tenha o professor correto
+            if (mat.nome_professor) {
+                let idProfessorMatricula = professoresMap.get(normalize(mat.nome_professor));
+                if (!idProfessorMatricula) {
+                    try {
+                        const [resultProf] = await connection.query('INSERT INTO professores (nome) VALUES (?)', [mat.nome_professor.trim()]);
+                        idProfessorMatricula = resultProf.insertId;
+                        professoresMap.set(normalize(mat.nome_professor), idProfessorMatricula);
+                    } catch (err) {
+                        console.warn(`Erro ao criar professor automático "${mat.nome_professor}" para atividade ${mat.nome_atividade}:`, err.message);
+                    }
+                }
+                if (idProfessorMatricula) {
+                    await connection.query('UPDATE atividades SET idprofessor = ? WHERE idatividades = ?', [idProfessorMatricula, idAtividade]);
+                }
+            }
+
+            const normalizedDiaSemana = (mat.dia_semana || '').trim();
+            const normalizedHorario = (mat.horario || '').trim();
+            const normalizedTurno = (mat.turno || '').trim();
+
+            matriculasToUpsertForStudent.push({
+                idaluno: alunoId,
+                idatividades: idAtividade,
+                turno: normalizedTurno || null,
+                horario: normalizedHorario,
+                dia_semana: normalizedDiaSemana
+            });
+            currentStudentMatriculaKeys.add(`${normalizedDiaSemana}|||${normalizedHorario}`);
+          }
+
+          // Exclui matrículas existentes para este aluno que não estão no lote atual
+          const [existingMatriculasForStudent] = await connection.query(
+            'SELECT idmatricula, dia_semana, horario FROM matricula WHERE idaluno = ?',
+            [alunoId]
+          );
+
+          const matriculasToDeleteIds = [];
+          for (const existingMatricula of existingMatriculasForStudent) {
+            const existingKey = `${(existingMatricula.dia_semana || '').trim()}|||${existingMatricula.horario}`;
+            if (!currentStudentMatriculaKeys.has(existingKey)) {
+              matriculasToDeleteIds.push(existingMatricula.idmatricula);
             }
           }
+
+          if (matriculasToDeleteIds.length > 0) {
+            await connection.query('DELETE FROM matricula WHERE idmatricula IN (?)', [matriculasToDeleteIds]);
+          }
+
+          // Upsert as matrículas recebidas para este aluno
+          for (const mat of matriculasToUpsertForStudent) {
+            const insertUpdateSql = `
+              INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana)
+              VALUES (?, ?, ?, ?, ?)
+              ON DUPLICATE KEY UPDATE
+                idatividades = VALUES(idatividades),
+                turno = VALUES(turno);
+            `;
+            await connection.query(insertUpdateSql, [
+              mat.idaluno,
+              mat.idatividades,
+              mat.turno,
+              mat.horario,
+              mat.dia_semana
+            );
+            // Nota: Contar criadas/atualizadas aqui seria complexo, pois é por aluno dentro de um loop de alunos.
+            // A rota principal /api/matriculas/upsert-bulk é melhor para contagens detalhadas de matrículas.
+          }
+        } else {
+            // Se nenhuma matrícula for fornecida para um aluno existente, exclui todas as suas matrículas
+            await connection.query('DELETE FROM matricula WHERE idaluno = ?', [alunoId]);
         }
 
       } catch (err) {
@@ -524,6 +597,60 @@ app.patch('/api/alunos/update-by-name', async (req, res) => {
   }
 });
 
+// Rota para buscar alunos sem faltas no período, considerando apenas os dias de aula (matrícula)
+app.get('/api/alunos/frequencia-plena', async (req, res) => {
+  const { inicio, fim } = req.query;
+
+  if (!inicio || !fim) {
+    return res.status(400).json({ error: 'Os parâmetros "inicio" e "fim" (AAAA-MM-DD) são obrigatórios.' });
+  }
+
+  console.log(`GET /api/alunos/frequencia-plena - Período: ${inicio} até ${fim}`);
+
+  try {
+    const sql = `
+      SELECT 
+        a.id, a.nome, a.turno, a.turma, a.transporte,
+        GROUP_CONCAT(DISTINCT DATE_FORMAT(p.data, '%Y-%m-%d') ORDER BY p.data ASC) as dias_presente,
+        COUNT(DISTINCT p.data) as total_presencas_nas_matrículas
+      FROM alunos a
+      /* Join com presença e matrícula simultaneamente para contar apenas presenças em dias de aula oficial */
+      INNER JOIN presenca p ON a.id = p.aluno_id AND p.status = 'presente' AND p.data BETWEEN ? AND ?
+      INNER JOIN matricula m ON a.id = m.idaluno AND TRIM(m.dia_semana) = CASE DAYOFWEEK(p.data)
+          WHEN 1 THEN 'Domingo'
+          WHEN 2 THEN 'Segunda'
+          WHEN 3 THEN 'Terça'
+          WHEN 4 THEN 'Quarta'
+          WHEN 5 THEN 'Quinta'
+          WHEN 6 THEN 'Sexta'
+          WHEN 7 THEN 'Sábado'
+      END
+      GROUP BY a.id
+      /* O aluno só entra na lista se o total de presenças úteis for igual ao total de dias letivos para a grade dele */
+      HAVING total_presencas_nas_matrículas = (
+          SELECT COUNT(DISTINCT d.data)
+          FROM (SELECT DISTINCT data FROM presenca WHERE data BETWEEN ? AND ?) d
+          INNER JOIN matricula m2 ON m2.idaluno = a.id
+          WHERE TRIM(m2.dia_semana) = CASE DAYOFWEEK(d.data)
+              WHEN 1 THEN 'Domingo'
+              WHEN 2 THEN 'Segunda'
+              WHEN 3 THEN 'Terça'
+              WHEN 4 THEN 'Quarta'
+              WHEN 5 THEN 'Quinta'
+              WHEN 6 THEN 'Sexta'
+              WHEN 7 THEN 'Sábado'
+          END
+      )
+      ORDER BY a.nome ASC
+    `;
+
+    const [results] = await pool.query(sql, [inicio, fim, inicio, fim]);
+    res.json(results);
+  } catch (err) {
+    console.error("Erro em /api/alunos/frequencia-plena:", err);
+    res.status(500).json({ error: 'Erro ao processar relatório de frequência: ' + err.message });
+  }
+});
 
 // Rota para buscar os registros de presença
 app.get('/api/presenca', async (req, res) => {
@@ -762,10 +889,22 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
   const professoresMap = new Map();
 
   let connection;
+  const resumo = {
+    total_recebido: matriculas.length,
+    criadas: 0,
+    atualizadas: 0,
+    deletadas: 0, // Adicionado para contagem de matrículas deletadas
+    erros: []
+  };
+
   try {
     // Pega uma conexão do pool para realizar a transação
     connection = await pool.getConnection();
     await connection.beginTransaction();
+
+    // Pré-carrega mapas para eficiência
+    // Helper para normalizar nomes (remove espaços duplicados e converte para minúsculo)
+    const normalize = (str) => String(str || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
     const [alunosDB] = await connection.query('SELECT id, nome FROM alunos');
     alunosDB.forEach(a => alunosMap.set(normalize(a.nome), a.id));
@@ -775,10 +914,9 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
 
     const [professoresDB] = await connection.query('SELECT id, nome FROM professores');
     professoresDB.forEach(p => professoresMap.set(normalize(p.nome), p.id));
-
-    let criadas = 0;
-    let atualizadas = 0;
-    let erros = [];
+    
+    const studentMatriculaKeys = new Map(); // Map: idaluno -> Set de strings "dia_semana|||horario" da entrada
+    const matriculasToProcess = []; // Armazena matrículas processadas com IDs resolvidos
 
     for (const m of matriculas) {
       // Normaliza as chaves do objeto para minúsculas
@@ -788,18 +926,18 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
       }
 
       const { nome_aluno, turno, dia_semana, horario, nome_atividade } = matricula;
-      const nomeProfessor = matricula.professor || matricula.nome_professor;
+      const nomeProfessor = matricula.professor || matricula.nome_professor; // Aceita "professor" ou "nome_professor"
 
       // 1. Validação dos campos obrigatórios
       if (!nome_aluno || !nome_atividade || !dia_semana || !horario || !nomeProfessor) {
-        erros.push({ item: m, motivo: 'Campos obrigatórios ausentes (nome_aluno, nome_atividade, dia_semana, horario, professor).' });
+        resumo.erros.push({ item: m, motivo: 'Campos obrigatórios ausentes (nome_aluno, nome_atividade, dia_semana, horario, professor).' });
         continue;
       }
 
       // 2. Encontrar Aluno
       const idAluno = alunosMap.get(normalize(nome_aluno));
       if (!idAluno) {
-        erros.push({ item: m, motivo: `Aluno "${nome_aluno}" não encontrado no banco de dados.` });
+        resumo.erros.push({ item: m, motivo: `Aluno "${nome_aluno}" não encontrado no banco de dados.` });
         continue;
       }
 
@@ -809,9 +947,9 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
         try {
           const [resultProf] = await connection.query('INSERT INTO professores (nome) VALUES (?)', [nomeProfessor.trim()]);
           idProfessor = resultProf.insertId;
-          professoresMap.set(normalize(nomeProfessor), idProfessor); // Atualiza mapa para as próximas linhas
+          professoresMap.set(normalize(nomeProfessor), idProfessor); // Atualiza o mapa para as próximas linhas
         } catch (err) {
-          erros.push({ item: m, motivo: `Erro ao criar novo professor "${nomeProfessor}": ${err.message}` });
+          resumo.erros.push({ item: m, motivo: `Erro ao criar novo professor "${nomeProfessor}": ${err.message}` });
           continue;
         }
       }
@@ -822,33 +960,86 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
         try {
           const [resultAtv] = await connection.query('INSERT INTO atividades (nome, idprofessor) VALUES (?, ?)', [nome_atividade.trim(), idProfessor]);
           idAtividade = resultAtv.insertId;
-          atividadesMap.set(normalize(nome_atividade), idAtividade); // Atualiza mapa
+          atividadesMap.set(normalize(nome_atividade), idAtividade); // Atualiza o mapa
         } catch (err) {
-          erros.push({ item: m, motivo: `Erro ao criar nova atividade "${nome_atividade}": ${err.message}` });
+          resumo.erros.push({ item: m, motivo: `Erro ao criar nova atividade "${nome_atividade}": ${err.message}` });
           continue;
         }
       } else {
         // Se a atividade já existe, garante que o professor está correto
         await connection.query('UPDATE atividades SET idprofessor = ? WHERE idatividades = ?', [idProfessor, idAtividade]);
       }
+      
+      const normalizedDiaSemana = (dia_semana || '').trim();
+      const normalizedHorario = (horario || '').trim();
+      const normalizedTurno = (turno || '').trim();
 
-      // 5. Lógica de UPSERT da Matrícula
-      // A busca usa TRIM() para ser resiliente a espaços em branco (ex: "Quarta" vs "Quarta   ")
-      const findSql = 'SELECT idmatricula FROM matricula WHERE idaluno = ? AND TRIM(dia_semana) = ? AND horario = ?';
-      const [existingMatricula] = await connection.query(findSql, [idAluno, (dia_semana || '').trim(), horario]);
+      matriculasToProcess.push({
+        idaluno: idAluno,
+        idatividades: idAtividade,
+        turno: normalizedTurno || null,
+        horario: normalizedHorario,
+        dia_semana: normalizedDiaSemana
+      });
 
-      if (existingMatricula.length > 0) {
-        // ATUALIZAR
-        const idMatriculaExistente = existingMatricula[0].idmatricula;
-        const updateSql = 'UPDATE matricula SET idatividades = ?, turno = ? WHERE idmatricula = ?';
-        await connection.query(updateSql, [idAtividade, (turno || '').trim() || null, idMatriculaExistente]);
-        atualizadas++;
-      } else {
-        // CRIAR
-        const insertSql = 'INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana) VALUES (?, ?, ?, ?, ?)';
-        // Salva os dados com TRIM para manter a consistência no banco
-        await connection.query(insertSql, [idAluno, idAtividade, (turno || '').trim() || null, horario, (dia_semana || '').trim()]);
-        criadas++;
+      // Armazena a chave única para a lógica de exclusão posterior
+      if (!studentMatriculaKeys.has(idAluno)) {
+        studentMatriculaKeys.set(idAluno, new Set());
+      }
+      // Usa um delimitador único para evitar problemas se o horário contiver um hífen
+      studentMatriculaKeys.get(idAluno).add(`${normalizedDiaSemana}|||${normalizedHorario}`);
+    }
+
+    // --- Fase de Exclusão ---
+    // Para cada aluno que teve matrículas na entrada, exclui suas matrículas antigas
+    // que NÃO estão presentes no lote atual.
+    for (const [idaluno, currentMatriculaKeysSet] of studentMatriculaKeys.entries()) {
+      const diaHorarioPairs = Array.from(currentMatriculaKeysSet).map(key => {
+        const [dia_semana_part, horario_part] = key.split('|||'); // Divide usando o delimitador único
+        return [dia_semana_part, horario_part];
+      });
+
+      let deleteSql = 'DELETE FROM matricula WHERE idaluno = ?';
+      const deleteParams = [idaluno];
+
+      if (diaHorarioPairs.length > 0) {
+        // Constrói a cláusula NOT IN para (dia_semana, horario)
+        const placeholders = diaHorarioPairs.map(() => '(?, ?)').join(', ');
+        deleteSql += ` AND (TRIM(dia_semana), horario) NOT IN (${placeholders})`;
+        diaHorarioPairs.forEach(pair => deleteParams.push(pair[0], pair[1]));
+      }
+      // Se diaHorarioPairs estiver vazio, significa que a entrada não tem matrículas para este aluno,
+      // então todas as matrículas existentes para este aluno devem ser excluídas.
+      // A condição `if (diaHorarioPairs.length > 0)` lida com isso corretamente.
+      // Se diaHorarioPairs estiver vazio, a parte `AND (TRIM(dia_semana), horario) NOT IN (...)` é ignorada,
+      // e se torna `DELETE FROM matricula WHERE idaluno = ?`, o que está correto.
+
+      const [deleteResult] = await connection.query(deleteSql, deleteParams);
+      resumo.deletadas += deleteResult.affectedRows;
+    }
+
+    // --- Fase de Upsert ---
+    // Agora realiza o upsert para as matrículas recebidas
+    for (const mat of matriculasToProcess) {
+      const insertUpdateSql = `
+        INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana)
+        VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          idatividades = VALUES(idatividades),
+          turno = VALUES(turno);
+      `;
+      const [result] = await connection.query(insertUpdateSql, [
+        mat.idaluno,
+        mat.idatividades,
+        mat.turno,
+        mat.horario,
+        mat.dia_semana
+      ]);
+
+      if (result.affectedRows === 1) { // 1 para inserção
+        resumo.criadas++;
+      } else if (result.affectedRows === 2) { // 2 para atualização (se os valores mudaram)
+        resumo.atualizadas++;
       }
     }
 
@@ -859,9 +1050,10 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
       message: 'Processamento de matrículas (Upsert) concluído',
       resumo: {
         total_recebido: matriculas.length,
-        criadas: criadas,
-        atualizadas: atualizadas,
-        erros: erros
+        criadas: resumo.criadas,
+        atualizadas: resumo.atualizadas,
+        deletadas: resumo.deletadas,
+        erros: resumo.erros
       }
     });
 
