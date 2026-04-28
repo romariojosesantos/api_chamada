@@ -7,14 +7,58 @@ async function setupDatabase() {
     db = await mysql.createConnection('mysql://romario_novo:RomarioSantos2025@31.97.83.209:3306/chamada_conexao');
     console.log('Conectado com sucesso ao banco de dados MySQL.');
 
+    // Desativa a verificação de chaves estrangeiras para permitir o reset das tabelas
+    await db.query('SET FOREIGN_KEY_CHECKS=0;');
+
+    // Remove as tabelas existentes para garantir que o novo esquema (com id_instituicao) seja aplicado.
+    const tablesToReset = ['presenca', 'matricula', 'atividades', 'professores', 'alunos', 'instituicoes', 'chamada_conexao'];
+    for (const table of tablesToReset) {
+      await db.query(`DROP TABLE IF EXISTS ${table}`);
+    }
+    console.log('Tabelas antigas removidas para atualização de esquema.');
+
     // 2. Define o SQL para criar as tabelas
+    const createInstituicoesTable = `
+      CREATE TABLE IF NOT EXISTS instituicoes (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        nome VARCHAR(255) NOT NULL
+      ) ENGINE=InnoDB;
+    `;
+
     const createAlunosTable = `
       CREATE TABLE IF NOT EXISTS alunos (
         id INT PRIMARY KEY AUTO_INCREMENT,
         nome VARCHAR(255) NOT NULL,
-        telefone VARCHAR(20),
-        turno VARCHAR(50),
-        transporte VARCHAR(100)
+        data_nascimento DATE DEFAULT NULL,
+        sexo VARCHAR(1) DEFAULT NULL,
+        telefone VARCHAR(20) DEFAULT NULL,
+        turma VARCHAR(10) DEFAULT NULL,
+        turno VARCHAR(50) DEFAULT NULL,
+        transporte VARCHAR(100) DEFAULT NULL,
+        Inf VARCHAR(60) DEFAULT NULL,
+        status VARCHAR(20) DEFAULT 'ativo',
+        id_instituicao INT NOT NULL,
+        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id),
+        UNIQUE KEY idx_nome_inst (nome, id_instituicao)
+      ) ENGINE=InnoDB;
+    `;
+
+    const createProfessoresTable = `
+      CREATE TABLE IF NOT EXISTS professores (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        nome VARCHAR(100) NOT NULL,
+        id_instituicao INT NOT NULL,
+        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id)
+      ) ENGINE=InnoDB;
+    `;
+
+    const createAtividadesTable = `
+      CREATE TABLE IF NOT EXISTS atividades (
+        idatividades INT PRIMARY KEY AUTO_INCREMENT,
+        nome VARCHAR(60) NOT NULL,
+        idprofessor INT,
+        id_instituicao INT NOT NULL,
+        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id)
       ) ENGINE=InnoDB;
     `;
 
@@ -24,8 +68,10 @@ async function setupDatabase() {
         aluno_id INT NOT NULL,
         data DATE NOT NULL,
         status VARCHAR(20) NOT NULL,
+        id_instituicao INT NOT NULL,
         FOREIGN KEY (aluno_id) REFERENCES alunos(id) ON DELETE CASCADE,
-        UNIQUE KEY idx_aluno_data (aluno_id, data)
+        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id),
+        UNIQUE KEY idx_aluno_inst_data (aluno_id, id_instituicao, data)
       ) ENGINE=InnoDB;
     `;
 
@@ -34,7 +80,9 @@ async function setupDatabase() {
         id INT PRIMARY KEY AUTO_INCREMENT,
         evento VARCHAR(255) NOT NULL,
         detalhes TEXT,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        id_instituicao INT,
+        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id)
       ) ENGINE=InnoDB;
     `;
 
@@ -46,12 +94,24 @@ async function setupDatabase() {
         turno VARCHAR(45),
         horario VARCHAR(45),
         dia_semana VARCHAR(45),
-        status VARCHAR(20) DEFAULT 'ativo'
+        status VARCHAR(20) DEFAULT 'matriculado',
+        id_instituicao INT NOT NULL,
+        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id)
       ) ENGINE=InnoDB;
     `;
+
     // 3. Executa as queries em sequência
+    await db.query(createInstituicoesTable);
+    console.log('Tabela "instituicoes" pronta.');
+
     await db.query(createAlunosTable);
     console.log('Tabela "alunos" pronta.');
+
+    await db.query(createProfessoresTable);
+    console.log('Tabela "professores" pronta.');
+
+    await db.query(createAtividadesTable);
+    console.log('Tabela "atividades" pronta.');
 
     await db.query(createPresencaTable);
     console.log('Tabela "presenca" pronta.');
@@ -62,31 +122,18 @@ async function setupDatabase() {
     await db.query(createMatriculaTable);
     console.log('Tabela "matricula" pronta.');
 
-    // 4. Popula a tabela de alunos com dados iniciais
-    const alunos = [
-      { nome: 'Ana Silva', telefone: '123456789', turno: 'Manhã', transporte: 'Onibus Branco' },
-      { nome: 'Bruno Costa', telefone: '987654321', turno: 'Tarde', transporte: 'Onibus Amarelo'},
-      { nome: 'Carlos de Souza', telefone: '555555555', turno: 'Manhã', transporte: 'Onibus Branco'},
-      { nome: 'Daniela Martins', telefone: '111111111', turno: 'Tarde', transporte: 'Onibus Amarelo'},
-      { nome: 'Eduardo Ferreira', telefone: '999999999', turno: 'Manhã', transporte: 'Onibus Amarelo'},
-      { nome: 'Fernanda Lima', telefone: '777777777', turno: 'Tarde', transporte: 'Onibus Branco'},
-      { nome: 'Gabriel Ribeiro', telefone: '333333333', turno: 'Manhã', transporte: 'Onibus Branco'},
+    // 4. Insere uma instituição de teste
+    const [instResult] = await db.query('INSERT INTO instituicoes (nome) VALUES (?)', ['Instituição Padrão']);
+    const instId = instResult.insertId;
+
+    const insertAlunosSQL = 'INSERT INTO alunos (nome, telefone, turno, transporte, id_instituicao) VALUES ?';
+    const alunosValues = [
+      ['Ana Silva', '123456789', 'Manhã', 'Onibus Branco', instId],
+      ['Bruno Costa', '987654321', 'Tarde', 'Onibus Amarelo', instId]
     ];
 
-    // Desativa temporariamente a verificação de chaves estrangeiras para poder limpar as tabelas
-    await db.query('SET FOREIGN_KEY_CHECKS=0;');
-
-    // Limpa as tabelas antes de inserir para evitar duplicatas (ordem: filho, depois pai)
-    await db.query('TRUNCATE TABLE presenca');
-    await db.query('TRUNCATE TABLE matricula');
-    await db.query('TRUNCATE TABLE alunos');
-    console.log('Tabelas "alunos", "presenca" e "matricula" limpas.');
-
-    const insertAlunosSQL = 'INSERT INTO alunos (nome, telefone, turno, transporte) VALUES ?';
-    const alunosValues = alunos.map(a => [a.nome, a.telefone, a.turno, a.transporte]);
-
-    const [result] = await db.query(insertAlunosSQL, [alunosValues]);
-    console.log(`${result.affectedRows} alunos foram inseridos com sucesso.`);
+    await db.query(insertAlunosSQL, [alunosValues]);
+    console.log('Dados iniciais inseridos para a instituição ' + instId);
 
     // Reativa a verificação de chaves estrangeiras
     await db.query('SET FOREIGN_KEY_CHECKS=1;');
