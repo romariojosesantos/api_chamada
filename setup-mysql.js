@@ -75,6 +75,7 @@ async function setupDatabase() {
         aluno_id INT NOT NULL,
         data DATE NOT NULL,
         status VARCHAR(20) NOT NULL,
+        observacao TEXT DEFAULT NULL,
         id_instituicao INT NOT NULL,
         FOREIGN KEY (aluno_id) REFERENCES alunos(id) ON DELETE CASCADE,
         FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id),
