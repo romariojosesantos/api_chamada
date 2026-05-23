@@ -8,6 +8,7 @@ const mysql = require('mysql2/promise'); // Usar a versão com suporte a Promise
 const app = express();
 const PORT = 3001;
 
+
 // --- Conexão com o Banco de Dados ---
 // Cria um pool de conexões. É mais robusto que uma única conexão.
 const pool = mysql.createPool({
