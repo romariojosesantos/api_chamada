@@ -1,4 +1,5 @@
 // /minha-api/server.js
+require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
@@ -6,17 +7,17 @@ const mysql = require('mysql2/promise'); // Usar a versão com suporte a Promise
 
 // Inicializa o aplicativo Express
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 
 // --- Conexão com o Banco de Dados ---
 // Cria um pool de conexões. É mais robusto que uma única conexão.
 const pool = mysql.createPool({
-  host: '31.97.83.209',
-  user: 'romario_novo',
-  password: 'RomarioSantos2025',
-  database: 'chamada_conexao',
-  port: 3306,
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT || 3306,
   waitForConnections: true,
   connectionLimit: 20, // Aumentado para suportar mais requisições simultâneas
   queueLimit: 0,
