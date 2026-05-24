@@ -93,6 +93,36 @@ app.get('/api/instituicao', async (req, res) => {
   }
 });
 
+// Rota para listar os transportes únicos (rotas) cadastrados
+app.get('/api/transportes', async (req, res) => {
+  const { turno } = req.query;
+  console.log(`GET /api/transportes - Inst: ${req.id_instituicao}, Turno: ${turno || 'Todos'}`);
+  
+  try {
+    // Busca valores únicos da coluna transporte que não sejam nulos ou vazios
+    let sql = `
+      SELECT DISTINCT TRIM(transporte) as transporte 
+      FROM alunos 
+      WHERE id_instituicao = ? AND transporte IS NOT NULL AND transporte != ''
+    `;
+    const params = [req.id_instituicao];
+
+    if (turno && turno !== 'Todos') {
+      sql += " AND TRIM(turno) = ?";
+      params.push(turno);
+    }
+
+    sql += " ORDER BY transporte ASC";
+
+    const [results] = await pool.query(sql, params);
+    // Retorna apenas um array de strings para facilitar o uso no Frontend
+    res.json(results.map(r => r.transporte));
+  } catch (err) {
+    console.error("Erro em GET /api/transportes:", err);
+    res.status(500).json({ error: 'Erro ao buscar lista de transportes: ' + err.message });
+  }
+});
+
 // Rota para buscar a lista de alunos
 app.get('/api/alunos', async (req, res) => {
   const { nome, turno, transporte, status } = req.query;
