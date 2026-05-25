@@ -174,7 +174,7 @@ app.get('/api/alunos', async (req, res) => {
 
 // Rota para buscar alunos que têm aula em um dia específico (por data ou nome do dia)
 app.get('/api/alunos/por-dia', async (req, res) => {
-  const { dia_semana, data, nome, turno, transporte } = req.query;
+  const { dia_semana, data, nome, turno, transporte, ignoreFilters } = req.query;
 
   let diaDaSemanaParaBusca;
 
@@ -202,44 +202,75 @@ app.get('/api/alunos/por-dia', async (req, res) => {
     return res.status(400).json({ error: 'O parâmetro "data" (formato AAAA-MM-DD) ou "dia_semana" é obrigatório.' });
   }
 
-  console.log(`GET /api/alunos/por-dia - Dia: ${diaDaSemanaParaBusca}, Busca: ${nome || 'vazia'}, Turno: ${turno || 'Todos'}`);
+  console.log(`GET /api/alunos/por-dia - Modo: ${ignoreFilters === 'true' ? 'RELATÓRIO' : 'CHAMADA'}, Data: ${data || diaDaSemanaParaBusca}, Filtros: [Turno: ${turno || 'Todos'}, Transp: ${transporte || 'Todos'}]`);
 
   try {
     let sql;
     let params;
 
-    // REGRA DE NEGÓCIO: Se houver pesquisa por nome, fazemos uma busca GLOBAL na instituição.
-    // Isso permite encontrar alunos que não estão escalados para este dia/transporte.
-    if (nome && nome.trim() !== '') {
+    // --- FLUXO 1: RELATÓRIO DIÁRIO (ignoreFilters=true) ---
+    if (ignoreFilters === 'true') {
       sql = `
         SELECT a.*, 
+               p.status AS presenca_status, p.observacao AS presenca_obs,
                IFNULL((SELECT GROUP_CONCAT(DISTINCT TRIM(m2.dia_semana) SEPARATOR ',') 
                 FROM matricula m2 
                 WHERE m2.idaluno = a.id AND m2.status = 'matriculado' AND m2.id_instituicao = a.id_instituicao AND m2.idatividades != 4), '') as dias_matriculados
         FROM alunos a
+        LEFT JOIN presenca p ON a.id = p.aluno_id AND p.data = ? AND p.id_instituicao = a.id_instituicao
+        WHERE a.id_instituicao = ? 
+        AND (a.status = 'ativo' OR a.status IS NULL OR a.status = '')
+      `;
+      params = [data || null, req.id_instituicao];
+
+      if (nome && nome.trim() !== '') {
+        sql += " AND a.nome LIKE ?";
+        params.push(`%${nome.trim()}%`);
+      }
+
+    // --- FLUXO 2: BUSCA POR NOME (Contexto de Chamada/Filtros Ativos) ---
+    } else if (nome && nome.trim() !== '') {
+      sql = `
+        SELECT a.*,
+               p.status AS presenca_status, p.observacao AS presenca_obs,
+               IFNULL((SELECT GROUP_CONCAT(DISTINCT TRIM(m2.dia_semana) SEPARATOR ',') 
+                FROM matricula m2 
+                WHERE m2.idaluno = a.id AND m2.status = 'matriculado' AND m2.id_instituicao = a.id_instituicao AND m2.idatividades != 4), '') as dias_matriculados
+        FROM alunos a
+        LEFT JOIN presenca p ON a.id = p.aluno_id AND p.data = ? AND p.id_instituicao = a.id_instituicao
         WHERE a.id_instituicao = ? 
         AND (a.status = 'ativo' OR a.status IS NULL OR a.status = '')
         AND a.nome LIKE ?
-        ORDER BY a.nome ASC
       `;
-      params = [req.id_instituicao, `%${nome.trim()}%` ];
+      params = [data || null, req.id_instituicao, `%${nome.trim()}%` ];
+
+      if (turno && turno !== 'Todos') {
+        sql += " AND TRIM(a.turno) = ?";
+        params.push(turno);
+      }
+      if (transporte && transporte !== 'Todos') {
+        sql += " AND TRIM(a.transporte) = ?";
+        params.push(transporte);
+      }
+
+    // --- FLUXO 3: LISTA DE CHAMADA PADRÃO (Baseada na Grade Horária) ---
     } else {
-      // BUSCA PADRÃO: Baseada na grade horária do dia
       sql = `
         SELECT DISTINCT a.*, 
+               p.status AS presenca_status, p.observacao AS presenca_obs,
                IFNULL((SELECT GROUP_CONCAT(DISTINCT TRIM(m2.dia_semana) SEPARATOR ',') 
                 FROM matricula m2 
                 WHERE m2.idaluno = a.id AND m2.status = 'matriculado' AND m2.id_instituicao = a.id_instituicao AND m2.idatividades != 4), '') as dias_matriculados
         FROM alunos a
         JOIN matricula m ON a.id = m.idaluno
+        LEFT JOIN presenca p ON a.id = p.aluno_id AND p.data = ? AND p.id_instituicao = a.id_instituicao
         WHERE TRIM(m.dia_semana) = ? 
         AND (a.status = 'ativo' OR a.status IS NULL) 
         AND (m.status = 'matriculado' OR m.status IS NULL)
         AND a.id_instituicao = ?
       `;
-      params = [diaDaSemanaParaBusca, req.id_instituicao];
+      params = [data || null, diaDaSemanaParaBusca, req.id_instituicao];
 
-      // Aplica filtros de Turno e Transporte se não forem "Todos"
       if (turno && turno !== 'Todos') {
         sql += " AND (TRIM(a.turno) = ? OR TRIM(m.turno) = ?)";
         params.push(turno, turno);
@@ -248,9 +279,9 @@ app.get('/api/alunos/por-dia', async (req, res) => {
         sql += " AND TRIM(a.transporte) = ?";
         params.push(transporte);
       }
-
-      sql += " ORDER BY a.nome ASC";
     }
+
+    sql += " ORDER BY a.nome ASC";
 
     const [results] = await pool.query(sql, params);
     res.json(results);
@@ -710,6 +741,60 @@ app.patch('/api/alunos/update-by-name', async (req, res) => {
   } catch (err) {
     console.error("Erro em PATCH /api/alunos/update-by-name:", err);
     res.status(500).json({ error: 'Erro ao atualizar aluno: ' + err.message });
+  }
+});
+
+// Rota exclusiva para estatísticas de relatórios
+app.get('/api/relatorios/estatisticas-diarias', async (req, res) => {
+  const { data } = req.query;
+
+  if (!data) {
+    return res.status(400).json({ error: 'O parâmetro "data" (AAAA-MM-DD) é obrigatório para gerar estatísticas.' });
+  }
+
+  try {
+    // Determinar o dia da semana a partir da data fornecida
+    const dateObj = new Date(`${data}T00:00:00`);
+    const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+    const diaSemana = dias[dateObj.getDay()];
+
+    // 1. Quantidade total de alunos ativos na instituição
+    const sqlTotal = `SELECT COUNT(*) as total FROM alunos WHERE id_instituicao = ? AND (status = 'ativo' OR status IS NULL OR status = '')`;
+    
+    // 2. Quantidade de alunos ativos por turno
+    const sqlPorTurno = `
+      SELECT IFNULL(NULLIF(TRIM(turno), ''), 'Não Informado') as turno, COUNT(*) as quantidade 
+      FROM alunos 
+      WHERE id_instituicao = ? AND (status = 'ativo' OR status IS NULL OR status = '') 
+      GROUP BY turno
+    `;
+
+    // 3. Quantidade de alunos ativos que têm curso/aula matriculado no dia específico
+    const sqlMatriculadosDia = `
+      SELECT COUNT(DISTINCT a.id) as total 
+      FROM alunos a
+      JOIN matricula m ON a.id = m.idaluno
+      WHERE a.id_instituicao = ? 
+      AND (a.status = 'ativo' OR a.status IS NULL OR a.status = '')
+      AND m.status = 'matriculado'
+      AND TRIM(m.dia_semana) = ?
+    `;
+
+    const [resTotal] = await pool.query(sqlTotal, [req.id_instituicao]);
+    const [resPorTurno] = await pool.query(sqlPorTurno, [req.id_instituicao]);
+    const [resMatriculadosDia] = await pool.query(sqlMatriculadosDia, [req.id_instituicao, diaSemana]);
+
+    res.json({
+      data_consulta: data,
+      dia_semana: diaSemana,
+      total_ativos_instituicao: resTotal[0].total,
+      ativos_por_turno: resPorTurno,
+      total_com_aula_no_dia: resMatriculadosDia[0].total
+    });
+
+  } catch (err) {
+    console.error("Erro em GET /api/relatorios/estatisticas-diarias:", err);
+    res.status(500).json({ error: 'Erro ao gerar estatísticas: ' + err.message });
   }
 });
 
