@@ -504,13 +504,15 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
 
     for (let i = 0; i < alunos.length; i++) {
       const aluno = alunos[i];
-      let infoLinha = { linha: i + 1, nome: aluno.nome || aluno.ALUNO || 'Desconhecido', status: 'pendente', acao: 'nenhuma', matriculas: 0 };
+      const nomeOriginal = aluno.nome || aluno.ALUNO || aluno.Nome;
+      if (!nomeOriginal) throw new Error('Nome do aluno ausente nesta linha.');
+
+      // Normalização do nome: remove espaços extras no início/fim e espaços duplos internos
+      const nomeTratado = String(nomeOriginal).trim().replace(/\s+/g, ' ');
+      let infoLinha = { linha: i + 1, nome: nomeTratado, status: 'pendente', acao: 'nenhuma', matriculas: 0 };
       
       try {
         // 1. Mapeamento e Limpeza (Trata chaves da planilha e do banco)
-        const nomeOriginal = aluno.nome || aluno.ALUNO || aluno.Nome;
-        if (!nomeOriginal) throw new Error('Nome do aluno ausente nesta linha.');
-
         const telefoneLimpo = String(aluno.telefone || aluno.TELEFONE || '').replace(/\D/g, '');
         let data_nascimento = aluno.nascimento || aluno.data_nascimento || aluno.NASCIMENTO;
 
@@ -524,8 +526,8 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
 
         // 2. Sincronização do Cadastro do Aluno
         const [checkRes] = await connection.query(
-          'SELECT id FROM alunos WHERE LOWER(nome) = LOWER(?) AND id_instituicao = ? LIMIT 1',
-          [nomeOriginal.trim(), req.id_instituicao]
+          'SELECT id FROM alunos WHERE LOWER(nome) = ? AND id_instituicao = ? LIMIT 1',
+          [normalize(nomeTratado), req.id_instituicao]
         );
 
         let alunoId;
@@ -554,7 +556,7 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
             `INSERT INTO alunos (nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf, status, id_instituicao)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-              nomeOriginal.trim(),
+              nomeTratado,
               data_nascimento || null,
               aluno.sexo || aluno.SEXO || null,
               telefoneLimpo || null,
@@ -755,6 +757,10 @@ app.get('/api/relatorios/estatisticas-diarias', async (req, res) => {
   try {
     // Determinar o dia da semana a partir da data fornecida
     const dateObj = new Date(`${data}T00:00:00`);
+    if (isNaN(dateObj.getTime())) {
+      return res.status(400).json({ error: 'Formato de data inválido. Use AAAA-MM-DD.' });
+    }
+
     const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
     const diaSemana = dias[dateObj.getDay()];
 
@@ -923,8 +929,8 @@ app.get('/api/grade', async (req, res) => {
       FROM
           matricula AS m
       JOIN alunos AS a ON m.idaluno = a.id
-      JOIN atividades AS atv ON m.idatividades = atv.idatividades
-      JOIN professores AS p ON atv.idprofessor = p.id
+      LEFT JOIN atividades AS atv ON m.idatividades = atv.idatividades
+      LEFT JOIN professores AS p ON atv.idprofessor = p.id
       WHERE m.status = 'matriculado' AND a.status = 'ativo' AND m.id_instituicao = ? AND m.idatividades != 4
       ORDER BY a.nome ASC
     `;
@@ -1116,10 +1122,6 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    // Pré-carrega mapas para eficiência
-    // Helper para normalizar nomes (remove espaços duplicados e converte para minúsculo)
-    const normalize = (str) => String(str || '').trim().replace(/\s+/g, ' ').toLowerCase();
-
     const [alunosDB] = await connection.query('SELECT id, nome FROM alunos WHERE id_instituicao = ?', [req.id_instituicao]);
     alunosDB.forEach(a => alunosMap.set(normalize(a.nome), a.id));
 
@@ -1184,8 +1186,10 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
     // REGRA DE NEGÓCIO: Se a atividade for o ID 4 (Null/Placeholder), ignoramos
     if (idAtividade == 4) {
       continue;
-      } else {
-        // Se a atividade já existe, garante que o professor está correto
+      } 
+      
+      // Se a atividade existe mas o professor mudou (ou é novo), atualiza o vínculo
+      if (idProfessor) {
         await connection.query('UPDATE atividades SET idprofessor = ? WHERE idatividades = ? AND id_instituicao = ?', [idProfessor, idAtividade, req.id_instituicao]);
       }
       
@@ -1212,29 +1216,20 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
 
     // --- Fase de Processamento com Histórico ---
     for (const mat of matriculasToProcess) {
-      const [existing] = await connection.query(
-        'SELECT idmatricula, idatividades FROM matricula WHERE idaluno = ? AND TRIM(dia_semana) = ? AND horario = ? AND status = "matriculado" AND id_instituicao = ? LIMIT 1',
-        [mat.idaluno, mat.dia_semana, mat.horario, req.id_instituicao]
-      );
-
-      if (existing.length > 0) {
-        if (existing[0].idatividades === mat.idatividades) {
-          // Mesma atividade e turno, apenas atualizar o turno se mudou (opcional)
-          await connection.query('UPDATE matricula SET turno = ? WHERE idmatricula = ? AND id_instituicao = ?', [mat.turno, existing[0].idmatricula, req.id_instituicao]);
-          resumo.atualizadas++;
-          continue;
-        }
-        // Atividade diferente: Cancela a anterior
-        await connection.query('UPDATE matricula SET status = "cancelada" WHERE idmatricula = ? AND id_instituicao = ?', [existing[0].idmatricula, req.id_instituicao]);
-      }
-
-      // Cria a nova matrícula como 'matriculado'
-      const insertSql = `
+      // Usa ON DUPLICATE KEY para evitar crash se houver um registro (mesmo que cancelado) no mesmo slot
+      const upsertSql = `
         INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, status, id_instituicao)
         VALUES (?, ?, ?, ?, ?, "matriculado", ?)
+        ON DUPLICATE KEY UPDATE 
+          status = 'matriculado', 
+          idatividades = VALUES(idatividades), 
+          turno = VALUES(turno)
       `;
-      await connection.query(insertSql, [mat.idaluno, mat.idatividades, mat.turno, mat.horario, mat.dia_semana, req.id_instituicao]);
-      resumo.criadas++;
+      const [result] = await connection.query(upsertSql, [mat.idaluno, mat.idatividades, mat.turno, mat.horario, mat.dia_semana, req.id_instituicao]);
+      
+      // No MySQL, affectedRows é 1 para insert e 2 para update em ON DUPLICATE KEY
+      if (result.affectedRows === 1) resumo.criadas++;
+      else if (result.affectedRows === 2) resumo.atualizadas++;
     }
 
     // Se tudo deu certo, commita a transação
@@ -1286,12 +1281,12 @@ app.get('/api/matriculas/aluno/:id', async (req, res) => {
         m.horario,
         m.dia_semana
       FROM matricula AS m
-      JOIN atividades AS atv ON m.idatividades = atv.idatividades
-      JOIN professores AS p ON atv.idprofessor = p.id
-      WHERE m.idaluno = ? AND m.status = 'matriculado' AND m.idatividades != 4
+      LEFT JOIN atividades AS atv ON m.idatividades = atv.idatividades
+      LEFT JOIN professores AS p ON atv.idprofessor = p.id
+      WHERE m.idaluno = ? AND m.id_instituicao = ? AND m.status = 'matriculado' AND m.idatividades != 4
       ORDER BY atv.nome ASC
     `;
-    const [results] = await pool.query(sql, [id]);
+    const [results] = await pool.query(sql, [id, req.id_instituicao]);
     res.json(results);
   } catch (err) {
     console.error(`Erro em GET /api/matriculas/aluno/${id}:`, err);
