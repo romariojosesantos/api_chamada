@@ -97,11 +97,11 @@ async function setupDatabase() {
     const createMatriculaTable = `
       CREATE TABLE IF NOT EXISTS matricula (
         idmatricula INT PRIMARY KEY AUTO_INCREMENT,
-        idaluno INT,
-        idatividades INT,
-        turno VARCHAR(45),
-        horario VARCHAR(45),
-        dia_semana VARCHAR(45),
+        idaluno INT NOT NULL,
+        idatividades INT NOT NULL,
+        turno VARCHAR(45) NOT NULL DEFAULT '',
+        horario VARCHAR(45) NOT NULL DEFAULT '',
+        dia_semana VARCHAR(45) NOT NULL DEFAULT '',
         status VARCHAR(20) DEFAULT 'matriculado',
         id_instituicao INT NOT NULL,
         FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id),

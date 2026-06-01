@@ -1052,9 +1052,9 @@ app.post('/api/matriculas/bulk', async (req, res) => {
     matriculasParaInserir.push([
       idAluno,
       idAtividade,
-      String(matricula.turno || '').trim() || null,
-      String(matricula.horario || '').trim(),
-      String(matricula.dia_semana || '').trim(),
+      String(matricula.turno || '').trim(),
+      String(matricula.horario || '').trim() || '',
+      String(matricula.dia_semana || '').trim() || '',
       'matriculado',
       req.id_instituicao
     ]);
@@ -1068,7 +1068,8 @@ app.post('/api/matriculas/bulk', async (req, res) => {
         VALUES ? 
         ON DUPLICATE KEY UPDATE 
           idatividades = VALUES(idatividades), 
-          status = VALUES(status)
+          status = VALUES(status),
+          turno = VALUES(turno)
       `;
       const [result] = await pool.query(insertMatriculaSql, [matriculasParaInserir]);
       adicionadas = result.affectedRows;
@@ -1198,9 +1199,9 @@ app.post('/api/matriculas/upsert-bulk', async (req, res) => {
       matriculasToProcess.push({
         idaluno: idAluno,
         idatividades: idAtividade,
-        turno: normalizedTurno || null,
-        horario: normalizedHorario,
-        dia_semana: normalizedDiaSemana,
+        turno: normalizedTurno,
+        horario: normalizedHorario || '',
+        dia_semana: normalizedDiaSemana || '',
         id_instituicao: req.id_instituicao
       });
 
