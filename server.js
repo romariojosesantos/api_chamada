@@ -978,13 +978,6 @@ app.post('/api/matriculas/bulk', async (req, res) => {
     const [professoresDB] = await pool.query('SELECT id, nome FROM professores WHERE id_instituicao = ?', [req.id_instituicao]);
     professoresDB.forEach(p => professoresMap.set(normalize(p.nome), p.id));
 
-    // Carrega matrículas existentes para evitar duplicatas
-    const [dbMatriculas] = await pool.query('SELECT idaluno, idatividades, dia_semana, horario FROM matricula WHERE id_instituicao = ?', [req.id_instituicao]);
-    dbMatriculas.forEach(m => {
-      const key = `${m.idaluno}-${m.idatividades}-${m.dia_semana}-${m.horario}`;
-      existingMatriculas.add(key);
-    });
-
   } catch (err) {
     console.error("Erro ao pré-carregar dados para importação em lote:", err);
     return res.status(500).json({ error: 'Erro ao preparar o servidor para a importação: ' + err.message });
@@ -1055,29 +1048,28 @@ app.post('/api/matriculas/bulk', async (req, res) => {
       }
     }
 
-    // 3. Verifica se a matrícula já existe (no banco ou no próprio arquivo)
-    const matriculaKey = `${idAluno}-${idAtividade}-${matricula.dia_semana}-${matricula.horario}`;
-    if (existingMatriculas.has(matriculaKey)) {
-      ignoradas++;
-      continue;
-    }
-
     // 4. Adiciona à lista para inserção em lote
     matriculasParaInserir.push([
       idAluno,
       idAtividade,
-      matricula.turno || null,
-      matricula.horario,
-      matricula.dia_semana,
+      String(matricula.turno || '').trim() || null,
+      String(matricula.horario || '').trim(),
+      String(matricula.dia_semana || '').trim(),
+      'matriculado',
       req.id_instituicao
     ]);
-    existingMatriculas.add(matriculaKey); // Evita duplicatas dentro do mesmo arquivo
   }
 
   // 5. Insere todas as novas matrículas de uma vez
   if (matriculasParaInserir.length > 0) {
     try {
-      const insertMatriculaSql = 'INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, id_instituicao) VALUES ?';
+      const insertMatriculaSql = `
+        INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, status, id_instituicao) 
+        VALUES ? 
+        ON DUPLICATE KEY UPDATE 
+          idatividades = VALUES(idatividades), 
+          status = VALUES(status)
+      `;
       const [result] = await pool.query(insertMatriculaSql, [matriculasParaInserir]);
       adicionadas = result.affectedRows;
     } catch (error) {
@@ -1311,10 +1303,13 @@ app.post('/api/matriculas', async (req, res) => {
 
   try {
     const sql = `
-      INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, id_instituicao)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, status, id_instituicao)
+      VALUES (?, ?, ?, ?, ?, 'matriculado', ?)
+      ON DUPLICATE KEY UPDATE 
+        idatividades = VALUES(idatividades),
+        status = 'matriculado'
     `;
-    const [result] = await pool.query(sql, [idaluno, idatividades, turno, horario, dia_semana, req.id_instituicao]);
+    const [result] = await pool.query(sql, [idaluno, idatividades, String(turno).trim(), String(horario).trim(), String(dia_semana).trim(), req.id_instituicao]);
     res.status(201).json({ idmatricula: result.insertId, message: 'Aluno matriculado com sucesso!' });
   } catch (err) {
     console.error("Erro em POST /api/matriculas:", err);
