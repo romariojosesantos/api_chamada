@@ -449,7 +449,13 @@ app.post('/api/alunos/bulk', async (req, res) => {
         }
 
         if (matriculasValues.length > 0) {
-          const insertMatriculaSql = 'INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, status, id_instituicao) VALUES ?';
+          const insertMatriculaSql = `
+            INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, status, id_instituicao) 
+            VALUES ?
+            ON DUPLICATE KEY UPDATE 
+              idatividades = VALUES(idatividades),
+              status = VALUES(status)
+          `;
           await pool.query(insertMatriculaSql, [matriculasValues]);
         }
       }

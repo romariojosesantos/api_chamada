@@ -105,7 +105,7 @@ async function setupDatabase() {
         status VARCHAR(20) DEFAULT 'matriculado',
         id_instituicao INT NOT NULL,
         FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id),
-        UNIQUE KEY idx_aluno_dia_hora_inst (idaluno, dia_semana, horario, id_instituicao)
+        UNIQUE KEY idx_aluno_turno_dia_hora_inst (idaluno, turno, dia_semana, horario, id_instituicao)
       ) ENGINE=InnoDB;
     `;
 
