@@ -14,15 +14,9 @@ async function setupDatabase() {
     });
     console.log('Conectado com sucesso ao banco de dados MySQL.');
 
-    // Desativa a verificação de chaves estrangeiras para permitir o reset das tabelas
-    await db.query('SET FOREIGN_KEY_CHECKS=0;');
-
-    // Remove as tabelas existentes para garantir que o novo esquema (com id_instituicao) seja aplicado.
-    const tablesToReset = ['presenca', 'matricula', 'atividades', 'professores', 'alunos', 'instituicoes', 'chamada_conexao'];
-    for (const table of tablesToReset) {
-      await db.query(`DROP TABLE IF EXISTS ${table}`);
-    }
-    console.log('Tabelas antigas removidas para atualização de esquema.');
+    // SEGURANÇA: O comando de DROP TABLE foi removido para evitar a perda de dados existentes.
+    // O sistema agora apenas criará as tabelas caso elas ainda não existam.
+    console.log('Verificando integridade das tabelas...');
 
     // 2. Define o SQL para criar as tabelas
     const createInstituicoesTable = `
@@ -131,21 +125,34 @@ async function setupDatabase() {
     await db.query(createMatriculaTable);
     console.log('Tabela "matricula" pronta.');
 
-    // 4. Insere uma instituição de teste
-    const [instResult] = await db.query('INSERT INTO instituicoes (nome) VALUES (?)', ['Instituição Padrão']);
-    const instId = instResult.insertId;
+    // 4. Insere ou recupera uma instituição de teste para evitar duplicatas e erros
+    const [instRows] = await db.query('SELECT id FROM instituicoes WHERE nome = ? LIMIT 1', ['Instituição Padrão']);
+    let instId;
+    if (instRows.length > 0) {
+      instId = instRows[0].id;
+      console.log('Instituição "Instituição Padrão" já existe. ID:', instId);
+    } else {
+      const [instResult] = await db.query('INSERT INTO instituicoes (nome) VALUES (?)', ['Instituição Padrão']);
+      instId = instResult.insertId;
+      console.log('Instituição "Instituição Padrão" criada com sucesso.');
+    }
 
-    const insertAlunosSQL = 'INSERT INTO alunos (nome, telefone, turno, transporte, id_instituicao) VALUES ?';
+    // Sincronização de alunos de teste: atualiza se já existir (pelo nome + inst), ou cria se for novo.
+    const insertAlunosSQL = `
+      INSERT INTO alunos (nome, telefone, turno, transporte, id_instituicao) 
+      VALUES ? 
+      ON DUPLICATE KEY UPDATE 
+        telefone = VALUES(telefone), 
+        turno = VALUES(turno), 
+        transporte = VALUES(transporte)
+    `;
     const alunosValues = [
       ['Ana Silva', '123456789', 'Manhã', 'Onibus Branco', instId],
       ['Bruno Costa', '987654321', 'Tarde', 'Onibus Amarelo', instId]
     ];
 
     await db.query(insertAlunosSQL, [alunosValues]);
-    console.log('Dados iniciais inseridos para a instituição ' + instId);
-
-    // Reativa a verificação de chaves estrangeiras
-    await db.query('SET FOREIGN_KEY_CHECKS=1;');
+    console.log('Dados iniciais de alunos sincronizados.');
 
   } catch (error) {
     console.error('Ocorreu um erro durante a configuração do banco de dados:', error);

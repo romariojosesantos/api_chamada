@@ -605,7 +605,7 @@ app.post('/api/alunos/upsert-bulk', async (req, res) => {
                 `INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, status, id_instituicao) 
                  VALUES (?, ?, ?, ?, ?, 'matriculado', ?) 
                  ON DUPLICATE KEY UPDATE status = 'matriculado', idatividades = VALUES(idatividades), turno = VALUES(turno)`,
-                [alunoId, idAtividade, aluno.turno || aluno.TURNO || null, horarioSlot, diasSemanaMap[diaSigla], req.id_instituicao]
+                [alunoId, idAtividade, aluno.turno || aluno.TURNO || '', horarioSlot, diasSemanaMap[diaSigla] || '', req.id_instituicao]
               );
               infoLinha.matriculas++;
               resumo.matriculas_vinculadas++;
@@ -775,7 +775,7 @@ app.get('/api/relatorios/estatisticas-diarias', async (req, res) => {
     
     // 2. Quantidade de alunos ativos por turno
     const sqlPorTurno = `
-      SELECT IFNULL(NULLIF(TRIM(turno), ''), 'Não Informado') as turno, COUNT(*) as quantidade 
+      SELECT IFNULL(NULLIF(TRIM(turno), ''), 'Sem Turno') as turno, COUNT(*) as quantidade 
       FROM alunos 
       WHERE id_instituicao = ? AND (status = 'ativo' OR status IS NULL OR status = '') 
       GROUP BY turno
