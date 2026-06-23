@@ -47,20 +47,11 @@ const parseDataNascimento = (data) => {
 router.get('/', asyncHandler(async (req, res) => {
   const { nome, turno, transporte, status } = req.query;
   
-  // Otimização: Usar LEFT JOIN em vez de subquery correlacionada para melhor performance
   let sql = `
     SELECT a.id, a.nome, a.data_nascimento, a.sexo, a.telefone, 
            a.turma, a.turno, a.transporte, a.status, a.Inf,
-           COALESCE(dias_agrupados.dias_matriculados, '') as dias_matriculados
+           '' as dias_matriculados
     FROM alunos a 
-    LEFT JOIN (
-      SELECT m.idaluno, 
-             GROUP_CONCAT(DISTINCT TRIM(m.dia_semana) SEPARATOR ',') as dias_matriculados
-      FROM matricula m
-      INNER JOIN atividades atv ON m.idatividades = atv.idatividades
-      WHERE m.status = 'matriculado' AND atv.exibir_no_resumo = 1
-      GROUP BY m.idaluno
-    ) dias_agrupados ON a.id = dias_agrupados.idaluno
     WHERE a.id_instituicao = ?
   `;
   const params = [req.id_instituicao];
