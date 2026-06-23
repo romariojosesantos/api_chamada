@@ -120,9 +120,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
     res.json(results);
   } catch (error) {
     console.error('Erro na rota /por-dia:', error.message);
-    console.error('SQL:', sql);
-    console.error('Params:', params);
-    res.status(500).json({ error: 'Erro interno ao buscar alunos por dia', details: error.message });
+    res.status(500).json({ error: 'Erro interno ao buscar alunos por dia' });
   }
 }));
 
