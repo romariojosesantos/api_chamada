@@ -49,7 +49,8 @@ async function setupDatabase() {
         id INT PRIMARY KEY AUTO_INCREMENT,
         nome VARCHAR(100) NOT NULL,
         id_instituicao INT NOT NULL,
-        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id)
+        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id),
+        UNIQUE KEY idx_prof_inst (nome, id_instituicao)
       ) ENGINE=InnoDB;
     `;
 
@@ -58,8 +59,10 @@ async function setupDatabase() {
         idatividades INT PRIMARY KEY AUTO_INCREMENT,
         nome VARCHAR(60) NOT NULL,
         idprofessor INT,
+        exibir_no_resumo TINYINT(1) DEFAULT 1,
         id_instituicao INT NOT NULL,
-        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id)
+        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id),
+        UNIQUE KEY idx_atv_inst (nome, id_instituicao)
       ) ENGINE=InnoDB;
     `;
 
@@ -137,6 +140,25 @@ async function setupDatabase() {
       console.log('Instituição "Instituição Padrão" criada com sucesso.');
     }
 
+    // 4.1 Insere Professor e Atividade de teste para que a Grade funcione corretamente
+    const [profRows] = await db.query('SELECT id FROM professores WHERE nome = ? AND id_instituicao = ?', ['Professor de Teste', instId]);
+    let profId;
+    if (profRows.length > 0) {
+      profId = profRows[0].id;
+    } else {
+      const [profResult] = await db.query('INSERT INTO professores (nome, id_instituicao) VALUES (?, ?)', ['Professor de Teste', instId]);
+      profId = profResult.insertId;
+    }
+
+    const [atvRows] = await db.query('SELECT idatividades FROM atividades WHERE nome = ? AND id_instituicao = ?', ['Atividade Padrão', instId]);
+    let atvId;
+    if (atvRows.length > 0) {
+      atvId = atvRows[0].idatividades;
+    } else {
+      const [atvResult] = await db.query('INSERT INTO atividades (nome, idprofessor, id_instituicao) VALUES (?, ?, ?)', ['Atividade Padrão', profId, instId]);
+      atvId = atvResult.insertId;
+    }
+
     // Sincronização de alunos de teste: atualiza se já existir (pelo nome + inst), ou cria se for novo.
     const insertAlunosSQL = `
       INSERT INTO alunos (nome, telefone, turno, transporte, id_instituicao) 
@@ -153,6 +175,21 @@ async function setupDatabase() {
 
     await db.query(insertAlunosSQL, [alunosValues]);
     console.log('Dados iniciais de alunos sincronizados.');
+
+    // Insere matrículas de teste APENAS para os alunos padrão (para não sujar dados reais)
+    const [alunosRows] = await db.query('SELECT id FROM alunos WHERE nome IN (?, ?) AND id_instituicao = ?', ['Ana Silva', 'Bruno Costa', instId]);
+    if (alunosRows.length > 0) {
+      const matriculasValues = alunosRows.map(aluno => [
+        aluno.id, 
+        atvId, // Usa o ID da atividade real criada acima
+        aluno.id % 2 === 0 ? 'Tarde' : 'Manhã',
+        '08:00',
+        'Segunda,Terça,Quarta,Quinta,Sexta', 
+        instId
+      ]);
+      await db.query('INSERT IGNORE INTO matricula (idaluno, idatividades, turno, horario, dia_semana, id_instituicao) VALUES ?', [matriculasValues]);
+      console.log('Matrículas de teste criadas.');
+    }
 
   } catch (error) {
     console.error('Ocorreu um erro durante a configuração do banco de dados:', error);
