@@ -92,28 +92,15 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
 
   let sql, params;
 
-  // Otimização: Usar LEFT JOIN em vez de subquery correlacionada para melhor performance
-  const diasMatriculadosJoin = `
-    LEFT JOIN (
-      SELECT m.idaluno, 
-             GROUP_CONCAT(DISTINCT TRIM(m.dia_semana) SEPARATOR ',') as dias_matriculados
-      FROM matricula m
-      INNER JOIN atividades atv ON m.idatividades = atv.idatividades
-      WHERE m.status = 'matriculado' AND atv.exibir_no_resumo = 1
-      GROUP BY m.idaluno
-    ) dias_agrupados ON a.id = dias_agrupados.idaluno
-  `;
-
   if (ignoreFilters === 'true') {
     // Modo Relatório: retorna TODOS os alunos ativos com status de presença para a data
     sql = `
       SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
-             COALESCE(dias_agrupados.dias_matriculados, '') as dias_matriculados,
+             '' as dias_matriculados,
              p.status AS presenca_status, p.observacao AS presenca_obs
       FROM alunos a
       JOIN matricula m ON a.id = m.idaluno
       JOIN atividades atv ON m.idatividades = atv.idatividades
-      ${diasMatriculadosJoin}
       LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
       WHERE a.status = 'ativo'
       AND m.status = 'matriculado'
@@ -125,12 +112,11 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
     // Modo Chamada: filtra apenas os alunos matriculados no dia da semana informado
     sql = `
       SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
-             COALESCE(dias_agrupados.dias_matriculados, '') as dias_matriculados,
+             '' as dias_matriculados,
              p.status AS presenca_status, p.observacao AS presenca_obs
       FROM alunos a
       JOIN matricula m ON a.id = m.idaluno
       JOIN atividades atv ON m.idatividades = atv.idatividades
-      ${diasMatriculadosJoin}
       LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
       WHERE TRIM(m.dia_semana) = ? 
       AND a.status = 'ativo'
