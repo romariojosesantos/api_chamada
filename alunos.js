@@ -50,7 +50,7 @@ router.get('/', asyncHandler(async (req, res) => {
   let sql = `
     SELECT a.id, a.nome, a.data_nascimento, a.sexo, a.telefone, 
            a.turma, a.turno, a.transporte, a.status, a.Inf,
-           '' as dias_matriculados
+           ${getDiasMatriculadosSubquery()}
     FROM alunos a 
     WHERE a.id_instituicao = ?
   `;
@@ -87,7 +87,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
     // Modo Relatório: retorna TODOS os alunos ativos com status de presença para a data
     sql = `
       SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
-             '' as dias_matriculados,
+             ${getDiasMatriculadosSubquery()},
              p.status AS presenca_status, p.observacao AS presenca_obs
       FROM alunos a
       JOIN matricula m ON a.id = m.idaluno
@@ -103,7 +103,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
     // Modo Chamada: filtra apenas os alunos matriculados no dia da semana informado
     sql = `
       SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
-             '' as dias_matriculados,
+             ${getDiasMatriculadosSubquery()},
              p.status AS presenca_status, p.observacao AS presenca_obs
       FROM alunos a
       JOIN matricula m ON a.id = m.idaluno
