@@ -10,14 +10,9 @@ router.get('/', asyncHandler(async (req, res) => {
     SELECT m.idmatricula, m.idaluno, m.idatividades, m.turno, m.horario, m.dia_semana, m.status, m.id_instituicao,
            a.nome as nome_aluno,
            a.turno as aluno_turno, 
-           a.transporte,
-           at.nome as nome_atividade,
-           at.exibir_no_resumo,
-           p.nome as nome_professor
+           a.transporte
     FROM matricula m
     JOIN alunos a ON m.idaluno = a.id
-    LEFT JOIN atividades at ON m.idatividades = at.idatividades
-    LEFT JOIN professores p ON at.idprofessor = p.id
     WHERE m.id_instituicao = ?
     ORDER BY a.nome ASC
   `;

@@ -29,8 +29,7 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
     `SELECT COUNT(DISTINCT a.id) as total 
      FROM alunos a 
      JOIN matricula m ON a.id = m.idaluno
-     JOIN atividades atv ON m.idatividades = atv.idatividades
-     WHERE a.id_instituicao = ? AND a.status = 'ativo' AND TRIM(m.dia_semana) = ? AND atv.exibir_no_resumo = 1`,
+     WHERE a.id_instituicao = ? AND a.status = 'ativo' AND TRIM(m.dia_semana) = ? AND m.status = 'matriculado'`,
     [req.id_instituicao, diaDaSemana]
   );
 
