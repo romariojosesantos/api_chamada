@@ -11,8 +11,7 @@ const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next
 const getDiasMatriculadosSubquery = () => `
   IFNULL((SELECT GROUP_CONCAT(DISTINCT TRIM(m2.dia_semana) SEPARATOR ',') 
    FROM matricula m2 
-   INNER JOIN atividades atv ON m2.idatividades = atv.idatividades
-   WHERE m2.idaluno = a.id AND m2.status = 'matriculado' AND m2.id_instituicao = a.id_instituicao AND atv.exibir_no_resumo = 1), '') as dias_matriculados
+   WHERE m2.idaluno = a.id AND m2.status = 'matriculado' AND m2.id_instituicao = a.id_instituicao), '') as dias_matriculados
 `;
 
 // Helper para validar e normalizar turno
@@ -91,7 +90,6 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
              p.status AS presenca_status, p.observacao AS presenca_obs
       FROM alunos a
       JOIN matricula m ON a.id = m.idaluno
-      JOIN atividades atv ON m.idatividades = atv.idatividades
       LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
       WHERE a.status = 'ativo'
       AND m.status = 'matriculado'
@@ -107,7 +105,6 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
              p.status AS presenca_status, p.observacao AS presenca_obs
       FROM alunos a
       JOIN matricula m ON a.id = m.idaluno
-      JOIN atividades atv ON m.idatividades = atv.idatividades
       LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
       WHERE TRIM(m.dia_semana) = ? 
       AND a.status = 'ativo'
@@ -118,8 +115,15 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
     params = [data, diaDaSemana, req.id_instituicao];
   }
 
-  const [results] = await pool.query(sql, params);
-  res.json(results);
+  try {
+    const [results] = await pool.query(sql, params);
+    res.json(results);
+  } catch (error) {
+    console.error('Erro na rota /por-dia:', error.message);
+    console.error('SQL:', sql);
+    console.error('Params:', params);
+    res.status(500).json({ error: 'Erro interno ao buscar alunos por dia', details: error.message });
+  }
 }));
 
 
