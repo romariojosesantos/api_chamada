@@ -39,10 +39,11 @@ const gradeRouter = require('./grade');
 
 // Middlewares
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://seu-dominio.com'] // Liste seus domínios permitidos
-    : '*', 
-  allowedHeaders: ['Content-Type', 'x-institution-id', 'Authorization', 'Pragma', 'Cache-Control', 'Expires']
+  origin: process.env.NODE_ENV === 'production'
+    ? ['https://controle-de-presenca-ten.vercel.app', 'https://api-chamada.vercel.app'] // Domínios permitidos em produção
+    : '*',
+  allowedHeaders: ['Content-Type', 'x-institution-id', 'Authorization', 'Pragma', 'Cache-Control', 'Expires'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
 }));
 
 // Middleware para desativar o cache do navegador (Crucial para iPhone/Safari)
