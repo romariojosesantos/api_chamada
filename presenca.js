@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { validate } = require('./validation');
+const { logAuditEvent } = require('./audit');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -39,11 +40,8 @@ router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
     
     const [result] = await connection.query(sql, [values]);
 
-    // Opcional: Registrar evento na tabela de conexões/auditoria
-    await connection.query(
-      'INSERT INTO chamada_conexao (evento, detalhes, id_instituicao) VALUES (?, ?, ?)',
-      ['SALVAR_CHAMADA_LOTE', `Data: ${data}, Alunos: ${chamadas.length}, Afetados: ${result.affectedRows}`, req.id_instituicao]
-    );
+    // Registrar evento na tabela de conexões/auditoria
+    await logAuditEvent('SALVAR_CHAMADA_LOTE', `Data: ${data}, Alunos: ${chamadas.length}, Afetados: ${result.affectedRows}`, req.id_instituicao, connection);
 
     await connection.commit();
 

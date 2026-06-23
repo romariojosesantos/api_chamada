@@ -2,21 +2,65 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { validate } = require('./validation');
+const { logAuditEvent } = require('./audit');
 
 // Helper para envolver rotas assíncronas e capturar erros
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+// Helper para subquery de dias matriculados (evita duplicação de código)
+const getDiasMatriculadosSubquery = () => `
+  IFNULL((SELECT GROUP_CONCAT(DISTINCT TRIM(m2.dia_semana) SEPARATOR ',') 
+   FROM matricula m2 
+   INNER JOIN atividades atv ON m2.idatividades = atv.idatividades
+   WHERE m2.idaluno = a.id AND m2.status = 'matriculado' AND m2.id_instituicao = a.id_instituicao AND atv.exibir_no_resumo = 1), '') as dias_matriculados
+`;
+
+// Helper para validar e normalizar turno
+const validarTurno = (turno) => {
+  if (!turno) return null;
+  const turnoNormalizado = String(turno).trim();
+  const turnosValidos = ['Manhã', 'Tarde', 'Noite', 'Integral', 'manhã', 'tarde', 'noite', 'integral'];
+  if (!turnoNormalizado) return null;
+  // Capitaliza primeira letra se não estiver nos padrões conhecidos
+  if (!turnosValidos.includes(turnoNormalizado)) {
+    return turnoNormalizado.charAt(0).toUpperCase() + turnoNormalizado.slice(1).toLowerCase();
+  }
+  return turnoNormalizado;
+};
+
+// Helper para parse de data de nascimento (simplificado)
+const parseDataNascimento = (data) => {
+  if (!data) return null;
+  if (data instanceof Date) {
+    return data.toISOString().split('T')[0];
+  }
+  if (typeof data === 'string' && data.trim()) {
+    const parsedDate = new Date(data);
+    if (!isNaN(parsedDate.getTime())) {
+      return parsedDate.toISOString().split('T')[0];
+    }
+  }
+  return null;
+};
+
 // Listar Alunos com filtros dinâmicos
 router.get('/', asyncHandler(async (req, res) => {
   const { nome, turno, transporte, status } = req.query;
+  
+  // Otimização: Usar LEFT JOIN em vez de subquery correlacionada para melhor performance
   let sql = `
     SELECT a.id, a.nome, a.data_nascimento, a.sexo, a.telefone, 
            a.turma, a.turno, a.transporte, a.status, a.Inf,
-           IFNULL((SELECT GROUP_CONCAT(DISTINCT TRIM(m2.dia_semana) SEPARATOR ',') 
-            FROM matricula m2 
-            INNER JOIN atividades atv ON m2.idatividades = atv.idatividades
-            WHERE m2.idaluno = a.id AND m2.status = 'matriculado' AND m2.id_instituicao = a.id_instituicao AND atv.exibir_no_resumo = 1), '') as dias_matriculados
+           COALESCE(dias_agrupados.dias_matriculados, '') as dias_matriculados
     FROM alunos a 
+    LEFT JOIN (
+      SELECT m.idaluno, 
+             GROUP_CONCAT(DISTINCT TRIM(m.dia_semana) SEPARATOR ',') as dias_matriculados
+      FROM matricula m
+      INNER JOIN atividades atv ON m.idatividades = atv.idatividades
+      WHERE m.status = 'matriculado' AND atv.exibir_no_resumo = 1
+      GROUP BY m.idaluno
+    ) dias_agrupados ON a.id = dias_agrupados.idaluno
     WHERE a.id_instituicao = ?
   `;
   const params = [req.id_instituicao];
@@ -52,11 +96,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
     // Modo Relatório: retorna TODOS os alunos ativos com status de presença para a data
     sql = `
       SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
-             IFNULL((SELECT GROUP_CONCAT(DISTINCT TRIM(m2.dia_semana) SEPARATOR ',') 
-              FROM matricula m2 
-              INNER JOIN atividades atv_sub ON m2.idatividades = atv_sub.idatividades
-              WHERE m2.idaluno = a.id AND m2.status = 'matriculado' 
-              AND m2.id_instituicao = a.id_instituicao AND atv_sub.exibir_no_resumo = 1), '') as dias_matriculados,
+             ${getDiasMatriculadosSubquery()},
              p.status AS presenca_status, p.observacao AS presenca_obs
       FROM alunos a
       JOIN matricula m ON a.id = m.idaluno
@@ -72,11 +112,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
     // Modo Chamada: filtra apenas os alunos matriculados no dia da semana informado
     sql = `
       SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
-             IFNULL((SELECT GROUP_CONCAT(DISTINCT TRIM(m2.dia_semana) SEPARATOR ',') 
-              FROM matricula m2 
-              INNER JOIN atividades atv_sub ON m2.idatividades = atv_sub.idatividades
-              WHERE m2.idaluno = a.id AND m2.status = 'matriculado' 
-              AND m2.id_instituicao = a.id_instituicao AND atv_sub.exibir_no_resumo = 1), '') as dias_matriculados,
+             ${getDiasMatriculadosSubquery()},
              p.status AS presenca_status, p.observacao AS presenca_obs
       FROM alunos a
       JOIN matricula m ON a.id = m.idaluno
@@ -139,19 +175,8 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     // Prepara os valores para o INSERT em massa
     // Mapeia os campos vindos do Excel para as colunas do banco
     const values = alunos.map(a => [
-      String(a.nome || a.ALUNO || a.Aluno).trim(), // Ensure name is trimmed
-      (() => { // Handle data_nascimento formatting
-        const dataNascimento = a.data_nascimento;
-        if (dataNascimento instanceof Date) {
-          return dataNascimento.toISOString().split('T')[0];
-        } else if (typeof dataNascimento === 'string' && dataNascimento.length > 0) {
-          const parsedDate = new Date(dataNascimento);
-          if (!isNaN(parsedDate.getTime())) {
-            return parsedDate.toISOString().split('T')[0];
-          }
-        }
-        return null;
-      })(),
+      String(a.nome || a.ALUNO || a.Aluno).trim(),
+      parseDataNascimento(a.data_nascimento),
       a.sexo || null,
       a.telefone || null,
       // Ensure turma is not null if it's an empty string, otherwise default to null
@@ -215,7 +240,7 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       const alunoNome = String(alunoRaw.nome || alunoRaw.ALUNO || alunoRaw.Aluno).trim();
       const studentInfo = studentIdMap.get(alunoNome);
       const idaluno = studentInfo?.id;
-      const alunoTurno = studentInfo?.turno || String(alunoRaw.turno || '').trim(); // Prioriza turno do DB, senão do Excel
+      const alunoTurno = validarTurno(studentInfo?.turno || alunoRaw.turno); // Prioriza turno do DB, senão do Excel
 
       if (!idaluno) {
         console.warn(`Aluno ${alunoNome} não encontrado após upsert. Pulando matrículas.`);
@@ -318,12 +343,16 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         }
       }
       if (activitiesToUpdate.length > 0) {
-        for (const updateParams of activitiesToUpdate) {
-          await connection.query(
-            `UPDATE atividades SET idprofessor = ? WHERE idatividades = ? AND id_instituicao = ?`,
-            updateParams
-          );
-        }
+        // Otimização: Bulk update usando CASE WHEN em vez de loop
+        const caseWhenParts = activitiesToUpdate.map(([profId, actId]) => 
+          `WHEN ${actId} THEN ${profId}`
+        ).join(' ');
+        const actIds = activitiesToUpdate.map(([, actId]) => actId).join(',');
+        
+        await connection.query(
+          `UPDATE atividades SET idprofessor = CASE idatividades ${caseWhenParts} END WHERE idatividades IN (${actIds}) AND id_instituicao = ?`,
+          [req.id_instituicao]
+        );
       }
     }
 
@@ -381,6 +410,8 @@ router.post('/', validate('aluno'), asyncHandler(async (req, res) => {
     turma || null, turno || null, transporte || null, Inf || null, 
     status || 'ativo', req.id_instituicao
   ]);
+  
+  await logAuditEvent('CRIAR_ALUNO', `Aluno ID: ${result.insertId}, Nome: ${nome}`, req.id_instituicao);
   res.status(201).json({ id: result.insertId, message: 'Aluno criado com sucesso!' });
 }));
 
@@ -398,6 +429,8 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   const [result] = await pool.query(sql, [campo, valor, id, req.id_instituicao]);
 
   if (result.affectedRows === 0) return res.status(404).json({ error: 'Aluno não encontrado.' });
+  
+  await logAuditEvent('ATUALIZAR_ALUNO', `Aluno ID: ${id}, Campo: ${campo}`, req.id_instituicao);
   res.json({ message: 'Campo atualizado com sucesso.' });
 }));
 
@@ -416,6 +449,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
     
     if (result.affectedRows === 0) throw new Error('Aluno não encontrado');
 
+    await logAuditEvent('EXCLUIR_ALUNO', `Aluno ID: ${id} excluído com matrículas`, req.id_instituicao, connection);
     await connection.commit();
     res.json({ message: 'Aluno e suas matrículas excluídos com sucesso!' });
   } catch (err) {

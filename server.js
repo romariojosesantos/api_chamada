@@ -5,6 +5,28 @@ const express = require('express');
 const cors = require('cors');
 const pool = require('./db');
 
+// Cache simples em memória para endpoints estáticos
+const cache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
+
+const getCache = (key) => {
+  const item = cache.get(key);
+  if (!item) return null;
+  if (Date.now() > item.expiry) {
+    cache.delete(key);
+    return null;
+  }
+  return item.data;
+};
+
+const setCache = (key, data) => {
+  cache.set(key, { data, expiry: Date.now() + CACHE_TTL });
+};
+
+const clearCache = () => {
+  cache.clear();
+};
+
 // Inicializa o aplicativo Express
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -25,10 +47,13 @@ app.use(cors({
 
 // Middleware para desativar o cache do navegador (Crucial para iPhone/Safari)
 // Isso garante que o celular sempre busque a informação mais recente do banco de dados.
+// Aplicado apenas para requisições GET, já que POST/PUT/DELETE não são cacheados pelo navegador.
 app.use((req, res, next) => {
-  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.set('Pragma', 'no-cache');
-  res.set('Expires', '0');
+  if (req.method === 'GET') {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+  }
   next();
 });
 
@@ -51,7 +76,14 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Útil para o frontend preencher um Select/Dropdown de escolha de escola
 app.get('/api/instituicoes/todas', async (req, res) => {
   try {
+    const cacheKey = 'instituicoes_todas';
+    const cached = getCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+    
     const [results] = await pool.query("SELECT id, nome FROM instituicoes ORDER BY nome ASC");
+    setCache(cacheKey, results);
     res.json(results);
   } catch (err) {
     console.error("Erro em GET /api/instituicoes/todas:", err);
@@ -93,6 +125,12 @@ app.get('/api/instituicao', async (req, res) => {
 // Rota para listar transportes únicos da instituição (para o dropdown de filtros)
 app.get('/api/transportes', async (req, res) => {
   try {
+    const cacheKey = `transportes_${req.id_instituicao}`;
+    const cached = getCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+    
     const sql = `
       SELECT DISTINCT transporte 
       FROM alunos 
@@ -101,6 +139,7 @@ app.get('/api/transportes', async (req, res) => {
     `;
     const [results] = await pool.query(sql, [req.id_instituicao]);
     const lista = results.map(r => r.transporte);
+    setCache(cacheKey, lista);
     res.json(lista);
   } catch (err) {
     console.error("Erro em GET /api/transportes:", err);

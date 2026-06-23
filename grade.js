@@ -7,9 +7,8 @@ const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next
 // Listar todas as matrículas/grade da instituição
 router.get('/', asyncHandler(async (req, res) => {
   const sql = `
-    SELECT m.*, 
-           a.nome as nome_aluno, 
-           a.nome as aluno_nome,
+    SELECT m.idmatricula, m.idaluno, m.idatividades, m.turno, m.horario, m.dia_semana, m.status, m.id_instituicao,
+           a.nome as nome_aluno,
            a.turno as aluno_turno, 
            a.transporte,
            at.nome as nome_atividade,

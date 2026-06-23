@@ -102,6 +102,8 @@ async function setupDatabase() {
         status VARCHAR(20) DEFAULT 'matriculado',
         id_instituicao INT NOT NULL,
         FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id),
+        FOREIGN KEY (idaluno) REFERENCES alunos(id) ON DELETE CASCADE,
+        FOREIGN KEY (idatividades) REFERENCES atividades(id) ON DELETE CASCADE,
         UNIQUE KEY idx_aluno_turno_dia_hora_inst (idaluno, turno, dia_semana, horario, id_instituicao)
       ) ENGINE=InnoDB;
     `;
@@ -128,67 +130,76 @@ async function setupDatabase() {
     await db.query(createMatriculaTable);
     console.log('Tabela "matricula" pronta.');
 
-    // 4. Insere ou recupera uma instituição de teste para evitar duplicatas e erros
-    const [instRows] = await db.query('SELECT id FROM instituicoes WHERE nome = ? LIMIT 1', ['Instituição Padrão']);
-    let instId;
-    if (instRows.length > 0) {
-      instId = instRows[0].id;
-      console.log('Instituição "Instituição Padrão" já existe. ID:', instId);
+    // 4. Dados de teste - apenas em desenvolvimento se ENABLE_TEST_DATA=true
+    const enableTestData = process.env.ENABLE_TEST_DATA === 'true';
+    
+    if (enableTestData) {
+      console.log('Inserindo dados de teste (ENABLE_TEST_DATA=true)...');
+      
+      // 4.1 Insere ou recupera uma instituição de teste para evitar duplicatas e erros
+      const [instRows] = await db.query('SELECT id FROM instituicoes WHERE nome = ? LIMIT 1', ['Instituição Padrão']);
+      let instId;
+      if (instRows.length > 0) {
+        instId = instRows[0].id;
+        console.log('Instituição "Instituição Padrão" já existe. ID:', instId);
+      } else {
+        const [instResult] = await db.query('INSERT INTO instituicoes (nome) VALUES (?)', ['Instituição Padrão']);
+        instId = instResult.insertId;
+        console.log('Instituição "Instituição Padrão" criada com sucesso.');
+      }
+
+      // 4.2 Insere Professor e Atividade de teste para que a Grade funcione corretamente
+      const [profRows] = await db.query('SELECT id FROM professores WHERE nome = ? AND id_instituicao = ?', ['Professor de Teste', instId]);
+      let profId;
+      if (profRows.length > 0) {
+        profId = profRows[0].id;
+      } else {
+        const [profResult] = await db.query('INSERT INTO professores (nome, id_instituicao) VALUES (?, ?)', ['Professor de Teste', instId]);
+        profId = profResult.insertId;
+      }
+
+      const [atvRows] = await db.query('SELECT idatividades FROM atividades WHERE nome = ? AND id_instituicao = ?', ['Atividade Padrão', instId]);
+      let atvId;
+      if (atvRows.length > 0) {
+        atvId = atvRows[0].idatividades;
+      } else {
+        const [atvResult] = await db.query('INSERT INTO atividades (nome, idprofessor, id_instituicao) VALUES (?, ?, ?)', ['Atividade Padrão', profId, instId]);
+        atvId = atvResult.insertId;
+      }
+
+      // 4.3 Sincronização de alunos de teste: atualiza se já existir (pelo nome + inst), ou cria se for novo.
+      const insertAlunosSQL = `
+        INSERT INTO alunos (nome, telefone, turno, transporte, id_instituicao) 
+        VALUES ? 
+        ON DUPLICATE KEY UPDATE 
+          telefone = VALUES(telefone), 
+          turno = VALUES(turno), 
+          transporte = VALUES(transporte)
+      `;
+      const alunosValues = [
+        ['Ana Silva', '123456789', 'Manhã', 'Onibus Branco', instId],
+        ['Bruno Costa', '987654321', 'Tarde', 'Onibus Amarelo', instId]
+      ];
+
+      await db.query(insertAlunosSQL, [alunosValues]);
+      console.log('Dados iniciais de alunos sincronizados.');
+
+      // 4.4 Insere matrículas de teste APENAS para os alunos padrão (para não sujar dados reais)
+      const [alunosRows] = await db.query('SELECT id FROM alunos WHERE nome IN (?, ?) AND id_instituicao = ?', ['Ana Silva', 'Bruno Costa', instId]);
+      if (alunosRows.length > 0) {
+        const matriculasValues = alunosRows.map(aluno => [
+          aluno.id, 
+          atvId, // Usa o ID da atividade real criada acima
+          aluno.id % 2 === 0 ? 'Tarde' : 'Manhã',
+          '08:00',
+          'Segunda,Terça,Quarta,Quinta,Sexta', 
+          instId
+        ]);
+        await db.query('INSERT IGNORE INTO matricula (idaluno, idatividades, turno, horario, dia_semana, id_instituicao) VALUES ?', [matriculasValues]);
+        console.log('Matrículas de teste criadas.');
+      }
     } else {
-      const [instResult] = await db.query('INSERT INTO instituicoes (nome) VALUES (?)', ['Instituição Padrão']);
-      instId = instResult.insertId;
-      console.log('Instituição "Instituição Padrão" criada com sucesso.');
-    }
-
-    // 4.1 Insere Professor e Atividade de teste para que a Grade funcione corretamente
-    const [profRows] = await db.query('SELECT id FROM professores WHERE nome = ? AND id_instituicao = ?', ['Professor de Teste', instId]);
-    let profId;
-    if (profRows.length > 0) {
-      profId = profRows[0].id;
-    } else {
-      const [profResult] = await db.query('INSERT INTO professores (nome, id_instituicao) VALUES (?, ?)', ['Professor de Teste', instId]);
-      profId = profResult.insertId;
-    }
-
-    const [atvRows] = await db.query('SELECT idatividades FROM atividades WHERE nome = ? AND id_instituicao = ?', ['Atividade Padrão', instId]);
-    let atvId;
-    if (atvRows.length > 0) {
-      atvId = atvRows[0].idatividades;
-    } else {
-      const [atvResult] = await db.query('INSERT INTO atividades (nome, idprofessor, id_instituicao) VALUES (?, ?, ?)', ['Atividade Padrão', profId, instId]);
-      atvId = atvResult.insertId;
-    }
-
-    // Sincronização de alunos de teste: atualiza se já existir (pelo nome + inst), ou cria se for novo.
-    const insertAlunosSQL = `
-      INSERT INTO alunos (nome, telefone, turno, transporte, id_instituicao) 
-      VALUES ? 
-      ON DUPLICATE KEY UPDATE 
-        telefone = VALUES(telefone), 
-        turno = VALUES(turno), 
-        transporte = VALUES(transporte)
-    `;
-    const alunosValues = [
-      ['Ana Silva', '123456789', 'Manhã', 'Onibus Branco', instId],
-      ['Bruno Costa', '987654321', 'Tarde', 'Onibus Amarelo', instId]
-    ];
-
-    await db.query(insertAlunosSQL, [alunosValues]);
-    console.log('Dados iniciais de alunos sincronizados.');
-
-    // Insere matrículas de teste APENAS para os alunos padrão (para não sujar dados reais)
-    const [alunosRows] = await db.query('SELECT id FROM alunos WHERE nome IN (?, ?) AND id_instituicao = ?', ['Ana Silva', 'Bruno Costa', instId]);
-    if (alunosRows.length > 0) {
-      const matriculasValues = alunosRows.map(aluno => [
-        aluno.id, 
-        atvId, // Usa o ID da atividade real criada acima
-        aluno.id % 2 === 0 ? 'Tarde' : 'Manhã',
-        '08:00',
-        'Segunda,Terça,Quarta,Quinta,Sexta', 
-        instId
-      ]);
-      await db.query('INSERT IGNORE INTO matricula (idaluno, idatividades, turno, horario, dia_semana, id_instituicao) VALUES ?', [matriculasValues]);
-      console.log('Matrículas de teste criadas.');
+      console.log('Pulando inserção de dados de teste (defina ENABLE_TEST_DATA=true para habilitar).');
     }
 
   } catch (error) {

@@ -30,8 +30,8 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
      FROM alunos a 
      JOIN matricula m ON a.id = m.idaluno
      JOIN atividades atv ON m.idatividades = atv.idatividades
-     WHERE a.id_instituicao = ? AND a.status = 'ativo' AND m.dia_semana LIKE ? AND atv.exibir_no_resumo = 1`,
-    [req.id_instituicao, `%${diaDaSemana}%`]
+     WHERE a.id_instituicao = ? AND a.status = 'ativo' AND TRIM(m.dia_semana) = ? AND atv.exibir_no_resumo = 1`,
+    [req.id_instituicao, diaDaSemana]
   );
 
   res.json({
