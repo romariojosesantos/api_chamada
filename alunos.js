@@ -95,7 +95,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
       LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
       WHERE a.status = 'ativo'
       AND m.status = 'matriculado'
-      AND a.id_instituicao = ? AND atv.exibir_no_resumo = 1
+      AND a.id_instituicao = ?
       ORDER BY a.nome ASC
     `;
     params = [data, req.id_instituicao];
@@ -112,7 +112,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
       WHERE TRIM(m.dia_semana) = ? 
       AND a.status = 'ativo'
       AND m.status = 'matriculado'
-      AND a.id_instituicao = ? AND atv.exibir_no_resumo = 1
+      AND a.id_instituicao = ?
       ORDER BY a.nome ASC
     `;
     params = [data, diaDaSemana, req.id_instituicao];
