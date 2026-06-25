@@ -36,6 +36,7 @@ const alunosRouter = require('./alunos');
 const presencaRouter = require('./presenca');
 const relatoriosRouter = require('./relatorios');
 const gradeRouter = require('./grade');
+const matriculasRouter = require('./matriculas');
 
 // Middlewares
 app.use(cors({
@@ -148,11 +149,39 @@ app.get('/api/transportes', async (req, res) => {
   }
 });
 
+// Rota para listar professores únicos da instituição (para o dropdown de filtros)
+app.get('/api/professores', async (req, res) => {
+  try {
+    const cacheKey = `professores_${req.id_instituicao}`;
+    const cached = getCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+    
+    const sql = `
+      SELECT DISTINCT p.nome 
+      FROM professores p
+      JOIN atividades a ON p.id = a.idprofessor
+      JOIN matricula m ON a.idatividades = m.idatividades
+      WHERE p.id_instituicao = ? AND m.status = 'matriculado'
+      ORDER BY p.nome ASC
+    `;
+    const [results] = await pool.query(sql, [req.id_instituicao]);
+    const lista = results.map(r => r.nome);
+    setCache(cacheKey, lista);
+    res.json(lista);
+  } catch (err) {
+    console.error("Erro em GET /api/professores:", err);
+    res.status(500).json({ error: 'Erro ao buscar professores: ' + err.message });
+  }
+});
+
 // Modularização de Rotas (Transferido para roteadores específicos)
 app.use('/api/alunos', alunosRouter);
 app.use('/api/presenca', presencaRouter);
 app.use('/api/relatorios', relatoriosRouter);
 app.use('/api/grade', gradeRouter);
+app.use('/api/matriculas', matriculasRouter);
 
 // Middleware de Tratamento de Erros Global (Melhoria de UX/Estabilidade)
 app.use((err, req, res, next) => {

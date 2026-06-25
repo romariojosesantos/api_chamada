@@ -21,7 +21,7 @@ const schemas = {
     chamadas: Joi.array().items(
       Joi.object({
         aluno_id: Joi.number().required(),
-        status: Joi.string().valid('presente', 'falta', 'justificado').required(),
+        status: Joi.string().valid('presente', 'falta', 'justificado', 'ausente').required(),
         observacao: Joi.string().allow(null, '')
       })
     ).min(1).required()

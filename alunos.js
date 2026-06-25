@@ -73,7 +73,7 @@ router.get('/', asyncHandler(async (req, res) => {
 
 // Rota para buscar alunos que possuem aula em um dia específico (Base para a Chamada)
 router.get('/por-dia', asyncHandler(async (req, res) => {
-  const { data, ignoreFilters } = req.query; // Espera formato YYYY-MM-DD
+  const { data, ignoreFilters, professor } = req.query; // Espera formato YYYY-MM-DD
   if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
 
   const dateObj = new Date(`${data}T00:00:00`);
@@ -84,35 +84,74 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
 
   if (ignoreFilters === 'true') {
     // Modo Relatório: retorna TODOS os alunos ativos com status de presença para a data
-    sql = `
-      SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
-             ${getDiasMatriculadosSubquery()},
-             p.status AS presenca_status, p.observacao AS presenca_obs
-      FROM alunos a
-      JOIN matricula m ON a.id = m.idaluno
-      LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
-      WHERE a.status = 'ativo'
-      AND m.status = 'matriculado'
-      AND a.id_instituicao = ?
-      ORDER BY a.nome ASC
-    `;
-    params = [data, req.id_instituicao];
+    if (professor) {
+      sql = `
+        SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
+               ${getDiasMatriculadosSubquery()},
+               p.status AS presenca_status, p.observacao AS presenca_obs
+        FROM alunos a
+        JOIN matricula m ON a.id = m.idaluno
+        JOIN atividades atv ON m.idatividades = atv.idatividades
+        JOIN professores prof ON atv.idprofessor = prof.id
+        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
+        WHERE a.status = 'ativo'
+        AND m.status = 'matriculado'
+        AND prof.nome = ?
+        AND a.id_instituicao = ?
+        ORDER BY a.nome ASC
+      `;
+      params = [data, professor, req.id_instituicao];
+    } else {
+      sql = `
+        SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
+               ${getDiasMatriculadosSubquery()},
+               p.status AS presenca_status, p.observacao AS presenca_obs
+        FROM alunos a
+        JOIN matricula m ON a.id = m.idaluno
+        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
+        WHERE a.status = 'ativo'
+        AND m.status = 'matriculado'
+        AND a.id_instituicao = ?
+        ORDER BY a.nome ASC
+      `;
+      params = [data, req.id_instituicao];
+    }
   } else {
     // Modo Chamada: filtra apenas os alunos matriculados no dia da semana informado
-    sql = `
-      SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
-             ${getDiasMatriculadosSubquery()},
-             p.status AS presenca_status, p.observacao AS presenca_obs
-      FROM alunos a
-      JOIN matricula m ON a.id = m.idaluno
-      LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
-      WHERE TRIM(m.dia_semana) = ? 
-      AND a.status = 'ativo'
-      AND m.status = 'matriculado'
-      AND a.id_instituicao = ?
-      ORDER BY a.nome ASC
-    `;
-    params = [data, diaDaSemana, req.id_instituicao];
+    if (professor) {
+      sql = `
+        SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
+               ${getDiasMatriculadosSubquery()},
+               p.status AS presenca_status, p.observacao AS presenca_obs
+        FROM alunos a
+        JOIN matricula m ON a.id = m.idaluno
+        JOIN atividades atv ON m.idatividades = atv.idatividades
+        JOIN professores prof ON atv.idprofessor = prof.id
+        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
+        WHERE TRIM(m.dia_semana) = ? 
+        AND a.status = 'ativo'
+        AND m.status = 'matriculado'
+        AND prof.nome = ?
+        AND a.id_instituicao = ?
+        ORDER BY a.nome ASC
+      `;
+      params = [data, diaDaSemana, professor, req.id_instituicao];
+    } else {
+      sql = `
+        SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
+               ${getDiasMatriculadosSubquery()},
+               p.status AS presenca_status, p.observacao AS presenca_obs
+        FROM alunos a
+        JOIN matricula m ON a.id = m.idaluno
+        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
+        WHERE TRIM(m.dia_semana) = ? 
+        AND a.status = 'ativo'
+        AND m.status = 'matriculado'
+        AND a.id_instituicao = ?
+        ORDER BY a.nome ASC
+      `;
+      params = [data, diaDaSemana, req.id_instituicao];
+    }
   }
 
   try {
@@ -223,10 +262,14 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       }
     }
 
-    // Regex para identificar colunas de matrícula como "SEG HR 1", "TER HR 2"
-    const matriculaColRegex = /^(seg|ter|qua|qui|sex)\s+(hr\s+\d+)$/i;
+    // Regex para identificar colunas de matrícula como "SEG HR 1", "TER HR 2", "Segunda HR 1", "SEG-HR1", etc.
+    const matriculaColRegex = /^(seg|ter|qua|qui|sex|segunda|terca|quarta|quinta|sexta)[\s\-_]*(hr|horario|h)[\s\-_]*(\d+)$/i;
     const diaSemanaMap = {
-      'seg': 'Segunda', 'ter': 'Terça', 'qua': 'Quarta', 'qui': 'Quinta', 'sex': 'Sexta'
+      'seg': 'Segunda', 'segunda': 'Segunda',
+      'ter': 'Terça', 'terca': 'Terça',
+      'qua': 'Quarta', 'quarta': 'Quarta',
+      'qui': 'Quinta', 'quinta': 'Quinta',
+      'sex': 'Sexta', 'sexta': 'Sexta'
     };
 
     for (const alunoRaw of alunos) {
@@ -240,13 +283,18 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         continue;
       }
 
+      console.log(`Processando aluno: ${alunoNome}, turno: ${alunoTurno}, keys disponíveis:`, Object.keys(alunoRaw));
+      
       for (const key in alunoRaw) {
         const match = key.match(matriculaColRegex);
         if (match && alunoRaw[key]) { // Se é uma coluna de matrícula e tem um valor (nome da atividade)
           const diaAbreviado = match[1].toLowerCase();
-          const horario = match[2].toUpperCase(); // Ex: "HR 1", "HR 2"
+          const horarioNum = match[3]; // Grupo de captura do número do horário
+          const horario = `HR ${horarioNum}`; // Formata como "HR 1", "HR 2", etc.
           const dia_semana = diaSemanaMap[diaAbreviado];
           const nome_atividade = String(alunoRaw[key]).trim();
+
+          console.log(`Coluna encontrada: ${key}, dia: ${dia_semana}, horario: ${horario}, atividade: ${nome_atividade}`);
 
           if (dia_semana && nome_atividade && alunoTurno) { // Garante que todas as partes são válidas
             activitiesToFindOrCreate.add(nome_atividade);
@@ -262,6 +310,9 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         }
       }
     }
+    
+    console.log(`Total de matrículas para inserir: ${matriculasToUpsert.length}`);
+    console.log(`Atividades encontradas: ${Array.from(activitiesToFindOrCreate).join(', ')}`);
 
     // 3. Encontrar ou criar atividades e professores
     const activityIdMap = new Map();
