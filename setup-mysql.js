@@ -26,6 +26,31 @@ async function setupDatabase() {
       ) ENGINE=InnoDB;
     `;
 
+    const createUsuariosTable = `
+      CREATE TABLE IF NOT EXISTS usuarios (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        nome VARCHAR(150) NOT NULL,
+        email VARCHAR(180) NOT NULL UNIQUE,
+        senha_hash VARCHAR(255) NOT NULL,
+        perfil VARCHAR(30) NOT NULL DEFAULT 'monitor',
+        status VARCHAR(20) DEFAULT 'ativo',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB;
+    `;
+
+    const createUsuarioInstituicoesTable = `
+      CREATE TABLE IF NOT EXISTS usuario_instituicoes (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        id_usuario INT NOT NULL,
+        id_instituicao INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (id_usuario) REFERENCES usuarios(id) ON DELETE CASCADE,
+        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id) ON DELETE CASCADE,
+        UNIQUE KEY idx_usuario_instituicao (id_usuario, id_instituicao)
+      ) ENGINE=InnoDB;
+    `;
+
     const createAlunosTable = `
       CREATE TABLE IF NOT EXISTS alunos (
         id INT PRIMARY KEY AUTO_INCREMENT,
@@ -111,6 +136,19 @@ async function setupDatabase() {
     // 3. Executa as queries em sequência
     await db.query(createInstituicoesTable);
     console.log('Tabela "instituicoes" pronta.');
+
+    await db.query(createUsuariosTable);
+    console.log('Tabela "usuarios" pronta.');
+
+    await db.query(createUsuarioInstituicoesTable);
+    console.log('Tabela "usuario_instituicoes" pronta.');
+
+    try {
+      await db.query("ALTER TABLE usuarios ADD COLUMN perfil VARCHAR(30) NOT NULL DEFAULT 'monitor'");
+      console.log('Coluna "perfil" adicionada em usuarios.');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+    }
 
     await db.query(createAlunosTable);
     console.log('Tabela "alunos" pronta.');

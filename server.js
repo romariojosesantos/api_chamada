@@ -37,6 +37,7 @@ const presencaRouter = require('./presenca');
 const relatoriosRouter = require('./relatorios');
 const gradeRouter = require('./grade');
 const matriculasRouter = require('./matriculas');
+const { router: authRouter, authMiddleware } = require('./auth');
 
 // Middlewares
 app.use(cors({
@@ -74,24 +75,34 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '50mb' })); 
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Rota pública para listar todas as instituições cadastradas
-// Útil para o frontend preencher um Select/Dropdown de escolha de escola
-app.get('/api/instituicoes/todas', async (req, res) => {
+app.use('/api/auth', authRouter);
+
+app.get('/api/instituicoes/todas', authMiddleware, async (req, res) => {
   try {
-    const cacheKey = 'instituicoes_todas';
-    const cached = getCache(cacheKey);
-    if (cached) {
-      return res.json(cached);
+    if (req.user.perfil === 'master') {
+      const cacheKey = 'instituicoes_todas';
+      const cached = getCache(cacheKey);
+      if (cached) {
+        return res.json(cached);
+      }
+      
+      const [results] = await pool.query("SELECT id, nome FROM instituicoes ORDER BY nome ASC");
+      setCache(cacheKey, results);
+      return res.json(results);
     }
-    
-    const [results] = await pool.query("SELECT id, nome FROM instituicoes ORDER BY nome ASC");
-    setCache(cacheKey, results);
+
+    const ids = Array.isArray(req.user.instituicoes) ? req.user.instituicoes : [];
+    if (ids.length === 0) return res.json([]);
+
+    const [results] = await pool.query("SELECT id, nome FROM instituicoes WHERE id IN (?) ORDER BY nome ASC", [ids]);
     res.json(results);
   } catch (err) {
     console.error("Erro em GET /api/instituicoes/todas:", err);
     res.status(500).json({ error: 'Erro ao buscar lista de instituições: ' + err.message });
   }
 });
+
+app.use('/api', authMiddleware);
 
 // Middleware para forçar o ID da instituição em todas as rotas da API
 app.use('/api', (req, res, next) => {
@@ -104,6 +115,13 @@ app.use('/api', (req, res, next) => {
   }
   if (isNaN(parsedId)) {
     return res.status(401).json({ error: 'Acesso negado. ID da instituição deve ser um número válido.' });
+  }
+
+  if (req.user.perfil !== 'master') {
+    const instituicoes = Array.isArray(req.user.instituicoes) ? req.user.instituicoes.map(Number) : [];
+    if (!instituicoes.includes(parsedId)) {
+      return res.status(403).json({ error: 'Acesso negado. Usuário não vinculado a esta instituição.' });
+    }
   }
 
   req.id_instituicao = parsedId;
