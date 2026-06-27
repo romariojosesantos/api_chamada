@@ -102,10 +102,16 @@ router.post('/register', asyncHandler(async (req, res) => {
   }
 
   const senha_hash = hashPassword(cleanPassword);
-  const [result] = await pool.query('INSERT INTO usuarios (nome, email, senha_hash, perfil) VALUES (?, ?, ?, ?)', [cleanName, cleanEmail, senha_hash, cleanPerfil]);
+  const status = cleanPerfil === 'master' ? 'ativo' : 'pendente';
+  const [result] = await pool.query('INSERT INTO usuarios (nome, email, senha_hash, perfil, status) VALUES (?, ?, ?, ?, ?)', [cleanName, cleanEmail, senha_hash, cleanPerfil, status]);
   if (cleanPerfil !== 'master') {
     await pool.query('INSERT IGNORE INTO usuario_instituicoes (id_usuario, id_instituicao) VALUES (?, ?)', [result.insertId, institutionId]);
   }
+
+  if (status === 'pendente') {
+    return res.status(201).json({ message: 'Cadastro realizado. Aguarde aprovação do master para acessar o sistema.' });
+  }
+
   const user = { id: result.insertId, nome: cleanName, email: cleanEmail, perfil: cleanPerfil, instituicoes: cleanPerfil === 'master' ? [] : [institutionId] };
   const token = signToken(user);
 
@@ -116,9 +122,17 @@ router.post('/login', asyncHandler(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const senha = String(req.body.senha || '');
 
-  const [rows] = await pool.query('SELECT id, nome, email, senha_hash, perfil FROM usuarios WHERE email = ? AND status = ? LIMIT 1', [email, 'ativo']);
+  const [rows] = await pool.query('SELECT id, nome, email, senha_hash, perfil, status FROM usuarios WHERE email = ? LIMIT 1', [email]);
   if (rows.length === 0 || !verifyPassword(senha, rows[0].senha_hash)) {
     return res.status(401).json({ error: 'E-mail ou senha inválidos.' });
+  }
+
+  if (rows[0].status === 'pendente') {
+    return res.status(403).json({ error: 'Cadastro pendente de aprovação. Aguarde liberação do master.', status: 'pendente' });
+  }
+
+  if (rows[0].status !== 'ativo') {
+    return res.status(403).json({ error: 'Conta inativa. Entre em contato com o administrador.', status: rows[0].status });
   }
 
   const user = await buildUserSession(rows[0]);
@@ -128,10 +142,10 @@ router.post('/login', asyncHandler(async (req, res) => {
 }));
 
 router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
-  const [rows] = await pool.query('SELECT id, nome, email, perfil FROM usuarios WHERE id = ? AND status = ? LIMIT 1', [req.user.id, 'ativo']);
+  const [rows] = await pool.query('SELECT id, nome, email, perfil, status FROM usuarios WHERE id = ? LIMIT 1', [req.user.id]);
   if (rows.length === 0) return res.status(401).json({ error: 'Usuário não encontrado.' });
   const user = await buildUserSession(rows[0]);
-  res.json({ user });
+  res.json({ user: { ...user, status: rows[0].status } });
 }));
 
 router.post('/change-password', authMiddleware, asyncHandler(async (req, res) => {
@@ -158,13 +172,48 @@ const masterMiddleware = (req, res, next) => {
 
 // Administração de usuários - apenas master
 router.get('/admin/usuarios', authMiddleware, masterMiddleware, asyncHandler(async (req, res) => {
-  const [users] = await pool.query('SELECT id, nome, email, perfil, status, created_at FROM usuarios WHERE status = ? ORDER BY nome ASC', ['ativo']);
+  const [users] = await pool.query('SELECT id, nome, email, perfil, status, created_at FROM usuarios WHERE status != ? ORDER BY nome ASC', ['pendente']);
   const result = [];
   for (const user of users) {
     const instituicoes = user.perfil === 'master' ? [] : await loadUserInstitutions(user.id, user.perfil);
     result.push({ ...user, instituicoes });
   }
   res.json(result);
+}));
+
+router.get('/admin/usuarios/pendentes', authMiddleware, masterMiddleware, asyncHandler(async (req, res) => {
+  const [users] = await pool.query('SELECT id, nome, email, perfil, status, created_at FROM usuarios WHERE status = ? ORDER BY created_at ASC', ['pendente']);
+  const result = [];
+  for (const user of users) {
+    const instituicoes = user.perfil === 'master' ? [] : await loadUserInstitutions(user.id, user.perfil);
+    result.push({ ...user, instituicoes });
+  }
+  res.json(result);
+}));
+
+router.put('/admin/usuarios/:id/aprovar', authMiddleware, masterMiddleware, asyncHandler(async (req, res) => {
+  const userId = parseInt(req.params.id);
+  if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
+
+  const [rows] = await pool.query('SELECT status FROM usuarios WHERE id = ? LIMIT 1', [userId]);
+  if (rows.length === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  if (rows[0].status !== 'pendente') return res.status(400).json({ error: 'Este usuário não está pendente de aprovação.' });
+
+  await pool.query('UPDATE usuarios SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['ativo', userId]);
+  res.json({ message: 'Usuário aprovado com sucesso.' });
+}));
+
+router.delete('/admin/usuarios/:id/rejeitar', authMiddleware, masterMiddleware, asyncHandler(async (req, res) => {
+  const userId = parseInt(req.params.id);
+  if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
+
+  const [rows] = await pool.query('SELECT status FROM usuarios WHERE id = ? LIMIT 1', [userId]);
+  if (rows.length === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  if (rows[0].status !== 'pendente') return res.status(400).json({ error: 'Este usuário não está pendente de aprovação.' });
+
+  await pool.query('DELETE FROM usuario_instituicoes WHERE id_usuario = ?', [userId]);
+  await pool.query('DELETE FROM usuarios WHERE id = ?', [userId]);
+  res.json({ message: 'Cadastro rejeitado e removido com sucesso.' });
 }));
 
 router.post('/admin/usuarios', authMiddleware, masterMiddleware, asyncHandler(async (req, res) => {
@@ -208,7 +257,7 @@ router.put('/admin/usuarios/:id', authMiddleware, masterMiddleware, asyncHandler
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
   if (!PERFIS.includes(cleanPerfil)) return res.status(400).json({ error: 'Perfil inválido.' });
   if (cleanPerfil !== 'master' && selectedInstitutions.length === 0) return res.status(400).json({ error: 'Vincule ao menos uma instituição ao usuário.' });
-  if (cleanStatus && !['ativo', 'inativo'].includes(cleanStatus)) return res.status(400).json({ error: 'Status inválido.' });
+  if (cleanStatus && !['ativo', 'inativo', 'pendente'].includes(cleanStatus)) return res.status(400).json({ error: 'Status inválido.' });
 
   const [existing] = await pool.query('SELECT id FROM usuarios WHERE email = ? AND id != ? LIMIT 1', [cleanEmail, userId]);
   if (existing.length > 0) return res.status(409).json({ error: 'Este e-mail já está cadastrado.' });
