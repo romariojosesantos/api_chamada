@@ -29,13 +29,20 @@ const signToken = (payload) => {
 };
 
 const verifyToken = (token) => {
-  if (!token || !token.includes('.')) return null;
-  const [body, signature] = token.split('.');
-  const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(body).digest('base64url');
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
-  const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
-  if (!payload.exp || payload.exp < Date.now()) return null;
-  return payload;
+  try {
+    if (!token || !token.includes('.')) return null;
+    const [body, signature] = token.split('.');
+    const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(body).digest('base64url');
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length) return null;
+    if (!crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!payload.exp || payload.exp < Date.now()) return null;
+    return payload;
+  } catch (err) {
+    return null;
+  }
 };
 
 const loadUserInstitutions = async (userId, perfil) => {
