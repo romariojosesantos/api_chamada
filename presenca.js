@@ -29,6 +29,18 @@ router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
 
     await connection.beginTransaction();
 
+    // Valida se todos os alunos pertencem à instituição atual
+    const alunoIds = [...new Set(chamadas.map(c => c.aluno_id))];
+    const [alunosValidos] = await connection.query(
+      'SELECT id FROM alunos WHERE id IN (?) AND id_instituicao = ?',
+      [alunoIds, req.id_instituicao]
+    );
+    if (alunosValidos.length !== alunoIds.length) {
+      await connection.rollback();
+      connection.release();
+      return res.status(403).json({ error: 'Um ou mais alunos não pertencem à instituição atual.' });
+    }
+
     const sql = `
       INSERT INTO presenca (aluno_id, data, status, id_instituicao, observacao)
       VALUES ?

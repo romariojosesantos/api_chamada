@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('./db');
 const { validate } = require('./validation');
 const { logAuditEvent } = require('./audit');
+const { clearCache } = require('./cache');
 
 // Helper para envolver rotas assíncronas e capturar erros
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -17,26 +18,25 @@ const getDiasMatriculadosSubquery = () => `
 // Helper para validar e normalizar turno
 const validarTurno = (turno) => {
   if (!turno) return null;
-  const turnoNormalizado = String(turno).trim();
-  const turnosValidos = ['Manhã', 'Tarde', 'Noite', 'Integral', 'manhã', 'tarde', 'noite', 'integral'];
+  const turnoNormalizado = String(turno).trim().toLowerCase();
   if (!turnoNormalizado) return null;
-  // Capitaliza primeira letra se não estiver nos padrões conhecidos
-  if (!turnosValidos.includes(turnoNormalizado)) {
-    return turnoNormalizado.charAt(0).toUpperCase() + turnoNormalizado.slice(1).toLowerCase();
-  }
-  return turnoNormalizado;
+  return turnoNormalizado.charAt(0).toUpperCase() + turnoNormalizado.slice(1);
 };
 
 // Helper para parse de data de nascimento (simplificado)
 const parseDataNascimento = (data) => {
   if (!data) return null;
   if (data instanceof Date) {
-    return data.toISOString().split('T')[0];
+    const y = data.getFullYear();
+    const m = String(data.getMonth() + 1).padStart(2, '0');
+    const d = String(data.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
   if (typeof data === 'string' && data.trim()) {
-    const parsedDate = new Date(data);
-    if (!isNaN(parsedDate.getTime())) {
-      return parsedDate.toISOString().split('T')[0];
+    const datePart = data.trim().split('T')[0];
+    const [year, month, day] = datePart.split('-').map(Number);
+    if (year && month && day && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     }
   }
   return null;
@@ -76,7 +76,8 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
   const { data, ignoreFilters, professor } = req.query; // Espera formato YYYY-MM-DD
   if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
 
-  const dateObj = new Date(`${data}T00:00:00`);
+  const [year, month, day] = data.split('-').map(Number);
+  const dateObj = new Date(year, month - 1, day);
   const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
   const diaDaSemana = dias[dateObj.getDay()];
 
@@ -171,10 +172,10 @@ router.get('/frequencia-plena', asyncHandler(async (req, res) => {
   
   const sql = `
     SELECT a.id, a.nome, a.turno, a.turma, a.transporte,
-           COUNT(DISTINCT p.data) as total_presencas,
+           COUNT(p.id) as total_presencas,
            GROUP_CONCAT(DISTINCT DATE_FORMAT(p.data, '%d/%m') ORDER BY p.data ASC SEPARATOR ', ') as dias_presente
     FROM alunos a
-    INNER JOIN presenca p ON a.id = p.aluno_id AND p.status = 'presente' 
+    LEFT JOIN presenca p ON a.id = p.aluno_id AND p.status = 'presente' 
       AND p.data BETWEEN ? AND ? AND p.id_instituicao = ?
     WHERE a.id_instituicao = ?
     GROUP BY a.id, a.nome, a.turno, a.turma, a.transporte
@@ -206,20 +207,26 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
 
     // Prepara os valores para o INSERT em massa
     // Mapeia os campos vindos do Excel para as colunas do banco
-    const values = alunos.map(a => [
-      String(a.nome || a.ALUNO || a.Aluno).trim(),
-      parseDataNascimento(a.data_nascimento),
-      a.sexo || null,
-      a.telefone || null,
-      // Ensure turma is not null if it's an empty string, otherwise default to null
-      // This helps with consistency if some Excel rows have empty turma
-      String(a.turma || '').trim() || null, 
-      a.turno || null,
-      a.transporte || null,
-      a.Inf || null,
-      'ativo',
-      req.id_instituicao
-    ]);
+    const values = alunos.map(a => {
+      const nome = String(a.nome || a.ALUNO || a.Aluno).trim();
+      if (!nome || nome.toLowerCase() === 'undefined') {
+        throw new Error(`Nome ausente ou inválido no registro: ${JSON.stringify(a)}`);
+      }
+      return [
+        nome,
+        parseDataNascimento(a.data_nascimento),
+        a.sexo || null,
+        a.telefone || null,
+        // Ensure turma is not null if it's an empty string, otherwise default to null
+        // This helps with consistency if some Excel rows have empty turma
+        String(a.turma || '').trim() || null, 
+        a.turno || null,
+        a.transporte || null,
+        a.Inf || null,
+        'ativo',
+        req.id_instituicao
+      ];
+    });
 
     const sql = `
       INSERT INTO alunos (nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf, status, id_instituicao)
@@ -238,7 +245,13 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
 
     // 1. Após o upsert de alunos, precisamos dos IDs de todos os alunos processados.
     // Como result.insertId não é confiável para bulk updates, fazemos um SELECT.
-    const studentNames = alunos.map(a => String(a.nome || a.ALUNO || a.Aluno).trim());
+    const studentNames = alunos.map(a => {
+      const nome = String(a.nome || a.ALUNO || a.Aluno).trim();
+      if (!nome || nome.toLowerCase() === 'undefined') {
+        throw new Error(`Nome ausente ou inválido no registro: ${JSON.stringify(a)}`);
+      }
+      return nome;
+    });
     const [existingStudents] = await connection.query(
       `SELECT id, nome, turno FROM alunos WHERE nome IN (?) AND id_instituicao = ?`,
       [studentNames, req.id_instituicao]
@@ -401,14 +414,20 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     }
 
     // 4. Preparar valores finais de matrícula com idatividades reais
-    const finalMatriculasValues = matriculasToUpsert.map(m => [
-      m.idaluno,
-      activityIdMap.get(m.nome_atividade), // Obtém o idatividades real
-      m.turno,
-      m.horario,
-      m.dia_semana,
-      m.id_instituicao
-    ]);
+    const finalMatriculasValues = matriculasToUpsert.map(m => {
+      const idatividade = activityIdMap.get(m.nome_atividade);
+      if (!idatividade) {
+        throw new Error(`Atividade não encontrada para matrícula: ${m.nome_atividade}`);
+      }
+      return [
+        m.idaluno,
+        idatividade,
+        m.turno,
+        m.horario,
+        m.dia_semana,
+        m.id_instituicao
+      ];
+    });
 
     // 5. Executar Upsert em Lote para Matrículas
     let matriculasAffected = 0;
@@ -425,6 +444,7 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     }
 
     await connection.commit();
+    clearCache();
 
     res.json({
       message: 'Processamento concluído',
@@ -455,6 +475,7 @@ router.post('/', validate('aluno'), asyncHandler(async (req, res) => {
     status || 'ativo', req.id_instituicao
   ]);
   
+  clearCache();
   await logAuditEvent('CRIAR_ALUNO', `Aluno ID: ${result.insertId}, Nome: ${nome}`, req.id_instituicao);
   res.status(201).json({ id: result.insertId, message: 'Aluno criado com sucesso!' });
 }));
@@ -474,6 +495,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 
   if (result.affectedRows === 0) return res.status(404).json({ error: 'Aluno não encontrado.' });
   
+  clearCache();
   await logAuditEvent('ATUALIZAR_ALUNO', `Aluno ID: ${id}, Campo: ${campo}`, req.id_instituicao);
   res.json({ message: 'Campo atualizado com sucesso.' });
 }));
@@ -491,8 +513,13 @@ router.delete('/:id', asyncHandler(async (req, res) => {
     
     const [result] = await connection.query('DELETE FROM alunos WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
     
-    if (result.affectedRows === 0) throw new Error('Aluno não encontrado');
+    if (result.affectedRows === 0) {
+      await connection.rollback();
+      connection.release();
+      return res.status(404).json({ error: 'Aluno não encontrado.' });
+    }
 
+    clearCache();
     await logAuditEvent('EXCLUIR_ALUNO', `Aluno ID: ${id} excluído com matrículas`, req.id_instituicao, connection);
     await connection.commit();
     res.json({ message: 'Aluno e suas matrículas excluídos com sucesso!' });

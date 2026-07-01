@@ -5,27 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const pool = require('./db');
 
-// Cache simples em memória para endpoints estáticos
-const cache = new Map();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
-
-const getCache = (key) => {
-  const item = cache.get(key);
-  if (!item) return null;
-  if (Date.now() > item.expiry) {
-    cache.delete(key);
-    return null;
-  }
-  return item.data;
-};
-
-const setCache = (key, data) => {
-  cache.set(key, { data, expiry: Date.now() + CACHE_TTL });
-};
-
-const clearCache = () => {
-  cache.clear();
-};
+const { getCache, setCache, clearCache } = require('./cache');
 
 // Inicializa o aplicativo Express
 const app = express();
@@ -225,3 +205,5 @@ app.listen(PORT, HOST, () => {
   console.log(`Servidor rodando na porta ${PORT}.`);
   console.log(`Para acessar de outros dispositivos na mesma rede, use seu IP local.`);
 });
+
+module.exports = { app, clearCache };

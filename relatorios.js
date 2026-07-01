@@ -8,7 +8,8 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
   const { data } = req.query;
   if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
 
-  const dateObj = new Date(`${data}T12:00:00`);
+  const [year, month, day] = data.split('-').map(Number);
+  const dateObj = new Date(year, month - 1, day);
   const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
   const diaDaSemana = dias[dateObj.getDay()];
 

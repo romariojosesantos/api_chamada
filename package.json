@@ -2,7 +2,7 @@
   "name": "minha-api",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js",
@@ -17,7 +17,6 @@
     "dotenv": "^17.4.2",
     "express": "^5.1.0",
     "joi": "^18.2.1",
-    "mysql2": "^3.22.5",
-    "sqlite3": "^5.1.7"
+    "mysql2": "^3.22.5"
   }
 }
