@@ -42,7 +42,7 @@ const { router: authRouter, authMiddleware } = require('./auth');
 // Middlewares
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'
-    ? ['https://controle-de-presenca-ten.vercel.app', 'https://api-chamada.vercel.app', 'https://atoson-atoson.zng2bo.easypanel.host/login'] // Domínios permitidos em produção
+    ? ['https://controle-de-presenca-ten.vercel.app', 'https://api-chamada.vercel.app', 'https://atoson-atoson.zng2bo.easypanel.host'] // Domínios permitidos em produção
     : '*',
   allowedHeaders: ['Content-Type', 'x-institution-id', 'Authorization', 'Pragma', 'Cache-Control', 'Expires'],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
