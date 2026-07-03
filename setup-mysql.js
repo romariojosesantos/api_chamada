@@ -133,6 +133,20 @@ async function setupDatabase() {
       ) ENGINE=InnoDB;
     `;
 
+    const createContatosEmergenciaTable = `
+      CREATE TABLE IF NOT EXISTS contatos_emergencia (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        id_aluno INT NOT NULL,
+        nome VARCHAR(255) NOT NULL,
+        telefone VARCHAR(20) NOT NULL,
+        parentesco VARCHAR(50) DEFAULT NULL,
+        id_instituicao INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (id_aluno) REFERENCES alunos(id) ON DELETE CASCADE,
+        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id)
+      ) ENGINE=InnoDB;
+    `;
+
     // 3. Executa as queries em sequência
     await db.query(createInstituicoesTable);
     console.log('Tabela "instituicoes" pronta.');
@@ -167,6 +181,9 @@ async function setupDatabase() {
 
     await db.query(createMatriculaTable);
     console.log('Tabela "matricula" pronta.');
+
+    await db.query(createContatosEmergenciaTable);
+    console.log('Tabela "contatos_emergencia" pronta.');
 
     // 4. Dados de teste - apenas em desenvolvimento se ENABLE_TEST_DATA=true
     const enableTestData = process.env.ENABLE_TEST_DATA === 'true';

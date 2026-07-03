@@ -38,6 +38,7 @@ const relatoriosRouter = require('./relatorios');
 const gradeRouter = require('./grade');
 const matriculasRouter = require('./matriculas');
 const { router: authRouter, authMiddleware } = require('./auth');
+const { router: contatosEmergenciaRouter } = require('./contatos-emergencia');
 
 // Middlewares
 app.use(cors({
@@ -200,6 +201,7 @@ app.use('/api/presenca', presencaRouter);
 app.use('/api/relatorios', relatoriosRouter);
 app.use('/api/grade', gradeRouter);
 app.use('/api/matriculas', matriculasRouter);
+app.use('/api/contatos-emergencia', contatosEmergenciaRouter);
 
 // Middleware de Tratamento de Erros Global (Melhoria de UX/Estabilidade)
 app.use((err, req, res, next) => {
