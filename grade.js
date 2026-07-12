@@ -18,6 +18,7 @@ router.get('/', asyncHandler(async (req, res) => {
     LEFT JOIN atividades atv ON m.idatividades = atv.idatividades
     LEFT JOIN professores p ON atv.idprofessor = p.id
     WHERE m.id_instituicao = ?
+    AND m.data_fim IS NULL
     ORDER BY a.nome ASC
   `;
   

@@ -25,6 +25,7 @@ router.get('/por-instituicao', asyncHandler(async (req, res) => {
     LEFT JOIN atividades atv ON m.idatividades = atv.idatividades
     LEFT JOIN professores p ON atv.idprofessor = p.id
     WHERE m.id_instituicao = ?
+    AND m.data_fim IS NULL
   `;
   const params = [req.id_instituicao];
 
@@ -65,10 +66,41 @@ router.get('/aluno/:id', asyncHandler(async (req, res) => {
     LEFT JOIN atividades atv ON m.idatividades = atv.idatividades
     LEFT JOIN professores p ON atv.idprofessor = p.id
     WHERE m.idaluno = ? AND m.id_instituicao = ?
+    AND m.data_fim IS NULL
     ORDER BY m.dia_semana ASC
   `;
 
   const [results] = await pool.query(sql, [id, req.id_instituicao]);
+  res.json(results);
+}));
+
+// Buscar histórico de matrículas por período (para relatórios de Excel)
+router.get('/historico-periodo', asyncHandler(async (req, res) => {
+  const { data_inicio, data_fim } = req.query;
+  
+  if (!data_inicio || !data_fim) {
+    return res.status(400).json({ error: 'data_inicio e data_fim são obrigatórias' });
+  }
+
+  const sql = `
+    SELECT m.idaluno,
+           a.nome,
+           m.idatividades,
+           atv.nome AS nome_atividade,
+           m.dia_semana,
+           m.turno,
+           m.data_inicio,
+           m.data_fim,
+           m.status AS matricula_status,
+           m.id_instituicao
+    FROM matricula m
+    JOIN alunos a ON m.idaluno = a.id
+    LEFT JOIN atividades atv ON m.idatividades = atv.idatividades
+    WHERE m.id_instituicao = ?
+    ORDER BY a.nome, m.data_inicio
+  `;
+
+  const [results] = await pool.query(sql, [req.id_instituicao]);
   res.json(results);
 }));
 

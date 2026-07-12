@@ -147,6 +147,20 @@ async function setupDatabase() {
       ) ENGINE=InnoDB;
     `;
 
+    const createDiasSemAulaTable = `
+      CREATE TABLE IF NOT EXISTS dias_sem_aula (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        data DATE NOT NULL,
+        motivo VARCHAR(255) DEFAULT NULL,
+        id_instituicao INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by INT,
+        UNIQUE KEY idx_data_instituicao (data, id_instituicao),
+        FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id),
+        FOREIGN KEY (created_by) REFERENCES usuarios(id)
+      ) ENGINE=InnoDB;
+    `;
+
     // 3. Executa as queries em sequência
     await db.query(createInstituicoesTable);
     console.log('Tabela "instituicoes" pronta.');
@@ -184,6 +198,53 @@ async function setupDatabase() {
 
     await db.query(createContatosEmergenciaTable);
     console.log('Tabela "contatos_emergencia" pronta.');
+
+    await db.query(createDiasSemAulaTable);
+    console.log('Tabela "dias_sem_aula" pronta.');
+
+    // Adiciona colunas novas se ainda não existirem (idempotente)
+    const alterColumns = [
+      { sql: "ALTER TABLE alunos ADD COLUMN acompanhamento VARCHAR(50) DEFAULT NULL", name: 'acompanhamento' },
+      { sql: "ALTER TABLE alunos ADD COLUMN ponto VARCHAR(150) DEFAULT NULL", name: 'ponto' },
+    ];
+    for (const col of alterColumns) {
+      try {
+        await db.query(col.sql);
+        console.log(`Coluna "${col.name}" adicionada à tabela alunos.`);
+      } catch (e) {
+        if (e.code === 'ER_DUP_FIELDNAME') {
+          console.log(`Coluna "${col.name}" já existe.`);
+        } else {
+          console.warn(`Aviso ao adicionar coluna "${col.name}":`, e.message);
+        }
+      }
+    }
+
+    // Índices de performance — criados com IF NOT EXISTS via tratamento de erro
+    const indexes = [
+      // presenca: consultas por data e por instituição são as mais frequentes
+      { sql: 'CREATE INDEX idx_presenca_data ON presenca (data)', name: 'idx_presenca_data' },
+      { sql: 'CREATE INDEX idx_presenca_inst_data ON presenca (id_instituicao, data)', name: 'idx_presenca_inst_data' },
+      { sql: 'CREATE INDEX idx_presenca_aluno_data ON presenca (aluno_id, data)', name: 'idx_presenca_aluno_data' },
+      // alunos: filtros por instituição e status
+      { sql: 'CREATE INDEX idx_alunos_inst_status ON alunos (id_instituicao, status)', name: 'idx_alunos_inst_status' },
+      // matricula: join com alunos e filtro por dia_semana
+      { sql: 'CREATE INDEX idx_matricula_dia_inst ON matricula (dia_semana, id_instituicao, status)', name: 'idx_matricula_dia_inst' },
+      { sql: 'CREATE INDEX idx_matricula_aluno ON matricula (idaluno)', name: 'idx_matricula_aluno' },
+    ];
+    for (const idx of indexes) {
+      try {
+        await db.query(idx.sql);
+        console.log(`Índice "${idx.name}" criado.`);
+      } catch (e) {
+        if (e.code === 'ER_DUP_KEYNAME') {
+          console.log(`Índice "${idx.name}" já existe.`);
+        } else {
+          console.warn(`Aviso ao criar índice "${idx.name}":`, e.message);
+        }
+      }
+    }
+    console.log('Índices de performance verificados.');
 
     // 4. Dados de teste - apenas em desenvolvimento se ENABLE_TEST_DATA=true
     const enableTestData = process.env.ENABLE_TEST_DATA === 'true';

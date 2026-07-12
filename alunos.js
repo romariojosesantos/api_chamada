@@ -49,6 +49,7 @@ router.get('/', asyncHandler(async (req, res) => {
   let sql = `
     SELECT a.id, a.nome, a.data_nascimento, a.sexo, a.telefone, 
            a.turma, a.turno, a.transporte, a.status, a.Inf,
+           a.acompanhamento, a.ponto,
            ${getDiasMatriculadosSubquery()}
     FROM alunos a 
     WHERE a.id_instituicao = ?
@@ -80,13 +81,28 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
   const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
   const diaDaSemana = dias[dateObj.getDay()];
 
+  // Verificar se é dia sem aula
+  const [diaSemAula] = await pool.query(
+    `SELECT id, motivo FROM dias_sem_aula WHERE data = ? AND id_instituicao = ?`,
+    [data, req.id_instituicao]
+  );
+
+  if (diaSemAula.length > 0) {
+    return res.json({
+      isDiaSemAula: true,
+      motivo: diaSemAula[0].motivo || 'Dia sem aula',
+      alunos: []
+    });
+  }
+
   let sql, params;
 
   if (ignoreFilters === 'true') {
     // Modo Relatório: retorna TODOS os alunos ativos com status de presença para a data
     if (professor) {
       sql = `
-        SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
+        SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status, a.telefone,
+               a.acompanhamento, a.ponto,
                ${getDiasMatriculadosSubquery()},
                p.status AS presenca_status, p.observacao AS presenca_obs
         FROM alunos a
@@ -96,6 +112,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
         WHERE a.status = 'ativo'
         AND m.status = 'matriculado'
+        AND m.data_fim IS NULL
         AND prof.nome = ?
         AND a.id_instituicao = ?
         ORDER BY a.nome ASC
@@ -103,7 +120,8 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
       params = [data, professor, req.id_instituicao];
     } else {
       sql = `
-        SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
+        SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status, a.telefone,
+               a.acompanhamento, a.ponto,
                ${getDiasMatriculadosSubquery()},
                p.status AS presenca_status, p.observacao AS presenca_obs
         FROM alunos a
@@ -111,6 +129,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
         WHERE a.status = 'ativo'
         AND m.status = 'matriculado'
+        AND m.data_fim IS NULL
         AND a.id_instituicao = ?
         ORDER BY a.nome ASC
       `;
@@ -120,7 +139,8 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
     // Modo Chamada: filtra apenas os alunos matriculados no dia da semana informado
     if (professor) {
       sql = `
-        SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
+        SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status, a.telefone,
+               a.acompanhamento, a.ponto,
                ${getDiasMatriculadosSubquery()},
                p.status AS presenca_status, p.observacao AS presenca_obs
         FROM alunos a
@@ -131,6 +151,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         WHERE TRIM(m.dia_semana) = ? 
         AND a.status = 'ativo'
         AND m.status = 'matriculado'
+        AND m.data_fim IS NULL
         AND prof.nome = ?
         AND a.id_instituicao = ?
         ORDER BY a.nome ASC
@@ -138,7 +159,8 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
       params = [data, diaDaSemana, professor, req.id_instituicao];
     } else {
       sql = `
-        SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status,
+        SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status, a.telefone,
+               a.acompanhamento, a.ponto,
                ${getDiasMatriculadosSubquery()},
                p.status AS presenca_status, p.observacao AS presenca_obs
         FROM alunos a
@@ -147,6 +169,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         WHERE TRIM(m.dia_semana) = ? 
         AND a.status = 'ativo'
         AND m.status = 'matriculado'
+        AND m.data_fim IS NULL
         AND a.id_instituicao = ?
         ORDER BY a.nome ASC
       `;
@@ -176,11 +199,15 @@ router.get('/frequencia-plena', asyncHandler(async (req, res) => {
     FROM alunos a
     INNER JOIN presenca p ON a.id = p.aluno_id AND p.status = 'presente' 
       AND p.data BETWEEN ? AND ? AND p.id_instituicao = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM dias_sem_aula d 
+        WHERE d.data = DATE(p.data) AND d.id_instituicao = ?
+      )
     WHERE a.id_instituicao = ?
     GROUP BY a.id, a.nome, a.turno, a.turma, a.transporte
     ORDER BY a.nome ASC
   `;
-  const [results] = await pool.query(sql, [inicio, fim, req.id_instituicao, req.id_instituicao]);
+  const [results] = await pool.query(sql, [inicio, fim, req.id_instituicao, req.id_instituicao, req.id_instituicao]);
   res.json(results);
 }));
 
@@ -211,18 +238,18 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       parseDataNascimento(a.data_nascimento),
       a.sexo || null,
       a.telefone || null,
-      // Ensure turma is not null if it's an empty string, otherwise default to null
-      // This helps with consistency if some Excel rows have empty turma
-      String(a.turma || '').trim() || null, 
+      String(a.turma || '').trim() || null,
       a.turno || null,
       a.transporte || null,
       a.Inf || null,
+      a.acompanhamento || null,
+      a.ponto || null,
       'ativo',
       req.id_instituicao
     ]);
 
     const sql = `
-      INSERT INTO alunos (nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf, status, id_instituicao)
+      INSERT INTO alunos (nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf, acompanhamento, ponto, status, id_instituicao)
       VALUES ?
       ON DUPLICATE KEY UPDATE 
         data_nascimento = VALUES(data_nascimento),
@@ -231,7 +258,9 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         turma = VALUES(turma),
         turno = VALUES(turno),
         transporte = VALUES(transporte),
-        Inf = VALUES(Inf)
+        Inf = VALUES(Inf),
+        acompanhamento = VALUES(acompanhamento),
+        ponto = VALUES(ponto)
     `;
 
     const [alunosUpsertResult] = await connection.query(sql, [values]);
@@ -283,8 +312,7 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         continue;
       }
 
-      console.log(`Processando aluno: ${alunoNome}, turno: ${alunoTurno}, keys disponíveis:`, Object.keys(alunoRaw));
-      
+            
       for (const key in alunoRaw) {
         const match = key.match(matriculaColRegex);
         if (match && alunoRaw[key]) { // Se é uma coluna de matrícula e tem um valor (nome da atividade)
@@ -294,8 +322,7 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
           const dia_semana = diaSemanaMap[diaAbreviado];
           const nome_atividade = String(alunoRaw[key]).trim();
 
-          console.log(`Coluna encontrada: ${key}, dia: ${dia_semana}, horario: ${horario}, atividade: ${nome_atividade}`);
-
+          
           if (dia_semana && nome_atividade && alunoTurno) { // Garante que todas as partes são válidas
             activitiesToFindOrCreate.add(nome_atividade);
             matriculasToUpsert.push({
@@ -311,9 +338,7 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       }
     }
     
-    console.log(`Total de matrículas para inserir: ${matriculasToUpsert.length}`);
-    console.log(`Atividades encontradas: ${Array.from(activitiesToFindOrCreate).join(', ')}`);
-
+        
     // 3. Encontrar ou criar atividades e professores
     const activityIdMap = new Map();
     if (activitiesToFindOrCreate.size > 0) {
@@ -400,7 +425,23 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       }
     }
 
-    // 4. Preparar valores finais de matrícula com idatividades reais
+    // 4. Buscar matrículas atuais para detectar mudanças
+    const studentIds = [...new Set(matriculasToUpsert.map(m => m.idaluno))];
+    const [currentMatriculas] = await connection.query(
+      `SELECT idmatricula, idaluno, idatividades, turno, horario, dia_semana 
+       FROM matricula 
+       WHERE idaluno IN (?) AND id_instituicao = ? AND status = 'matriculado' AND data_fim IS NULL`,
+      [studentIds, req.id_instituicao]
+    );
+    
+    // Criar mapa de matrículas atuais por aluno + chave única (turno, horario, dia_semana)
+    const currentMatriculaMap = new Map();
+    for (const mat of currentMatriculas) {
+      const key = `${mat.idaluno}_${mat.turno}_${mat.horario}_${mat.dia_semana}`;
+      currentMatriculaMap.set(key, mat);
+    }
+
+    // 5. Preparar valores finais de matrícula com idatividades reais
     const finalMatriculasValues = matriculasToUpsert.map(m => [
       m.idaluno,
       activityIdMap.get(m.nome_atividade), // Obtém o idatividades real
@@ -410,18 +451,81 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       m.id_instituicao
     ]);
 
-    // 5. Executar Upsert em Lote para Matrículas
+    // 6. Definir data atual para uso nas matrículas
+    const today = new Date().toISOString().split('T')[0];
+
+    // 7. Verificar e inserir matrículas (evitando duplicatas e tratando mudanças de atividade)
     let matriculasAffected = 0;
-    if (finalMatriculasValues.length > 0) {
+    const matriculasToInsert = [];
+    const matriculasToClose = [];
+
+    for (const matricula of finalMatriculasValues) {
+      const [idaluno, idatividades, turno, horario, dia_semana, id_instituicao] = matricula;
+      const key = `${idaluno}_${turno}_${horario}_${dia_semana}`;
+      const existingMatricula = currentMatriculaMap.get(key);
+
+      if (existingMatricula) {
+        // Verifica se todos os campos são iguais (incluindo idatividades)
+        if (existingMatricula.idatividades === idatividades) {
+          // Matrícula idêntica já existe - não fazer nada
+          continue;
+        } else {
+          // Atividade mudou para o mesmo horário - encerrar antiga e criar nova
+          matriculasToClose.push(existingMatricula.idmatricula);
+          matriculasToInsert.push([...matricula, today, 'matriculado']);
+        }
+      } else {
+        // Matrícula não existe - criar nova
+        matriculasToInsert.push([...matricula, today, 'matriculado']);
+      }
+    }
+
+    // Encerrar matrículas antigas (atividade mudou)
+    if (matriculasToClose.length > 0) {
+      await connection.query(
+        `UPDATE matricula SET data_fim = ?, status = 'cancelada' WHERE idmatricula IN (?)`,
+        [today, matriculasToClose]
+      );
+    }
+
+    // Inserir novas matrículas
+    if (matriculasToInsert.length > 0) {
       const matriculaSql = `
-        INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, id_instituicao)
+        INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, id_instituicao, data_inicio, status)
         VALUES ?
-        ON DUPLICATE KEY UPDATE 
-          idatividades = VALUES(idatividades),
-          status = 'matriculado' -- Garante que o status seja ativo se for uma re-matrícula
       `;
-      const [matriculaResult] = await connection.query(matriculaSql, [finalMatriculasValues]);
+      const [matriculaResult] = await connection.query(matriculaSql, [matriculasToInsert]);
       matriculasAffected = matriculaResult.affectedRows;
+    }
+
+    // 8. Marcar alunos não presentes na importação como inativos e cancelar suas matrículas
+    let activeStudentsNotInImport = [];
+    if (studentNames.length > 0) {
+      const placeholders = studentNames.map(() => '?').join(',');
+      const [result] = await connection.query(
+        `SELECT id FROM alunos WHERE id_instituicao = ? AND status = 'ativo' AND nome NOT IN (${placeholders})`,
+        [req.id_instituicao, ...studentNames]
+      );
+      activeStudentsNotInImport = result;
+    }
+
+    const studentsToInactivate = activeStudentsNotInImport.map(s => s.id);
+    let inactivatedCount = 0;
+
+    if (studentsToInactivate.length > 0) {
+      // Marcar alunos como inativos
+      const idPlaceholders = studentsToInactivate.map(() => '?').join(',');
+      const [updateResult] = await connection.query(
+        `UPDATE alunos SET status = 'inativo' WHERE id IN (${idPlaceholders}) AND id_instituicao = ?`,
+        [...studentsToInactivate, req.id_instituicao]
+      );
+      inactivatedCount = updateResult.affectedRows;
+
+      // Cancelar todas as matrículas desses alunos com data_fim = hoje
+      await connection.query(
+        `UPDATE matricula SET data_fim = ?, status = 'cancelada' WHERE idaluno IN (${idPlaceholders}) AND id_instituicao = ? AND data_fim IS NULL`,
+        [today, ...studentsToInactivate, req.id_instituicao]
+      );
     }
 
     await connection.commit();
@@ -431,10 +535,12 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       resumo: {
         total_recebido: alunos.length,
         alunos_afetados: alunosUpsertResult.affectedRows,
-        matriculas_afetadas: matriculasAffected
+        matriculas_afetadas: matriculasAffected,
+        alunos_inativados: inactivatedCount
       }
     });
   } catch (err) {
+    console.error('Erro no upsert-bulk:', err);
     await connection.rollback();
     throw err;
   } finally {
@@ -444,14 +550,15 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
 
 // Criar Aluno com Validação
 router.post('/', validate('aluno'), asyncHandler(async (req, res) => {
-  const { nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf, status } = req.body;
+  const { nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf, status, acompanhamento, ponto } = req.body;
   const sql = `
-    INSERT INTO alunos (nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf, status, id_instituicao)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO alunos (nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf, acompanhamento, ponto, status, id_instituicao)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const [result] = await pool.query(sql, [
-    nome, data_nascimento || null, sexo || null, telefone || null, 
-    turma || null, turno || null, transporte || null, Inf || null, 
+    nome, data_nascimento || null, sexo || null, telefone || null,
+    turma || null, turno || null, transporte || null, Inf || null,
+    acompanhamento || null, ponto || null,
     status || 'ativo', req.id_instituicao
   ]);
   
