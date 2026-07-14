@@ -40,6 +40,7 @@ const matriculasRouter = require('./matriculas');
 const { router: authRouter, authMiddleware } = require('./auth');
 const { router: contatosEmergenciaRouter } = require('./contatos-emergencia');
 const diasSemAulaRouter = require('./dias-sem-aula');
+const historicoAlunoRouter = require('./historico-aluno');
 
 // Middlewares
 app.use(cors({
@@ -78,6 +79,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 app.use('/api/auth', authRouter);
+app.use('/api/historico-aluno', authMiddleware, historicoAlunoRouter);
 
 app.get('/api/instituicoes/todas', authMiddleware, async (req, res) => {
   try {

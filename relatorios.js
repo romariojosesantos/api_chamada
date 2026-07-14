@@ -241,7 +241,7 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
       [data_inicio, data_fim, inst, inst]
     ),
 
-    // Total de faltas no período: soma de (esperados - presentes) para cada dia letivo
+    // Total de faltas no período: soma de oportunidades (esperados por dia) menos presenças
     pool.query(
       `WITH RECURSIVE datas AS (
         SELECT ? as data
@@ -250,7 +250,7 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
         FROM datas
         WHERE data < ?
       ),
-      datas_letivas AS (
+      dias_letivos AS (
         SELECT data FROM datas
         WHERE NOT EXISTS (
           SELECT 1 FROM dias_sem_aula dsa 
@@ -261,33 +261,25 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
         SELECT 
           d.data,
           COUNT(DISTINCT a.id) as esperados
-        FROM datas_letivas d
-        CROSS JOIN alunos a
-        JOIN matricula m ON a.id = m.idaluno 
-          AND m.status = 'matriculado' 
-          AND m.data_fim IS NULL
-          AND (m.data_inicio IS NULL OR m.data_inicio <= d.data)
-          AND TRIM(m.dia_semana) = ELT(
+        FROM dias_letivos d
+        JOIN matricula m ON TRIM(m.dia_semana) = ELT(
             DAYOFWEEK(d.data),
             'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
+          ) 
+          AND m.status = 'matriculado' 
+          AND m.data_fim IS NULL
+          AND (
+            m.data_inicio IS NULL 
+            OR m.data_inicio = '0000-00-00'
+            OR m.data_inicio = ''
+            OR m.data_inicio <= d.data
           )
-        WHERE a.id_instituicao = ? AND a.status = 'ativo'
+        JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo'
         GROUP BY d.data
-      ),
-      presentes_por_dia AS (
-        SELECT 
-          DATE(p.data) as data,
-          COUNT(*) as presentes
-        FROM presenca p
-        WHERE p.id_instituicao = ? 
-          AND p.status = 'presente'
-          AND DATE(p.data) BETWEEN ? AND ?
-        GROUP BY DATE(p.data)
       )
-      SELECT COALESCE(SUM(e.esperados - COALESCE(p.presentes, 0)), 0) as total
-      FROM esperados_por_dia e
-      LEFT JOIN presentes_por_dia p ON e.data = p.data`,
-      [data_inicio, data_fim, inst, inst, inst, data_inicio, data_fim]
+      SELECT COALESCE(SUM(esperados), 0) as total
+      FROM esperados_por_dia`,
+      [data_inicio, data_fim, inst, inst]
     ),
 
     // Contagem de justificativas por tipo no período (apenas de alunos que têm registro de presença não presente)
@@ -314,12 +306,17 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
   const totalEsperadosAlunos = esperadosAlunosRes[0].total || 0;
   // Garantir que ausentes nunca fique negativo
   const totalAusentesAlunos = Math.max(0, totalEsperadosAlunos - totalPresentesAlunos);
-  const totalFaltasRegistros = Math.max(0, faltasPorDiaRes[0].total || 0);
+  // Total de oportunidades = soma de alunos esperados em cada dia letivo
+  const totalOportunidadesRegistros = parseInt(faltasPorDiaRes[0].total || 0, 10);
+  // Faltas = oportunidades - presenças
+  const totalFaltasRegistros = Math.max(0, totalOportunidadesRegistros - totalPresentesRegistros);
   const totalJustificados = justificativasRes
     .filter(j => j.justificativa !== 'Sem justificativa')
     .reduce((sum, j) => sum + j.quantidade, 0);
   // Não justificados = total de ausentes (por aluno) - justificados
   const totalNaoJustificados = Math.max(0, totalAusentesAlunos - totalJustificados);
+  // Média de alunos esperados por dia letivo
+  const mediaAlunosDia = diasLetivos.length > 0 ? Math.round(totalOportunidadesRegistros / diasLetivos.length) : 0;
 
   res.json({
     data_inicio,
@@ -337,7 +334,10 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
     justificativas: justificativasRes.map(j => ({
       tipo: j.justificativa,
       quantidade: j.quantidade
-    }))
+    })),
+    // Info adicional para transparência do cálculo
+    total_dias_letivos: diasLetivos.length,
+    media_alunos_dia: mediaAlunosDia
   });
 }));
 
