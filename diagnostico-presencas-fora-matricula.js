@@ -73,13 +73,9 @@ async function diagnosticarPresencasForaMatricula() {
 
     if (fora.length > 0) {
       console.log(`\nLista de alunos que NÃO deveriam ter vindo no dia ${data}:`);
-      console.table(fora.map(r => ({
-        ID: r.aluno_id,
-        Nome: r.nome,
-        Status: r.status_presenca,
-        Turno_Matricula: r.turno_matricula,
-        Observacao: r.observacao
-      })));
+      fora.forEach((r, i) => {
+        console.log(`${i + 1}. ${r.nome} (ID: ${r.aluno_id}) - ${r.status_presenca}`);
+      });
 
       // Agrupar por status da presença
       const porStatus = {};

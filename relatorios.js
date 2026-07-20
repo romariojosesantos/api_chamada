@@ -108,20 +108,20 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
       [diaDaSemana, data, inst]
     ),
 
-    // 6. Total de presenças registradas no dia, independente de matrícula
+    // 6. Total de presenças registradas no dia (apenas status = presente), independente de matrícula
     pool.query(
       `SELECT COUNT(*) as total
        FROM presenca
-       WHERE id_instituicao = ? AND DATE(data) = ?`,
+       WHERE id_instituicao = ? AND DATE(data) = ? AND status = 'presente'`,
       [inst, data]
     ),
 
-    // 7. Lista detalhada de presenças do dia, independente de matrícula
+    // 7. Lista detalhada de presenças do dia (apenas status = presente), independente de matrícula
     pool.query(
       `SELECT p.id, p.aluno_id, a.nome as aluno_nome, p.status, p.observacao, p.data
        FROM presenca p
        LEFT JOIN alunos a ON p.aluno_id = a.id
-       WHERE p.id_instituicao = ? AND DATE(p.data) = ?
+       WHERE p.id_instituicao = ? AND DATE(p.data) = ? AND p.status = 'presente'
        ORDER BY a.nome ASC`,
       [inst, data]
     )
