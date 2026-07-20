@@ -1,3 +1,4 @@
+const express = require('express');
 const app = require('../_server');
 
-module.exports = (req, res) => app(req, res);
+module.exports = app;
