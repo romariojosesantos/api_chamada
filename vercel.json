@@ -1,8 +1,6 @@
 {
   "version": 2,
   "installCommand": "npm install",
-  "buildCommand": null,
-  "outputDirectory": null,
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/index" }
   ],
@@ -15,5 +13,10 @@
         { "key": "Access-Control-Allow-Headers", "value": "Content-Type, x-institution-id, Authorization, Pragma, Cache-Control, Expires" }
       ]
     }
-  ]
+  ],
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 30
+    }
+  }
 }
