@@ -225,9 +225,14 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Inicia o servidor na porta definida
+// Inicia o servidor na porta definida (apenas quando executado localmente)
 const HOST = '0.0.0.0';
-app.listen(PORT, HOST, () => {
-  console.log(`Servidor rodando na porta ${PORT}.`);
-  console.log(`Para acessar de outros dispositivos na mesma rede, use seu IP local.`);
-});
+if (require.main === module) {
+  app.listen(PORT, HOST, () => {
+    console.log(`Servidor rodando na porta ${PORT}.`);
+    console.log(`Para acessar de outros dispositivos na mesma rede, use seu IP local.`);
+  });
+}
+
+// Exporta o app para a Vercel serverless
+module.exports = app;
