@@ -40,7 +40,9 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
     [turnoStatsRes],
     [transporteStatsRes],
     [ausentesCountRes],
-    [justificativasRes]
+    [justificativasRes],
+    [totalPresencasRegistradasRes],
+    [listaPresencasRegistradasRes]
   ] = await Promise.all([
     // 1. Total de alunos ativos
     pool.query(
@@ -104,6 +106,24 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
          AND (p.status IS NULL OR p.status != 'presente')
        GROUP BY p.observacao`,
       [diaDaSemana, data, inst]
+    ),
+
+    // 6. Total de presenças registradas no dia, independente de matrícula
+    pool.query(
+      `SELECT COUNT(*) as total
+       FROM presenca
+       WHERE id_instituicao = ? AND DATE(data) = ?`,
+      [inst, data]
+    ),
+
+    // 7. Lista detalhada de presenças do dia, independente de matrícula
+    pool.query(
+      `SELECT p.id, p.aluno_id, a.nome as aluno_nome, p.status, p.observacao, p.data
+       FROM presenca p
+       LEFT JOIN alunos a ON p.aluno_id = a.id
+       WHERE p.id_instituicao = ? AND DATE(p.data) = ?
+       ORDER BY a.nome ASC`,
+      [inst, data]
     )
   ]);
 
@@ -138,6 +158,8 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
     total_esperado: totalEsperado,
     total_presentes: totalPresentes,
     total_ausentes: ausentesCountRes[0].total,
+    total_presencas_registradas: totalPresencasRegistradasRes[0].total,
+    lista_presencas_registradas: listaPresencasRegistradasRes,
     frequencia_pct: totalEsperado > 0 ? Math.round((totalPresentes / totalEsperado) * 100) : 0,
     por_turno: turnoStatsRes,
     por_transporte: porTransporte,
