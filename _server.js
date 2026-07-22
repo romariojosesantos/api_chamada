@@ -149,21 +149,14 @@ app.get('/api/instituicao', async (req, res) => {
 // Rota para listar transportes únicos da instituição (para o dropdown de filtros)
 app.get('/api/transportes', async (req, res) => {
   try {
-    const cacheKey = `transportes_${req.id_instituicao}`;
-    const cached = getCache(cacheKey);
-    if (cached) {
-      return res.json(cached);
-    }
-    
     const sql = `
-      SELECT DISTINCT transporte 
+      SELECT DISTINCT TRIM(transporte) AS transporte 
       FROM alunos 
-      WHERE id_instituicao = ? AND transporte IS NOT NULL AND transporte != ''
+      WHERE id_instituicao = ? AND transporte IS NOT NULL AND TRIM(transporte) != ''
       ORDER BY transporte ASC
     `;
     const [results] = await pool.query(sql, [req.id_instituicao]);
-    const lista = results.map(r => r.transporte);
-    setCache(cacheKey, lista);
+    const lista = results.map(r => r.transporte).filter(Boolean);
     res.json(lista);
   } catch (err) {
     console.error("Erro em GET /api/transportes:", err);
@@ -174,14 +167,8 @@ app.get('/api/transportes', async (req, res) => {
 // Rota para listar professores únicos da instituição (para o dropdown de filtros)
 app.get('/api/professores', async (req, res) => {
   try {
-    const cacheKey = `professores_${req.id_instituicao}`;
-    const cached = getCache(cacheKey);
-    if (cached) {
-      return res.json(cached);
-    }
-    
     const sql = `
-      SELECT DISTINCT p.nome 
+      SELECT DISTINCT TRIM(p.nome) AS nome 
       FROM professores p
       JOIN atividades a ON p.id = a.idprofessor
       JOIN matricula m ON a.idatividades = m.idatividades
@@ -189,8 +176,7 @@ app.get('/api/professores', async (req, res) => {
       ORDER BY p.nome ASC
     `;
     const [results] = await pool.query(sql, [req.id_instituicao]);
-    const lista = results.map(r => r.nome);
-    setCache(cacheKey, lista);
+    const lista = results.map(r => r.nome).filter(Boolean);
     res.json(lista);
   } catch (err) {
     console.error("Erro em GET /api/professores:", err);
