@@ -111,9 +111,9 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         JOIN professores prof ON atv.idprofessor = prof.id
         LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
         WHERE a.status = 'ativo'
-        AND m.status = 'matriculado'
+        AND TRIM(LOWER(m.status)) = 'matriculado'
         AND m.data_fim IS NULL
-        AND prof.nome = ?
+        AND TRIM(prof.nome) = ?
         AND a.id_instituicao = ?
         ORDER BY a.nome ASC
       `;
@@ -128,7 +128,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         JOIN matricula m ON a.id = m.idaluno
         LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
         WHERE a.status = 'ativo'
-        AND m.status = 'matriculado'
+        AND TRIM(LOWER(m.status)) = 'matriculado'
         AND m.data_fim IS NULL
         AND a.id_instituicao = ?
         ORDER BY a.nome ASC
@@ -150,9 +150,9 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
         WHERE TRIM(m.dia_semana) = ? 
         AND a.status = 'ativo'
-        AND m.status = 'matriculado'
+        AND TRIM(LOWER(m.status)) = 'matriculado'
         AND m.data_fim IS NULL
-        AND prof.nome = ?
+        AND TRIM(prof.nome) = ?
         AND a.id_instituicao = ?
         ORDER BY a.nome ASC
       `;
@@ -168,7 +168,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
         WHERE TRIM(m.dia_semana) = ? 
         AND a.status = 'ativo'
-        AND m.status = 'matriculado'
+        AND TRIM(LOWER(m.status)) = 'matriculado'
         AND m.data_fim IS NULL
         AND a.id_instituicao = ?
         ORDER BY a.nome ASC

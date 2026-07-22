@@ -168,12 +168,10 @@ app.get('/api/transportes', async (req, res) => {
 app.get('/api/professores', async (req, res) => {
   try {
     const sql = `
-      SELECT DISTINCT TRIM(p.nome) AS nome 
-      FROM professores p
-      JOIN atividades a ON p.id = a.idprofessor
-      JOIN matricula m ON a.idatividades = m.idatividades
-      WHERE p.id_instituicao = ? AND m.status = 'matriculado'
-      ORDER BY p.nome ASC
+      SELECT DISTINCT TRIM(nome) AS nome 
+      FROM professores
+      WHERE id_instituicao = ? AND nome IS NOT NULL AND TRIM(nome) != ''
+      ORDER BY nome ASC
     `;
     const [results] = await pool.query(sql, [req.id_instituicao]);
     const lista = results.map(r => r.nome).filter(Boolean);
