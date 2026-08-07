@@ -17,6 +17,7 @@ router.get('/por-instituicao', asyncHandler(async (req, res) => {
            atv.idatividades AS id_atividade,
            atv.nome AS nome_atividade,
            m.dia_semana,
+           m.horario,
            m.turno,
            m.status,
            p.nome AS nome_professor
@@ -58,6 +59,7 @@ router.get('/aluno/:id', asyncHandler(async (req, res) => {
            atv.idatividades AS id_atividade,
            atv.nome AS nome_atividade,
            m.dia_semana,
+           m.horario,
            m.turno,
            m.status,
            p.nome AS nome_professor

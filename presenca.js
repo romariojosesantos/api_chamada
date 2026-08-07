@@ -96,4 +96,71 @@ router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
   }
 }));
 
+// Finalizar chamada - registrar ausências automaticamente para alunos esperados sem registro
+router.post('/finalizar', asyncHandler(async (req, res) => {
+  const { data, turno } = req.body;
+  const inst = req.id_instituicao;
+
+  if (!data) {
+    return res.status(400).json({ error: 'Data é obrigatória.' });
+  }
+
+  // Verificar se a data é um dia sem aula
+  const [diaSemAula] = await pool.query(
+    `SELECT id, motivo FROM dias_sem_aula WHERE data = ? AND id_instituicao = ?`,
+    [data, inst]
+  );
+
+  if (diaSemAula.length > 0) {
+    return res.status(400).json({
+      error: 'Não é possível finalizar chamada neste dia',
+      motivo: diaSemAula[0].motivo || 'Dia sem aula',
+      isDiaSemAula: true
+    });
+  }
+
+  // Determinar dia da semana
+  const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  const diaDaSemana = dias[new Date(`${data}T12:00:00`).getDay()];
+
+  // Buscar alunos esperados (matricula ativa para o dia da semana)
+  const [esperados] = await pool.query(
+    `SELECT DISTINCT a.id
+     FROM alunos a
+     JOIN matricula m ON a.id = m.idaluno
+     WHERE TRIM(m.dia_semana) = ?
+       AND TRIM(LOWER(m.status)) = 'matriculado'
+       AND m.data_fim IS NULL
+       AND a.id_instituicao = ?
+       AND a.status = 'ativo'`,
+    [diaDaSemana, inst]
+  );
+
+  // Buscar alunos que já têm registro na data
+  const [comRegistro] = await pool.query(
+    `SELECT DISTINCT aluno_id FROM presenca WHERE data = ? AND id_instituicao = ?`,
+    [data, inst]
+  );
+
+  const idsComRegistro = new Set(comRegistro.map(r => r.aluno_id));
+  const ausentesParaInserir = esperados
+    .filter(a => !idsComRegistro.has(a.id))
+    .map(a => [a.id, data, 'ausente', null, inst]);
+
+  // Inserir ausências
+  let ausentesRegistrados = 0;
+  if (ausentesParaInserir.length > 0) {
+    await pool.query(
+      `INSERT INTO presenca (aluno_id, data, status, observacao, id_instituicao) VALUES ?`,
+      [ausentesParaInserir]
+    );
+    ausentesRegistrados = ausentesParaInserir.length;
+  }
+
+  res.json({
+    message: 'Chamada finalizada com sucesso',
+    ausentes_registrados: ausentesRegistrados
+  });
+}));
+
 module.exports = router;
