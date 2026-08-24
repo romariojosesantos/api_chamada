@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('./db');
 const { validate } = require('./validation');
 const { logAuditEvent } = require('./audit');
+const { syncAlunoStatusFromMatriculas } = require('./status-sync');
 
 // Helper para envolver rotas assíncronas e capturar erros
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -527,6 +528,9 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         [today, ...studentsToInactivate, req.id_instituicao]
       );
     }
+
+    const idsParaSincronizar = [...new Set(existingStudents.map(s => s.id))];
+    await syncAlunoStatusFromMatriculas(connection, idsParaSincronizar, req.id_instituicao);
 
     await connection.commit();
 

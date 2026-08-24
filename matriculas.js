@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
+const { syncAlunoStatusFromMatriculas } = require('./status-sync');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -168,7 +169,12 @@ router.post('/', asyncHandler(async (req, res) => {
         }
       }
     }
-    
+
+    const idsParaSincronizar = [...new Set(alteracoes
+      .map(alteracao => Number(alteracao.aluno_id))
+      .filter(id => Number.isInteger(id) && id > 0))];
+
+    await syncAlunoStatusFromMatriculas(connection, idsParaSincronizar, req.id_instituicao);
     await connection.commit();
     res.json({ success: true, updated: results.length, results });
     
