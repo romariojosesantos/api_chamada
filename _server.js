@@ -182,6 +182,23 @@ app.get('/api/professores', async (req, res) => {
   }
 });
 
+// Rota para listar todas as atividades da instituição (para o dropdown de filtros)
+app.get('/api/atividades', async (req, res) => {
+  try {
+    const sql = `
+      SELECT idatividades AS id, nome, dia_semana, horario, turno 
+      FROM atividades
+      WHERE id_instituicao = ?
+      ORDER BY nome ASC
+    `;
+    const [results] = await pool.query(sql, [req.id_instituicao]);
+    res.json(results);
+  } catch (err) {
+    console.error("Erro em GET /api/atividades:", err);
+    res.status(500).json({ error: 'Erro ao buscar atividades: ' + err.message });
+  }
+});
+
 // Modularização de Rotas (Transferido para roteadores específicos)
 app.use('/api/alunos', alunosRouter);
 app.use('/api/presenca', presencaRouter);

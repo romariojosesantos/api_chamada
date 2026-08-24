@@ -106,4 +106,79 @@ router.get('/historico-periodo', asyncHandler(async (req, res) => {
   res.json(results);
 }));
 
+// Atualizar matrículas em lote (para AjusteGrade)
+router.post('/', asyncHandler(async (req, res) => {
+  const { alteracoes } = req.body;
+  
+  if (!alteracoes || !Array.isArray(alteracoes) || alteracoes.length === 0) {
+    return res.status(400).json({ error: 'Nenhuma alteração fornecida' });
+  }
+
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+    
+    const results = [];
+    
+    for (const alteracao of alteracoes) {
+      const { aluno_id, dia_semana, horario, id_atividade } = alteracao;
+      
+      if (!aluno_id || !dia_semana || !horario) {
+        throw new Error('Dados incompletos na alteração');
+      }
+      
+      // Buscar matrícula existente
+      const [existing] = await connection.query(
+        'SELECT idmatricula FROM matricula WHERE idaluno = ? AND dia_semana = ? AND horario = ? AND id_instituicao = ? AND data_fim IS NULL',
+        [aluno_id, dia_semana, horario, req.id_instituicao]
+      );
+      
+      if (id_atividade) {
+        // Atualizar ou criar matrícula
+        if (existing.length > 0) {
+          await connection.query(
+            'UPDATE matricula SET idatividades = ? WHERE idmatricula = ?',
+            [id_atividade, existing[0].idmatricula]
+          );
+          results.push({ action: 'updated', id: existing[0].idmatricula });
+        } else {
+          // Buscar turno do aluno
+          const [aluno] = await connection.query(
+            'SELECT turno FROM alunos WHERE id = ?',
+            [aluno_id]
+          );
+          
+          const turno = aluno[0]?.turno || '';
+          
+          await connection.query(
+            'INSERT INTO matricula (idaluno, idatividades, dia_semana, horario, turno, status, data_inicio, id_instituicao) VALUES (?, ?, ?, ?, ?, ?, CURDATE(), ?)',
+            [aluno_id, id_atividade, dia_semana, horario, turno, 'matriculado', req.id_instituicao]
+          );
+          results.push({ action: 'created', aluno_id, dia_semana, horario });
+        }
+      } else {
+        // Remover matrícula (id_atividade vazio)
+        if (existing.length > 0) {
+          await connection.query(
+            'UPDATE matricula SET data_fim = CURDATE() WHERE idmatricula = ?',
+            [existing[0].idmatricula]
+          );
+          results.push({ action: 'deleted', id: existing[0].idmatricula });
+        }
+      }
+    }
+    
+    await connection.commit();
+    res.json({ success: true, updated: results.length, results });
+    
+  } catch (error) {
+    await connection.rollback();
+    console.error('Erro ao atualizar matrículas:', error);
+    res.status(500).json({ error: 'Erro ao atualizar matrículas: ' + error.message });
+  } finally {
+    connection.release();
+  }
+}));
+
 module.exports = router;

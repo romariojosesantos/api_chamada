@@ -1,0 +1,575 @@
+{
+	"info": {
+		"_postman_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+		"name": "Controle de Presença API",
+		"description": "Coleção para testar a API de Controle de Presença. A autenticação e o ID da instituição são gerenciados automaticamente após o login.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "POST Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"const jsonData = pm.response.json();",
+									"",
+									"if (jsonData.token) {",
+									"    pm.collectionVariables.set(\"authToken\", jsonData.token);",
+									"    console.log(\"Token de autenticação salvo.\");",
+									"}",
+									"",
+									"if (jsonData.user && jsonData.user.instituicoes && jsonData.user.instituicoes.length > 0) {",
+									"    pm.collectionVariables.set(\"institutionId\", jsonData.user.instituicoes[0]);",
+									"    console.log(\"ID da Instituição salvo: \", jsonData.user.instituicoes[0]);",
+									"} else if (jsonData.user && jsonData.user.perfil === 'master') {",
+									"    console.log(\"Usuário é master. O ID da instituição precisa ser definido manualmente para rotas específicas.\");",
+									"    // Para master, talvez seja necessário setar um ID padrão ou deixar em branco",
+									"    pm.collectionVariables.set(\"institutionId\", \"1\"); // Defina um ID padrão se necessário",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"master@exemplo.com\",\n    \"senha\": \"senha123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"description": "Realiza o login e salva o token e o ID da instituição automaticamente para serem usados nas outras requisições."
+					},
+					"response": []
+				},
+				{
+					"name": "GET Me",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/me",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"me"
+							]
+						},
+						"description": "Retorna os dados do usuário autenticado."
+					},
+					"response": []
+				},
+				{
+					"name": "POST Register",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"nome\": \"Novo Usuário\",\n    \"email\": \"novo@exemplo.com\",\n    \"senha\": \"senha123\",\n    \"perfil\": \"monitor\",\n    \"id_instituicao\": 1\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/register",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"register"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints relacionados à autenticação e gerenciamento de usuários."
+		},
+		{
+			"name": "Geral (Instituição)",
+			"item": [
+				{
+					"name": "GET Instituições (Todas)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/instituicoes/todas",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"instituicoes",
+								"todas"
+							]
+						},
+						"description": "Lista todas as instituições às quais o usuário tem acesso. Para o 'master', lista todas."
+					},
+					"response": []
+				},
+				{
+					"name": "GET Instituição (Selecionada)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/instituicao",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"instituicao"
+							]
+						},
+						"description": "Retorna os detalhes da instituição cujo ID está no header `x-institution-id`."
+					},
+					"response": []
+				},
+				{
+					"name": "GET Transportes",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/transportes",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"transportes"
+							]
+						},
+						"description": "Lista os transportes únicos da instituição selecionada."
+					},
+					"response": []
+				},
+				{
+					"name": "GET Professores",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/professores",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"professores"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "GET Atividades",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/atividades",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"atividades"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Alunos",
+			"item": [
+				{
+					"name": "GET Listar Alunos (com filtros)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/alunos?status=ativo&turno=Manhã",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"alunos"
+							],
+							"query": [
+								{
+									"key": "nome",
+									"value": "",
+									"disabled": true
+								},
+								{
+									"key": "status",
+									"value": "ativo"
+								},
+								{
+									"key": "turno",
+									"value": "Manhã"
+								},
+								{
+									"key": "transporte",
+									"value": "",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "GET Alunos por Dia (Chamada)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/alunos/por-dia?data=2026-07-17",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"alunos",
+								"por-dia"
+							],
+							"query": [
+								{
+									"key": "data",
+									"value": "2026-07-17",
+									"description": "Formato YYYY-MM-DD"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "POST Criar Aluno",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"nome\": \"Carlos Pereira\",\n    \"data_nascimento\": \"2010-05-15\",\n    \"sexo\": \"M\",\n    \"telefone\": \"11987654321\",\n    \"turma\": \"5A\",\n    \"turno\": \"Manhã\",\n    \"transporte\": \"Van Escolar\",\n    \"status\": \"ativo\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/alunos",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"alunos"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "PATCH Atualizar Aluno (campo único)",
+					"request": {
+						"method": "PATCH",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"campo\": \"telefone\",\n    \"valor\": \"11999998888\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/alunos/1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"alunos",
+								"1"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "DELETE Excluir Aluno",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/alunos/1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"alunos",
+								"1"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "POST Upsert Bulk (Importação)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"alunos\": [\n        {\n            \"nome\": \"Ana Silva\",\n            \"turno\": \"Manhã\",\n            \"transporte\": \"Onibus Branco\",\n            \"SEG HR 1\": \"Atividade Padrão\"\n        },\n        {\n            \"nome\": \"Bruno Costa\",\n            \"turno\": \"Tarde\",\n            \"transporte\": \"Onibus Amarelo\",\n            \"TER HR 2\": \"Atividade Padrão\"\n        }\n    ],\n    \"atividades\": [\n        {\n            \"atividade\": \"Atividade Padrão\",\n            \"professor\": \"Professor de Teste\"\n        }\n    ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/alunos/upsert-bulk",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"alunos",
+								"upsert-bulk"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Relatórios",
+			"item": [
+				{
+					"name": "GET Estatísticas Diárias",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/relatorios/estatisticas-diarias?data=2026-07-17",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"relatorios",
+								"estatisticas-diarias"
+							],
+							"query": [
+								{
+									"key": "data",
+									"value": "2026-07-17"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "GET Estatísticas por Período",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/relatorios/estatisticas-periodo?data_inicio=2026-07-01&data_fim=2026-07-17",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"relatorios",
+								"estatisticas-periodo"
+							],
+							"query": [
+								{
+									"key": "data_inicio",
+									"value": "2026-07-01"
+								},
+								{
+									"key": "data_fim",
+									"value": "2026-07-17"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "GET Histórico Geral",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/relatorios/historico-geral",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"relatorios",
+								"historico-geral"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Histórico Aluno (Master)",
+			"item": [
+				{
+					"name": "GET Buscar Aluno por Nome",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/historico-aluno/buscar?q=Silva",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"historico-aluno",
+								"buscar"
+							],
+							"query": [
+								{
+									"key": "q",
+									"value": "Silva"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "GET Dados Completos do Aluno",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/historico-aluno/1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"historico-aluno",
+								"1"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints para administração de dados históricos de alunos, acessíveis apenas pelo perfil 'master'."
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{authToken}}",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Adiciona o header x-institution-id em todas as requisições, exceto as de autenticação.",
+					"const isAuthRequest = pm.request.url.path.join('/').startsWith('api/auth');",
+					"",
+					"if (!isAuthRequest) {",
+					"    pm.request.headers.add({",
+					"        key: 'x-institution-id',",
+					"        value: pm.collectionVariables.get('institutionId')",
+					"    });",
+					"}"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:3001",
+			"type": "string"
+		},
+		{
+			"key": "authToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "institutionId",
+			"value": "",
+			"type": "string"
+		}
+	]
+}
