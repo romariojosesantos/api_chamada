@@ -1,3 +1,8 @@
+// Ficha completa de um aluno, só para perfil master (pode ver/editar alunos de
+// QUALQUER instituição, por isso as rotas daqui não passam pelo middleware de
+// x-institution-id — vem de req.body/params, não de req.id_instituicao). Usado
+// pela tela HistoricoAlunoMaster.js: busca, edição de dados cadastrais,
+// matrículas e contatos de emergência, e histórico de presença.
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
@@ -6,9 +11,8 @@ const { logAuditEvent } = require('./audit');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-const isMaster = (req) => req.user?.perfil === 'master';
-
-// Listar atividades de uma instituição (apenas master)
+// Listar atividades de uma instituição (apenas master) — usado no formulário de
+// matrícula da ficha do aluno, pra popular o select de atividades.
 router.get('/atividades/:instituicaoId', masterMiddleware, asyncHandler(async (req, res) => {
   const instId = parseInt(req.params.instituicaoId);
   if (isNaN(instId)) return res.status(400).json({ error: 'ID da instituição inválido.' });
@@ -23,7 +27,8 @@ router.get('/atividades/:instituicaoId', masterMiddleware, asyncHandler(async (r
   res.json(rows);
 }));
 
-// Buscar alunos por nome (apenas master, todas as instituições)
+// Buscar alunos por nome em TODAS as instituições (só master enxerga globalmente
+// assim) — alimenta a busca com debounce da tela HistoricoAlunoMaster.js.
 router.get('/buscar', masterMiddleware, asyncHandler(async (req, res) => {
   const { q } = req.query;
   const search = String(q || '').trim();
@@ -43,7 +48,9 @@ router.get('/buscar', masterMiddleware, asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
-// Buscar dados completos de um aluno (apenas master)
+// Ficha completa: dados do aluno + TODO o histórico de matrículas (inclusive
+// encerradas, ao contrário das outras rotas de matrícula do sistema) + contatos
+// de emergência + todo o histórico de presença.
 router.get('/:id', masterMiddleware, asyncHandler(async (req, res) => {
   const alunoId = parseInt(req.params.id);
   if (isNaN(alunoId)) return res.status(400).json({ error: 'ID do aluno inválido.' });
@@ -81,7 +88,8 @@ router.get('/:id', masterMiddleware, asyncHandler(async (req, res) => {
     [alunoId]
   );
 
-  // Contatos de emergência (tolerante se a tabela não existir)
+  // Contatos de emergência — tolerante se a tabela não existir (ambiente sem essa
+  // migração aplicada ainda continua funcionando, só sem essa seção da ficha).
   let contatos = [];
   try {
     const [rows] = await pool.query(
@@ -108,7 +116,6 @@ router.get('/:id', masterMiddleware, asyncHandler(async (req, res) => {
      ORDER BY p.data DESC`,
     [alunoId]
   );
-  console.log(`[historico-aluno GET /:id] presencas encontradas para aluno ${alunoId}:`, presencas.length);
 
   res.json({
     aluno,
@@ -118,7 +125,10 @@ router.get('/:id', masterMiddleware, asyncHandler(async (req, res) => {
   });
 }));
 
-// Atualizar dados do aluno (apenas master)
+// Atualizar dados cadastrais do aluno (apenas master). NOTA: não inclui
+// acompanhamento/ponto — o formulário da ficha (HistoricoAlunoMaster.js) também
+// não tem campos pra esses dois, então hoje não dá pra editá-los por aqui (só
+// pelo PATCH de campo único em alunos.js).
 router.put('/:id', masterMiddleware, asyncHandler(async (req, res) => {
   const alunoId = parseInt(req.params.id);
   if (isNaN(alunoId)) return res.status(400).json({ error: 'ID do aluno inválido.' });
@@ -131,7 +141,7 @@ router.put('/:id', masterMiddleware, asyncHandler(async (req, res) => {
   if (!aluno) return res.status(404).json({ error: 'Aluno não encontrado.' });
 
   const [result] = await pool.query(
-    `UPDATE alunos 
+    `UPDATE alunos
      SET nome = ?, data_nascimento = ?, sexo = ?, telefone = ?, turma = ?, turno = ?, transporte = ?, Inf = ?, status = ?
      WHERE id = ?`,
     [
@@ -152,7 +162,8 @@ router.put('/:id', masterMiddleware, asyncHandler(async (req, res) => {
   res.json({ message: 'Dados do aluno atualizados com sucesso.' });
 }));
 
-// Atualizar uma matrícula (apenas master)
+// Editar uma matrícula específica (apenas master) — permite mexer em qualquer
+// campo, inclusive reabrir uma matrícula encerrada (limpando data_fim).
 router.put('/matricula/:id', masterMiddleware, asyncHandler(async (req, res) => {
   const matriculaId = parseInt(req.params.id);
   if (isNaN(matriculaId)) return res.status(400).json({ error: 'ID da matrícula inválido.' });
@@ -163,7 +174,7 @@ router.put('/matricula/:id', masterMiddleware, asyncHandler(async (req, res) => 
   if (!matricula) return res.status(404).json({ error: 'Matrícula não encontrada.' });
 
   const [result] = await pool.query(
-    `UPDATE matricula 
+    `UPDATE matricula
      SET turno = ?, horario = ?, dia_semana = ?, status = ?, data_inicio = ?, data_fim = ?, idatividades = ?
      WHERE idmatricula = ?`,
     [
@@ -183,7 +194,9 @@ router.put('/matricula/:id', masterMiddleware, asyncHandler(async (req, res) => 
   res.json({ message: 'Matrícula atualizada com sucesso.' });
 }));
 
-// Criar nova matrícula para um aluno (apenas master)
+// Criar nova matrícula para um aluno (apenas master) — diferente de matriculas.js,
+// aqui o id_instituicao vem explícito no corpo (o master não está "dentro" de uma
+// instituição selecionada, pode estar editando o aluno de qualquer uma).
 router.post('/matricula', masterMiddleware, asyncHandler(async (req, res) => {
   const { idaluno, idatividades, turno, horario, dia_semana, status, data_inicio, data_fim, id_instituicao } = req.body;
 
@@ -217,7 +230,7 @@ router.post('/matricula', masterMiddleware, asyncHandler(async (req, res) => {
   res.status(201).json({ id: result.insertId, message: 'Matrícula criada com sucesso.' });
 }));
 
-// Encerrar (soft delete) uma matrícula (apenas master)
+// Encerrar (soft delete via data_fim + status) uma matrícula (apenas master).
 router.delete('/matricula/:id', masterMiddleware, asyncHandler(async (req, res) => {
   const matriculaId = parseInt(req.params.id);
   if (isNaN(matriculaId)) return res.status(400).json({ error: 'ID da matrícula inválido.' });
@@ -234,7 +247,9 @@ router.delete('/matricula/:id', masterMiddleware, asyncHandler(async (req, res) 
   res.json({ message: 'Matrícula encerrada com sucesso.' });
 }));
 
-// Atualizar contato de emergência (apenas master)
+// --- Contatos de emergência (versão master — ver também contatos-emergencia.js,
+// a versão de instituição usada pela tela GerenciarMatriculas.js) ---
+
 router.put('/contato/:id', masterMiddleware, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   const { nome, telefone, parentesco } = req.body;
@@ -255,7 +270,6 @@ router.put('/contato/:id', masterMiddleware, asyncHandler(async (req, res) => {
   res.json({ message: 'Contato atualizado com sucesso.' });
 }));
 
-// Criar contato de emergência (apenas master)
 router.post('/contato', masterMiddleware, asyncHandler(async (req, res) => {
   const { id_aluno, nome, telefone, parentesco, id_instituicao } = req.body;
   const alunoId = parseInt(id_aluno);
@@ -274,7 +288,6 @@ router.post('/contato', masterMiddleware, asyncHandler(async (req, res) => {
   res.status(201).json({ id: result.insertId, message: 'Contato criado com sucesso.' });
 }));
 
-// Deletar contato de emergência (apenas master)
 router.delete('/contato/:id', masterMiddleware, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });

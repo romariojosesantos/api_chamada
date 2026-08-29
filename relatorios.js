@@ -1,9 +1,18 @@
+// Relatórios agregados de presença para o dashboard. Em todas as 3 rotas, um
+// aluno só é "esperado" se tiver matrícula ativa (`m.status = 'matriculado'`,
+// `m.data_fim IS NULL` — não encerrada) para o dia da semana em questão, E a
+// data não estiver marcada em `dias_sem_aula` (feriado/recesso — nesse caso
+// ninguém é esperado, independente de matrícula).
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+// Snapshot de um único dia: alunos ativos, esperados x presentes (geral, por
+// turno e por transporte), frequência e a lista de quem foi marcado presente.
+// Se a data cair num dia sem aula, devolve tudo zerado com `is_dia_sem_aula: true`
+// em vez de rodar as queries — não tem "esperado" nem "falta" nesses dias.
 router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
   const { data } = req.query;
   if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
@@ -184,7 +193,11 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
   });
 }));
 
-// Estatísticas por período com justificativas
+// Consolidado de um período (seção "Estatísticas por Período" do dashboard).
+// Mistura duas unidades de contagem — a leitura de cada campo da resposta importa:
+//   - "..._alunos"/"total_justificados"/"total_nao_justificados": ALUNOS ÚNICOS
+//     (um aluno que faltou 5 dias conta 1 vez).
+//   - "..._registros": REGISTROS de presença (uma linha por aluno por dia).
 router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
   const { data_inicio, data_fim } = req.query;
   const inst = req.id_instituicao;
@@ -232,7 +245,8 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
     [presentesTotalRes],
     [esperadosAlunosRes],
     [faltasPorDiaRes],
-    [justificativasRes]
+    [justificativasRes],
+    [justificadosAlunosRes]
   ] = await Promise.all([
     // Total de alunos únicos com presença no período (excluindo dias sem aula)
     pool.query(
@@ -277,7 +291,11 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
       [data_inicio, data_fim, inst, inst]
     ),
 
-    // Total de faltas no período: soma de oportunidades (esperados por dia) menos presenças
+    // Total de faltas no período: soma de oportunidades (esperados por dia) menos presenças.
+    // NÃO comparar data_inicio com '0000-00-00' ou '' aqui: o servidor roda com
+    // sql_mode NO_ZERO_DATE/STRICT_TRANS_TABLES, que rejeita esses literais contra
+    // uma coluna DATE com "Incorrect DATE value" — quebra a query inteira, mesmo que
+    // nenhuma linha tenha esse valor. Basta checar NULL (data_inicio é DATE, não guarda '').
     pool.query(
       `WITH RECURSIVE datas AS (
         SELECT ? as data
@@ -302,14 +320,9 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
             DAYOFWEEK(d.data),
             'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
           ) 
-          AND m.status = 'matriculado' 
+          AND m.status = 'matriculado'
           AND m.data_fim IS NULL
-          AND (
-            m.data_inicio IS NULL 
-            OR m.data_inicio = '0000-00-00'
-            OR m.data_inicio = ''
-            OR m.data_inicio <= d.data
-          )
+          AND (m.data_inicio IS NULL OR m.data_inicio <= d.data)
         JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo'
         GROUP BY d.data
       )
@@ -318,20 +331,37 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
       [data_inicio, data_fim, inst, inst]
     ),
 
-    // Contagem de justificativas por tipo no período (apenas de alunos que têm registro de presença não presente)
+    // Contagem de justificativas por tipo no período — REGISTROS (cada lançamento
+    // conta, mesmo repetido pro mesmo aluno). Usado só na lista "justificativas" abaixo.
     pool.query(
-      `SELECT 
+      `SELECT
          COALESCE(p.observacao, 'Sem justificativa') AS justificativa,
          COUNT(*) AS quantidade
        FROM presenca p
-       WHERE p.id_instituicao = ? 
+       WHERE p.id_instituicao = ?
          AND p.status != 'presente'
          AND DATE(p.data) BETWEEN ? AND ?
          AND NOT EXISTS (
-           SELECT 1 FROM dias_sem_aula d 
+           SELECT 1 FROM dias_sem_aula d
            WHERE d.data = DATE(p.data) AND d.id_instituicao = ?
          )
        GROUP BY p.observacao`,
+      [inst, data_inicio, data_fim, inst]
+    ),
+
+    // Alunos ÚNICOS com ao menos uma falta justificada no período — usado no total
+    // "por aluno" abaixo. Não pode reaproveitar a soma de registros acima: um aluno
+    // justificado em 3 dias diferentes deve contar 1 vez aqui, não 3.
+    pool.query(
+      `SELECT COUNT(DISTINCT p.aluno_id) as total
+       FROM presenca p
+       WHERE p.id_instituicao = ?
+         AND p.status = 'justificado'
+         AND DATE(p.data) BETWEEN ? AND ?
+         AND NOT EXISTS (
+           SELECT 1 FROM dias_sem_aula d
+           WHERE d.data = DATE(p.data) AND d.id_instituicao = ?
+         )`,
       [inst, data_inicio, data_fim, inst]
     )
   ]);
@@ -346,10 +376,13 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
   const totalOportunidadesRegistros = parseInt(faltasPorDiaRes[0].total || 0, 10);
   // Faltas = oportunidades - presenças
   const totalFaltasRegistros = Math.max(0, totalOportunidadesRegistros - totalPresentesRegistros);
-  const totalJustificados = justificativasRes
+  // Registros de justificativa (cada lançamento, para a lista "justificativas" abaixo)
+  const totalJustificativasRegistros = justificativasRes
     .filter(j => j.justificativa !== 'Sem justificativa')
     .reduce((sum, j) => sum + j.quantidade, 0);
-  // Não justificados = total de ausentes (por aluno) - justificados
+  // Alunos únicos justificados (para o total "por aluno")
+  const totalJustificados = justificadosAlunosRes[0].total || 0;
+  // Não justificados = total de ausentes (por aluno) - justificados (por aluno) — mesma unidade dos dois lados
   const totalNaoJustificados = Math.max(0, totalAusentesAlunos - totalJustificados);
   // Média de alunos esperados por dia letivo
   const mediaAlunosDia = diasLetivos.length > 0 ? Math.round(totalOportunidadesRegistros / diasLetivos.length) : 0;
@@ -366,7 +399,7 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
     // Por registro (total de ocorrências)
     total_presentes_registros: totalPresentesRegistros,
     total_faltas_registros: totalFaltasRegistros,
-    total_justificativas_registros: totalJustificados,
+    total_justificativas_registros: totalJustificativasRegistros,
     justificativas: justificativasRes.map(j => ({
       tipo: j.justificativa,
       quantidade: j.quantidade

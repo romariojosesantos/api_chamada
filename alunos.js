@@ -1,3 +1,6 @@
+// CRUD de alunos + as duas rotas mais usadas do sistema no dia a dia:
+// /por-dia (monta a lista de chamada de um dia específico) e /upsert-bulk
+// (importação em massa a partir da planilha Excel da grade).
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
@@ -8,14 +11,16 @@ const { syncAlunoStatusFromMatriculas } = require('./status-sync');
 // Helper para envolver rotas assíncronas e capturar erros
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-// Helper para subquery de dias matriculados (evita duplicação de código)
+// Helper para subquery de dias matriculados (evita duplicação de código).
+// Retorna, por aluno, a lista de dias da semana em que ele tem matrícula ativa
+// (ex.: "Segunda,Quarta"), usada nas telas que mostram o aluno junto com sua grade.
 const getDiasMatriculadosSubquery = () => `
-  IFNULL((SELECT GROUP_CONCAT(DISTINCT TRIM(m2.dia_semana) SEPARATOR ',') 
-   FROM matricula m2 
+  IFNULL((SELECT GROUP_CONCAT(DISTINCT TRIM(m2.dia_semana) SEPARATOR ',')
+   FROM matricula m2
    WHERE m2.idaluno = a.id AND m2.status = 'matriculado' AND m2.id_instituicao = a.id_instituicao), '') as dias_matriculados
 `;
 
-// Helper para validar e normalizar turno
+// Helper para validar e normalizar turno (ex.: " manhã " -> "Manhã")
 const validarTurno = (turno) => {
   if (!turno) return null;
   const turnoNormalizado = String(turno).trim();
@@ -43,16 +48,19 @@ const parseDataNascimento = (data) => {
   return null;
 };
 
-// Listar Alunos com filtros dinâmicos
+// Listar Alunos com filtros dinâmicos.
+// Regra especial: se `nome` for informado, os demais filtros (status/turno/transporte)
+// são ignorados — a busca por nome funciona como uma busca "global" independente
+// do status atual do aluno (útil para achar alunos inativos, por exemplo).
 router.get('/', asyncHandler(async (req, res) => {
   const { nome, turno, transporte, status } = req.query;
-  
+
   let sql = `
-    SELECT a.id, a.nome, a.data_nascimento, a.sexo, a.telefone, 
+    SELECT a.id, a.nome, a.data_nascimento, a.sexo, a.telefone,
            a.turma, a.turno, a.transporte, a.status, a.Inf,
            a.acompanhamento, a.ponto,
            ${getDiasMatriculadosSubquery()}
-    FROM alunos a 
+    FROM alunos a
     WHERE a.id_instituicao = ?
   `;
   const params = [req.id_instituicao];
@@ -73,7 +81,19 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(results);
 }));
 
-// Rota para buscar alunos que possuem aula em um dia específico (Base para a Chamada)
+// Rota para buscar alunos que possuem aula em um dia específico — base da tela de Chamada.
+//
+// Se a data cair num dia marcado como "sem aula" (feriado/recesso — ver
+// dias-sem-aula.js), devolve uma lista vazia com `isDiaSemAula: true` em vez de
+// tentar montar a chamada — não faz sentido pedir presença num dia sem aula.
+//
+// Dois modos, controlados por `ignoreFilters`:
+//  - "Chamada" (padrão): só os alunos matriculados no dia da semana correspondente à `data`.
+//  - "Relatório" (ignoreFilters=true): todos os alunos ativos matriculados, sem
+//    filtrar por dia — usado quando a tela precisa mostrar o status de presença
+//    de todo mundo, mesmo de quem não tinha aula prevista naquele dia.
+// Em ambos os modos, `professor` (opcional) restringe aos alunos matriculados em
+// atividades daquele professor.
 router.get('/por-dia', asyncHandler(async (req, res) => {
   const { data, ignoreFilters, professor } = req.query; // Espera formato YYYY-MM-DD
   if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
@@ -98,6 +118,10 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
 
   let sql, params;
 
+  // `m.data_fim IS NULL` em todo lugar abaixo: uma matrícula com data_fim
+  // preenchida está encerrada (soft-delete), independente de qual data seja —
+  // não é um intervalo de vigência, é um "isso não vale mais" (mesmo padrão
+  // usado em matriculas.js, presenca.js e relatorios.js).
   if (ignoreFilters === 'true') {
     // Modo Relatório: retorna TODOS os alunos ativos com status de presença para a data
     if (professor) {
@@ -149,7 +173,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         JOIN atividades atv ON m.idatividades = atv.idatividades
         JOIN professores prof ON atv.idprofessor = prof.id
         LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
-        WHERE TRIM(m.dia_semana) = ? 
+        WHERE TRIM(m.dia_semana) = ?
         AND a.status = 'ativo'
         AND TRIM(LOWER(m.status)) = 'matriculado'
         AND m.data_fim IS NULL
@@ -167,7 +191,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         FROM alunos a
         JOIN matricula m ON a.id = m.idaluno
         LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
-        WHERE TRIM(m.dia_semana) = ? 
+        WHERE TRIM(m.dia_semana) = ?
         AND a.status = 'ativo'
         AND TRIM(LOWER(m.status)) = 'matriculado'
         AND m.data_fim IS NULL
@@ -188,20 +212,23 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
 }));
 
 
-// Relatório Frequência Plena (Otimizado)
+// Relatório Frequência Plena (Otimizado): total de presenças de cada aluno num
+// período e as datas exatas em que compareceu — usado na tela de "assiduidade".
+// Exclui dias marcados como sem aula do total (não deveriam ter presença mesmo,
+// mas a checagem é defensiva).
 router.get('/frequencia-plena', asyncHandler(async (req, res) => {
   const { inicio, fim } = req.query;
   if (!inicio || !fim) return res.status(400).json({ error: 'Datas início/fim obrigatórias.' });
-  
+
   const sql = `
     SELECT a.id, a.nome, a.turno, a.turma, a.transporte,
            COUNT(DISTINCT p.data) as total_presencas,
            GROUP_CONCAT(DISTINCT DATE_FORMAT(p.data, '%d/%m') ORDER BY p.data ASC SEPARATOR ', ') as dias_presente
     FROM alunos a
-    INNER JOIN presenca p ON a.id = p.aluno_id AND p.status = 'presente' 
+    INNER JOIN presenca p ON a.id = p.aluno_id AND p.status = 'presente'
       AND p.data BETWEEN ? AND ? AND p.id_instituicao = ?
       AND NOT EXISTS (
-        SELECT 1 FROM dias_sem_aula d 
+        SELECT 1 FROM dias_sem_aula d
         WHERE d.data = DATE(p.data) AND d.id_instituicao = ?
       )
     WHERE a.id_instituicao = ?
@@ -212,11 +239,28 @@ router.get('/frequencia-plena', asyncHandler(async (req, res) => {
   res.json(results);
 }));
 
-// Rota para Upsert em Lote (Importação do Excel)
+// Importação em massa a partir do Excel da grade (aba de alunos + aba opcional de
+// atividades). Todo o processamento roda numa única transação: se qualquer etapa
+// falhar, nada é gravado. Passos:
+//   1. Upsert dos alunos (por nome) — cria quem não existe, atualiza quem já existe.
+//   2. Recarrega os alunos pelo nome para obter os IDs reais (insertId não serve
+//      para lote com upsert, por isso o SELECT extra).
+//   3. Varre cada aluno procurando colunas de matrícula no formato "SEG HR 1" etc.
+//      e monta a lista de matrículas a criar, coletando os nomes de atividade únicos.
+//   4. Garante que professores e atividades citados existam (cria os que faltam;
+//      atualiza o professor de atividades já existentes se a planilha trouxer outro).
+//   5. Compara com as matrículas atuais de cada aluno: se o horário já tinha uma
+//      matrícula pra mesma atividade, não faz nada; se a atividade mudou nesse
+//      horário, encerra (soft-delete) a antiga e cria uma nova — preserva o
+//      histórico em vez de sobrescrever.
+//   6. Qualquer aluno ATIVO que não veio nesta planilha é marcado como INATIVO e
+//      suas matrículas são encerradas — a planilha é tratada como a fonte da
+//      verdade de "quem está matriculado agora". Um import parcial (faltando
+//      alguém que ainda está na escola) vai inativar essa pessoa por engano.
 router.post('/upsert-bulk', asyncHandler(async (req, res) => {
   let alunos = [];
   let atividadesExcel = [];
-  
+
   if (Array.isArray(req.body)) {
     alunos = req.body;
   } else if (req.body && req.body.alunos) {
@@ -232,8 +276,8 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // Prepara os valores para o INSERT em massa
-    // Mapeia os campos vindos do Excel para as colunas do banco
+    // Passo 1: upsert dos alunos. Aceita nome vindo de diferentes cabeçalhos de
+    // planilha (nome/ALUNO/Aluno) porque a planilha já mudou de formato antes.
     const values = alunos.map(a => [
       String(a.nome || a.ALUNO || a.Aluno).trim(),
       parseDataNascimento(a.data_nascimento),
@@ -252,7 +296,7 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     const sql = `
       INSERT INTO alunos (nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf, acompanhamento, ponto, status, id_instituicao)
       VALUES ?
-      ON DUPLICATE KEY UPDATE 
+      ON DUPLICATE KEY UPDATE
         data_nascimento = VALUES(data_nascimento),
         sexo = VALUES(sexo),
         telefone = VALUES(telefone),
@@ -266,8 +310,8 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
 
     const [alunosUpsertResult] = await connection.query(sql, [values]);
 
-    // 1. Após o upsert de alunos, precisamos dos IDs de todos os alunos processados.
-    // Como result.insertId não é confiável para bulk updates, fazemos um SELECT.
+    // Passo 2: result.insertId não é confiável em upsert de lote (não retorna o id
+    // de cada linha), então recarregamos os alunos processados pelo nome.
     const studentNames = alunos.map(a => String(a.nome || a.ALUNO || a.Aluno).trim());
     const [existingStudents] = await connection.query(
       `SELECT id, nome, turno FROM alunos WHERE nome IN (?) AND id_instituicao = ?`,
@@ -275,7 +319,9 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     );
     const studentIdMap = new Map(existingStudents.map(s => [s.nome, { id: s.id, turno: s.turno }]));
 
-    // 2. Preparar dados de matrícula
+    // Passo 3: varre as colunas de cada linha do Excel procurando o padrão de
+    // matrícula (dia + horário, ex.: "SEG HR 1", "Segunda-HR2") e monta a lista de
+    // matrículas a upsertar, junto com o conjunto de atividades/professores citados.
     const matriculasToUpsert = [];
     const activitiesToFindOrCreate = new Set(); // Coleta nomes de atividades únicas
     const excelActivityProfMap = new Map(); // Mapa de atividade -> professor
@@ -313,7 +359,6 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         continue;
       }
 
-            
       for (const key in alunoRaw) {
         const match = key.match(matriculaColRegex);
         if (match && alunoRaw[key]) { // Se é uma coluna de matrícula e tem um valor (nome da atividade)
@@ -323,7 +368,6 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
           const dia_semana = diaSemanaMap[diaAbreviado];
           const nome_atividade = String(alunoRaw[key]).trim();
 
-          
           if (dia_semana && nome_atividade && alunoTurno) { // Garante que todas as partes são válidas
             activitiesToFindOrCreate.add(nome_atividade);
             matriculasToUpsert.push({
@@ -338,12 +382,12 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         }
       }
     }
-    
-        
-    // 3. Encontrar ou criar atividades e professores
+
+    // Passo 4: garante que toda atividade/professor citado na planilha exista no banco.
     const activityIdMap = new Map();
     if (activitiesToFindOrCreate.size > 0) {
-      // 3.1 Resolvendo Professores
+      // 4.1 Professores: sempre garante 'Professor Padrão' (usado quando a planilha
+      // não especifica professor para uma atividade).
       const profsToFindOrCreate = new Set(['Professor Padrão']);
       for (const profNome of excelActivityProfMap.values()) {
         profsToFindOrCreate.add(profNome);
@@ -373,7 +417,8 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
 
       const defaultProfessorId = profIdMap.get('Professor Padrão');
 
-      // 3.2 Resolvendo Atividades
+      // 4.2 Atividades: cria as que ainda não existem, vinculando ao professor da
+      // planilha (ou ao Professor Padrão, se não informado).
       const [existingActivities] = await connection.query(
         `SELECT idatividades, nome, idprofessor FROM atividades WHERE nome IN (?) AND id_instituicao = ?`,
         [Array.from(activitiesToFindOrCreate), req.id_instituicao]
@@ -401,7 +446,9 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         newlyCreatedActivities.forEach(act => activityIdMap.set(act.nome, act.idatividades));
       }
 
-      // 3.3 Atualizando Atividades Existentes (se o professor mudou na planilha)
+      // 4.3 Se uma atividade já existia mas a planilha trouxe um professor diferente
+      // do cadastrado, atualiza o vínculo (bulk update via CASE WHEN em vez de um
+      // UPDATE por linha, para não fazer N idas ao banco).
       const activitiesToUpdate = [];
       for (const existingAct of existingActivities) {
         const profNomeFromExcel = excelActivityProfMap.get(existingAct.nome);
@@ -413,12 +460,11 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         }
       }
       if (activitiesToUpdate.length > 0) {
-        // Otimização: Bulk update usando CASE WHEN em vez de loop
-        const caseWhenParts = activitiesToUpdate.map(([profId, actId]) => 
+        const caseWhenParts = activitiesToUpdate.map(([profId, actId]) =>
           `WHEN ${actId} THEN ${profId}`
         ).join(' ');
         const actIds = activitiesToUpdate.map(([, actId]) => actId).join(',');
-        
+
         await connection.query(
           `UPDATE atividades SET idprofessor = CASE idatividades ${caseWhenParts} END WHERE idatividades IN (${actIds}) AND id_instituicao = ?`,
           [req.id_instituicao]
@@ -426,36 +472,37 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       }
     }
 
-    // 4. Buscar matrículas atuais para detectar mudanças
+    // Passo 5: compara com as matrículas atuais (por aluno+turno+horario+dia_semana,
+    // a "posição" na grade) para decidir upsert vs. encerrar-e-recriar.
     const studentIds = [...new Set(matriculasToUpsert.map(m => m.idaluno))];
     const [currentMatriculas] = await connection.query(
-      `SELECT idmatricula, idaluno, idatividades, turno, horario, dia_semana 
-       FROM matricula 
+      `SELECT idmatricula, idaluno, idatividades, turno, horario, dia_semana
+       FROM matricula
        WHERE idaluno IN (?) AND id_instituicao = ? AND status = 'matriculado' AND data_fim IS NULL`,
       [studentIds, req.id_instituicao]
     );
-    
-    // Criar mapa de matrículas atuais por aluno + chave única (turno, horario, dia_semana)
+
+    // Mapa de matrículas atuais por aluno + posição na grade (turno, horario, dia_semana)
     const currentMatriculaMap = new Map();
     for (const mat of currentMatriculas) {
       const key = `${mat.idaluno}_${mat.turno}_${mat.horario}_${mat.dia_semana}`;
       currentMatriculaMap.set(key, mat);
     }
 
-    // 5. Preparar valores finais de matrícula com idatividades reais
+    // Resolve idatividades real de cada matrícula pendente
     const finalMatriculasValues = matriculasToUpsert.map(m => [
       m.idaluno,
-      activityIdMap.get(m.nome_atividade), // Obtém o idatividades real
+      activityIdMap.get(m.nome_atividade),
       m.turno,
       m.horario,
       m.dia_semana,
       m.id_instituicao
     ]);
 
-    // 6. Definir data atual para uso nas matrículas
     const today = new Date().toISOString().split('T')[0];
 
-    // 7. Verificar e inserir matrículas (evitando duplicatas e tratando mudanças de atividade)
+    // Decide, posição por posição da grade, se mantém (nada a fazer), encerra a
+    // antiga e cria uma nova (atividade mudou), ou cria do zero (posição nova).
     let matriculasAffected = 0;
     const matriculasToInsert = [];
     const matriculasToClose = [];
@@ -466,7 +513,6 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       const existingMatricula = currentMatriculaMap.get(key);
 
       if (existingMatricula) {
-        // Verifica se todos os campos são iguais (incluindo idatividades)
         if (existingMatricula.idatividades === idatividades) {
           // Matrícula idêntica já existe - não fazer nada
           continue;
@@ -499,7 +545,9 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       matriculasAffected = matriculaResult.affectedRows;
     }
 
-    // 8. Marcar alunos não presentes na importação como inativos e cancelar suas matrículas
+    // Passo 6: quem estava ativo mas não veio nesta planilha vira inativo, e suas
+    // matrículas correntes são encerradas — a planilha é a fonte da verdade de
+    // "quem está matriculado agora".
     let activeStudentsNotInImport = [];
     if (studentNames.length > 0) {
       const placeholders = studentNames.map(() => '?').join(',');
@@ -514,7 +562,6 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     let inactivatedCount = 0;
 
     if (studentsToInactivate.length > 0) {
-      // Marcar alunos como inativos
       const idPlaceholders = studentsToInactivate.map(() => '?').join(',');
       const [updateResult] = await connection.query(
         `UPDATE alunos SET status = 'inativo' WHERE id IN (${idPlaceholders}) AND id_instituicao = ?`,
@@ -522,13 +569,14 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       );
       inactivatedCount = updateResult.affectedRows;
 
-      // Cancelar todas as matrículas desses alunos com data_fim = hoje
       await connection.query(
         `UPDATE matricula SET data_fim = ?, status = 'cancelada' WHERE idaluno IN (${idPlaceholders}) AND id_instituicao = ? AND data_fim IS NULL`,
         [today, ...studentsToInactivate, req.id_instituicao]
       );
     }
 
+    // Garante que alunos.status reflita a matrícula real de todo mundo que foi
+    // tocado nesta importação (não só os inativados acima).
     const idsParaSincronizar = [...new Set(existingStudents.map(s => s.id))];
     await syncAlunoStatusFromMatriculas(connection, idsParaSincronizar, req.id_instituicao);
 
@@ -565,17 +613,18 @@ router.post('/', validate('aluno'), asyncHandler(async (req, res) => {
     acompanhamento || null, ponto || null,
     status || 'ativo', req.id_instituicao
   ]);
-  
+
   await logAuditEvent('CRIAR_ALUNO', `Aluno ID: ${result.insertId}, Nome: ${nome}`, req.id_instituicao);
   res.status(201).json({ id: result.insertId, message: 'Aluno criado com sucesso!' });
 }));
 
-// Atualização parcial via PATCH (Update by ID)
+// Atualização parcial via PATCH: só permite alterar um campo por vez, e apenas os
+// campos na whitelist (evita que o cliente altere colunas sensíveis como id_instituicao).
 router.patch('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { campo, valor } = req.body;
-  const colunasPermitidas = ['data_nascimento', 'sexo', 'telefone', 'turma', 'turno', 'transporte', 'Inf', 'status'];
-  
+  const colunasPermitidas = ['data_nascimento', 'sexo', 'telefone', 'turma', 'turno', 'transporte', 'Inf', 'acompanhamento', 'ponto', 'status'];
+
   if (!colunasPermitidas.includes(campo)) {
     return res.status(400).json({ error: 'Campo não permitido para atualização.' });
   }
@@ -584,7 +633,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   const [result] = await pool.query(sql, [campo, valor, id, req.id_instituicao]);
 
   if (result.affectedRows === 0) return res.status(404).json({ error: 'Aluno não encontrado.' });
-  
+
   await logAuditEvent('ATUALIZAR_ALUNO', `Aluno ID: ${id}, Campo: ${campo}`, req.id_instituicao);
   res.json({ message: 'Campo atualizado com sucesso.' });
 }));
@@ -593,15 +642,15 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 router.delete('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params;
   const connection = await pool.getConnection();
-  
+
   try {
     await connection.beginTransaction();
 
     // Remove matrículas primeiro (Integridade Referencial)
     await connection.query('DELETE FROM matricula WHERE idaluno = ? AND id_instituicao = ?', [id, req.id_instituicao]);
-    
+
     const [result] = await connection.query('DELETE FROM alunos WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
-    
+
     if (result.affectedRows === 0) throw new Error('Aluno não encontrado');
 
     await logAuditEvent('EXCLUIR_ALUNO', `Aluno ID: ${id} excluído com matrículas`, req.id_instituicao, connection);

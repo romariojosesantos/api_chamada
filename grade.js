@@ -1,3 +1,8 @@
+// Rota de leitura da "grade" completa: todas as matrículas correntes da
+// instituição já unidas com aluno, atividade e professor, prontas para exibição
+// em tabela. Para consultas filtradas (por status, por dia da semana, por aluno)
+// veja matriculas.js — este arquivo existe separado por motivos históricos de
+// organização das rotas do frontend.
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
@@ -9,7 +14,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const sql = `
     SELECT m.idmatricula, m.idaluno, m.idatividades, m.turno, m.horario, m.dia_semana, m.status, m.id_instituicao,
            a.nome as nome_aluno,
-           a.turno as aluno_turno, 
+           a.turno as aluno_turno,
            a.transporte,
            atv.nome as nome_atividade,
            p.nome as nome_professor
@@ -21,7 +26,7 @@ router.get('/', asyncHandler(async (req, res) => {
     AND m.data_fim IS NULL
     ORDER BY a.nome ASC
   `;
-  
+
   const [results] = await pool.query(sql, [req.id_instituicao]);
   res.json(results);
 }));

@@ -1,7 +1,16 @@
+// Mantém alunos.status coerente com a realidade das matrículas: um aluno é
+// "ativo" se tiver pelo menos uma matrícula corrente (data_fim NULL, status
+// 'matriculado'), senão é "inativo". Chamado depois de qualquer operação que
+// cria/encerra matrículas em lote (import de Excel, ajuste de grade), para que o
+// status não fique desatualizado manualmente.
+
 function resolveAlunoStatus(temMatriculaAtiva) {
   return temMatriculaAtiva ? 'ativo' : 'inativo';
 }
 
+// Recalcula e grava o status de cada aluno em `alunoIds` com base em suas
+// matrículas atuais. Roda dentro da mesma transação/conexão de quem chama, para
+// que a sincronização faça parte da mesma operação atômica.
 async function syncAlunoStatusFromMatriculas(connection, alunoIds, idInstituicao) {
   const uniqueAlunoIds = [...new Set((alunoIds || [])
     .map(id => Number(id))
@@ -39,6 +48,7 @@ async function syncAlunoStatusFromMatriculas(connection, alunoIds, idInstituicao
 
   const ids = rows.map(row => row.id);
   const valoresStatus = rows.map(row => row.novo_status);
+  // Bulk update via CASE WHEN em vez de um UPDATE por aluno, para não fazer N idas ao banco.
   const caseWhen = rows.map(row => `WHEN ${row.id} THEN ?`).join(' ');
 
   if (!caseWhen) {

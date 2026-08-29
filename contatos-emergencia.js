@@ -1,3 +1,7 @@
+// CRUD de contatos de emergência de um aluno (quem ligar além do telefone
+// principal do aluno). Usado pela tela GerenciarMatriculas.js. Existe também uma
+// versão só-master destas mesmas operações em historico-aluno.js (rotas
+// /contato e /contato/:id), para quando o master edita um aluno de qualquer instituição.
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
@@ -31,7 +35,7 @@ router.post('/', asyncHandler(async (req, res) => {
     [alunoId, nome.trim(), telefone.trim(), parentesco?.trim() || null, req.id_instituicao]
   );
 
-  await logAuditEvent(req, 'contato_emergencia_criado', `Contato de emergência criado para aluno ID ${alunoId}`);
+  await logAuditEvent('CONTATO_EMERGENCIA_CRIADO', `Contato de emergência criado para aluno ID ${alunoId}`, req.id_instituicao);
   res.status(201).json({ id: result.insertId, message: 'Contato de emergência criado com sucesso.' });
 }));
 
@@ -51,7 +55,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
 
   if (result.affectedRows === 0) return res.status(404).json({ error: 'Contato de emergência não encontrado.' });
 
-  await logAuditEvent(req, 'contato_emergencia_atualizado', `Contato de emergência ID ${id} atualizado`);
+  await logAuditEvent('CONTATO_EMERGENCIA_ATUALIZADO', `Contato de emergência ID ${id} atualizado`, req.id_instituicao);
   res.json({ message: 'Contato de emergência atualizado com sucesso.' });
 }));
 
@@ -67,7 +71,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
 
   if (result.affectedRows === 0) return res.status(404).json({ error: 'Contato de emergência não encontrado.' });
 
-  await logAuditEvent(req, 'contato_emergencia_deletado', `Contato de emergência ID ${id} deletado`);
+  await logAuditEvent('CONTATO_EMERGENCIA_DELETADO', `Contato de emergência ID ${id} deletado`, req.id_instituicao);
   res.json({ message: 'Contato de emergência removido com sucesso.' });
 }));
 

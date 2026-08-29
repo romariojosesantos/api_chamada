@@ -1,11 +1,24 @@
-// /minha-api/server.js
+// Ponto de entrada real da API (ver server.js, que só reexporta este módulo, e
+// api/index.js, o entry point da função serverless da Vercel — vercel.json faz o
+// rewrite de toda rota pra lá).
+//
+// Ordem dos middlewares importa bastante aqui: CORS e parsing de JSON vêm
+// primeiro; depois authMiddleware (exige login) é aplicado a tudo em /api EXCETO
+// /api/auth/* e /api/historico-aluno (que aplica o middleware direto na sua
+// própria linha de app.use); e só depois disso o middleware de x-institution-id
+// popula req.id_instituicao, que todas as rotas de negócio usam para isolar os
+// dados de cada instituição. Ou seja: qualquer rota nova montada em /api só deve
+// assumir req.user e req.id_instituicao já disponíveis se vier depois dessa
+// cadeia (as declaradas abaixo da linha `app.use('/api', authMiddleware)`).
 require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
 const pool = require('./db');
 
-// Cache simples em memória para endpoints estáticos
+// Cache simples em memória para endpoints estáticos. Só é útil localmente ou
+// dentro da mesma invocação serverless — na Vercel cada invocação é isolada, então
+// esse cache não é compartilhado entre requisições diferentes em produção.
 const cache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
 
@@ -75,12 +88,20 @@ app.use((req, res, next) => {
 
 // Aumentado o limite para suportar grandes volumes de dados em importações (Bulk Import)
 // O padrão é 100kb, aqui estamos definindo para 50mb.
-app.use(express.json({ limit: '50mb' })); 
+app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 app.use('/api/auth', authRouter);
+// Rotas de histórico do aluno: só master, feito diretamente aqui (não dentro do
+// próprio historico-aluno.js) porque também precisa de authMiddleware, mas NÃO
+// do middleware de x-institution-id logo abaixo (master vê alunos de qualquer instituição).
 app.use('/api/historico-aluno', authMiddleware, historicoAlunoRouter);
 
+// Lista de instituições para o seletor do usuário logado: master vê todas, os
+// demais perfis só as instituições vinculadas a eles (req.user.instituicoes).
+// Fica fora do bloco `app.use('/api', authMiddleware)` porque usa authMiddleware
+// diretamente, sem depender do header x-institution-id (o usuário ainda não
+// escolheu instituição neste ponto do fluxo do front).
 app.get('/api/instituicoes/todas', authMiddleware, async (req, res) => {
   try {
     if (req.user.perfil === 'master') {
@@ -89,7 +110,7 @@ app.get('/api/instituicoes/todas', authMiddleware, async (req, res) => {
       if (cached) {
         return res.json(cached);
       }
-      
+
       const [results] = await pool.query("SELECT id, nome FROM instituicoes ORDER BY nome ASC");
       setCache(cacheKey, results);
       return res.json(results);
@@ -111,7 +132,7 @@ app.use('/api', authMiddleware);
 // Middleware para forçar o ID da instituição em todas as rotas da API
 app.use('/api', (req, res, next) => {
   const institutionId = req.headers['x-institution-id'];
-  
+
   const parsedId = parseInt(institutionId);
   if (!institutionId) {
     console.warn(`Tentativa de acesso sem header x-institution-id em: ${req.originalUrl}`);
@@ -150,8 +171,8 @@ app.get('/api/instituicao', async (req, res) => {
 app.get('/api/transportes', async (req, res) => {
   try {
     const sql = `
-      SELECT DISTINCT TRIM(transporte) AS transporte 
-      FROM alunos 
+      SELECT DISTINCT TRIM(transporte) AS transporte
+      FROM alunos
       WHERE id_instituicao = ? AND transporte IS NOT NULL AND TRIM(transporte) != ''
       ORDER BY transporte ASC
     `;
@@ -168,7 +189,7 @@ app.get('/api/transportes', async (req, res) => {
 app.get('/api/professores', async (req, res) => {
   try {
     const sql = `
-      SELECT DISTINCT TRIM(nome) AS nome 
+      SELECT DISTINCT TRIM(nome) AS nome
       FROM professores
       WHERE id_instituicao = ? AND nome IS NOT NULL AND TRIM(nome) != ''
       ORDER BY nome ASC
@@ -182,11 +203,13 @@ app.get('/api/professores', async (req, res) => {
   }
 });
 
-// Rota para listar todas as atividades da instituição (para o dropdown de filtros)
+// Rota para listar todas as atividades da instituição (para o dropdown de filtros
+// e para a tela de Ajuste de Grade, que usa dia_semana/horario/turno da atividade
+// pra saber em quais células da grade ela pode aparecer)
 app.get('/api/atividades', async (req, res) => {
   try {
     const sql = `
-      SELECT idatividades AS id, nome, dia_semana, horario, turno 
+      SELECT idatividades AS id, nome, dia_semana, horario, turno
       FROM atividades
       WHERE id_instituicao = ?
       ORDER BY nome ASC
@@ -226,7 +249,10 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Inicia o servidor na porta definida (apenas quando executado localmente)
+// Inicia o servidor na porta definida — só quando este arquivo é executado
+// diretamente (`npm start` -> `node _server.js`). Na Vercel, api/index.js importa
+// este módulo só para pegar o `app`, sem nunca chamar `require.main === module`
+// como true, então o listen() nunca roda lá — a Vercel lida com o socket sozinha.
 const HOST = '0.0.0.0';
 if (require.main === module) {
   app.listen(PORT, HOST, () => {

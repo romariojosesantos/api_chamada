@@ -1,3 +1,6 @@
+// Leitura e gravação de presença (chamada). O ponto mais sensível do sistema:
+// a gravação é feita em lote (todos os alunos de uma chamada de uma vez) dentro
+// de uma transação, para nunca salvar uma chamada pela metade.
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
@@ -6,7 +9,9 @@ const { logAuditEvent } = require('./audit');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-// Buscar histórico de presença
+// Buscar histórico de presença (todos os registros da instituição). Exclui datas
+// que foram marcadas como "sem aula" DEPOIS de já terem presença lançada — evita
+// que um feriado cadastrado retroativamente continue aparecendo no histórico.
 router.get('/', asyncHandler(async (req, res) => {
   const sql = `
     SELECT p.aluno_id, a.nome, p.data, p.status, p.observacao
@@ -14,7 +19,7 @@ router.get('/', asyncHandler(async (req, res) => {
     JOIN alunos a ON p.aluno_id = a.id
     WHERE p.id_instituicao = ?
       AND NOT EXISTS (
-        SELECT 1 FROM dias_sem_aula d 
+        SELECT 1 FROM dias_sem_aula d
         WHERE d.data = DATE(p.data) AND d.id_instituicao = ?
       )
     ORDER BY a.nome ASC, p.data DESC
@@ -23,7 +28,15 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(results);
 }));
 
-// Salvar chamada (Upsert Lote)
+// Salvar chamada em lote (upsert): grava presença de vários alunos para uma
+// mesma data numa única transação. Se um aluno já tem registro para a data,
+// o status é atualizado (ON DUPLICATE KEY UPDATE) em vez de duplicar a linha.
+// Recusa a gravação inteira se a data estiver marcada como "sem aula".
+//
+// `status: null` é o sinal do frontend para "desmarcar" (ex.: clicar de novo em
+// "Presente" para tirar a marcação — ver handleTogglePresence em AttendanceList.jsx).
+// Como a coluna `status` é NOT NULL, esse caso não é um upsert: é tratado como
+// pedido para APAGAR o registro de presença existente daquele aluno na data.
 router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
   const { data, chamadas } = req.body;
   const connection = await pool.getConnection();
@@ -38,7 +51,7 @@ router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
     );
 
     if (diaSemAula.length > 0) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Não é possível registrar presença neste dia',
         motivo: diaSemAula[0].motivo || 'Dia sem aula',
         isDiaSemAula: true
@@ -54,9 +67,9 @@ router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
     // Deletar registros onde status é null (desmarcar presença)
     if (chamadasParaDeletar.length > 0) {
       const deleteSql = `
-        DELETE FROM presenca 
-        WHERE aluno_id IN (${chamadasParaDeletar.map(() => '?').join(',')}) 
-        AND data = ? 
+        DELETE FROM presenca
+        WHERE aluno_id IN (${chamadasParaDeletar.map(() => '?').join(',')})
+        AND data = ?
         AND id_instituicao = ?
       `;
       const alunoIds = chamadasParaDeletar.map(c => c.aluno_id);
@@ -69,12 +82,12 @@ router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
       const sql = `
         INSERT INTO presenca (aluno_id, data, status, id_instituicao, observacao)
         VALUES ?
-        ON DUPLICATE KEY UPDATE 
+        ON DUPLICATE KEY UPDATE
           status = VALUES(status),
           observacao = VALUES(observacao)
       `;
       const values = chamadasParaInserir.map(c => [c.aluno_id, data, c.status, req.id_instituicao, c.observacao || null]);
-      
+
       const [result] = await connection.query(sql, [values]);
       afetados += result.affectedRows;
     }
@@ -84,7 +97,7 @@ router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
 
     await connection.commit();
 
-    res.status(201).json({ 
+    res.status(201).json({
       message: 'Presenças processadas com sucesso!',
       detalhes: { total: chamadas.length, registros_afetados: afetados }
     });
@@ -96,13 +109,24 @@ router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
   }
 }));
 
-// Finalizar chamada - registrar ausências automaticamente para alunos esperados sem registro
+// Finalizar chamada: para a data+turno informados, registra 'ausente' para todo
+// aluno esperado (matriculado ativo, com aula nesse dia da semana, DAQUELE
+// turno) que AINDA não tem nenhum registro de presença na data. Não sobrescreve
+// registros existentes (presente/ausente/justificado) — só preenche quem ficou
+// sem marcação nenhuma. Recusa se a data estiver marcada como "sem aula".
+//
+// Filtra por `a.turno` (não `m.turno`) para ficar consistente com o resto do
+// sistema (relatorios.js agrupa por a.turno) — o turno é tratado como um
+// atributo do aluno, não da matrícula individual.
 router.post('/finalizar', asyncHandler(async (req, res) => {
   const { data, turno } = req.body;
   const inst = req.id_instituicao;
 
   if (!data) {
     return res.status(400).json({ error: 'Data é obrigatória.' });
+  }
+  if (!turno) {
+    return res.status(400).json({ error: 'Turno é obrigatório.' });
   }
 
   // Verificar se a data é um dia sem aula
@@ -123,7 +147,7 @@ router.post('/finalizar', asyncHandler(async (req, res) => {
   const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
   const diaDaSemana = dias[new Date(`${data}T12:00:00`).getDay()];
 
-  // Buscar alunos esperados (matricula ativa para o dia da semana)
+  // Buscar alunos esperados (matricula ativa para o dia da semana, do turno pedido)
   const [esperados] = await pool.query(
     `SELECT DISTINCT a.id
      FROM alunos a
@@ -132,8 +156,9 @@ router.post('/finalizar', asyncHandler(async (req, res) => {
        AND TRIM(LOWER(m.status)) = 'matriculado'
        AND m.data_fim IS NULL
        AND a.id_instituicao = ?
-       AND a.status = 'ativo'`,
-    [diaDaSemana, inst]
+       AND a.status = 'ativo'
+       AND TRIM(a.turno) = TRIM(?)`,
+    [diaDaSemana, inst, turno]
   );
 
   // Buscar alunos que já têm registro na data
