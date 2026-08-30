@@ -352,10 +352,25 @@ router.get('/aprovar-cadastro/:token', asyncHandler(async (req, res) => {
   const payload = validarTokenAprovacao(req.params.token);
   if (!payload) return res.status(400).json({ error: 'Link inválido ou expirado.' });
 
-  const [rows] = await pool.query('SELECT nome, email, perfil, status FROM usuarios WHERE id = ? LIMIT 1', [payload.usuarioId]);
+  const [rows] = await pool.query(
+    `SELECT u.nome, u.email, u.perfil, u.status,
+            GROUP_CONCAT(i.nome ORDER BY i.nome SEPARATOR ', ') AS instituicoes
+     FROM usuarios u
+     LEFT JOIN usuario_instituicoes ui ON ui.id_usuario = u.id
+     LEFT JOIN instituicoes i ON i.id = ui.id_instituicao
+     WHERE u.id = ?
+     GROUP BY u.id`,
+    [payload.usuarioId]
+  );
   if (rows.length === 0) return res.status(404).json({ error: 'Cadastro não encontrado.' });
 
-  res.json({ nome: rows[0].nome, email: rows[0].email, perfil: rows[0].perfil, jaAprovado: rows[0].status !== 'pendente' });
+  res.json({
+    nome: rows[0].nome,
+    email: rows[0].email,
+    perfil: rows[0].perfil,
+    instituicao: rows[0].instituicoes || null,
+    jaAprovado: rows[0].status !== 'pendente'
+  });
 }));
 
 router.post('/aprovar-cadastro/:token', asyncHandler(async (req, res) => {
