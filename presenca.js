@@ -172,18 +172,26 @@ router.post('/finalizar', asyncHandler(async (req, res) => {
     .filter(a => !idsComRegistro.has(a.id))
     .map(a => [a.id, data, 'ausente', null, inst]);
 
-  // Inserir ausências
+  // Inserir ausências. IGNORE é proposital: se duas pessoas clicarem em
+  // "Finalizar Chamada" quase ao mesmo tempo, as duas leem o mesmo retrato de
+  // "quem ainda não tem registro" antes de qualquer uma delas inserir — as
+  // duas tentam inserir os mesmos alunos. Sem IGNORE, a segunda gravação
+  // inteira falha com erro de chave duplicada (presenca tem índice único por
+  // aluno+instituição+data) e a pessoa vê um "erro de conexão" mesmo a chamada
+  // já tendo sido finalizada com sucesso pela outra pessoa. Com IGNORE, o
+  // MySQL só pula as linhas que já existem (não é uma falha real) e
+  // affectedRows reflete só o que ESTA chamada conseguiu inserir de fato.
   let ausentesRegistrados = 0;
   if (ausentesParaInserir.length > 0) {
-    await pool.query(
-      `INSERT INTO presenca (aluno_id, data, status, observacao, id_instituicao) VALUES ?`,
+    const [result] = await pool.query(
+      `INSERT IGNORE INTO presenca (aluno_id, data, status, observacao, id_instituicao) VALUES ?`,
       [ausentesParaInserir]
     );
-    ausentesRegistrados = ausentesParaInserir.length;
+    ausentesRegistrados = result.affectedRows;
   }
 
   res.json({
-    message: 'Chamada finalizada com sucesso',
+    message: ausentesRegistrados > 0 ? 'Chamada finalizada com sucesso' : 'Chamada já estava finalizada',
     ausentes_registrados: ausentesRegistrados
   });
 }));

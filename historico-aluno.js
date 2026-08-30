@@ -11,40 +11,36 @@ const { logAuditEvent } = require('./audit');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-// Listar atividades de uma instituição (apenas master) — usado no formulário de
-// matrícula da ficha do aluno, pra popular o select de atividades.
-router.get('/atividades/:instituicaoId', masterMiddleware, asyncHandler(async (req, res) => {
-  const instId = parseInt(req.params.instituicaoId);
-  if (isNaN(instId)) return res.status(400).json({ error: 'ID da instituição inválido.' });
-
-  const [rows] = await pool.query(
-    `SELECT idatividades AS id, nome, idprofessor, id_instituicao
-     FROM atividades
-     WHERE id_instituicao = ?
-     ORDER BY nome ASC`,
-    [instId]
-  );
-  res.json(rows);
-}));
-
 // Buscar alunos por nome em TODAS as instituições (só master enxerga globalmente
 // assim) — alimenta a busca com debounce da tela HistoricoAlunoMaster.js.
+// Recebe opcionalmente `id_instituicao`: quando vem preenchido (a tela sempre
+// manda a instituição atualmente selecionada pelo master), a busca fica
+// restrita a essa instituição — sem isso, um master logado numa instituição
+// via a topbar via alunos de TODAS as instituições ao buscar aqui, o que é
+// inconsistente com o resto do sistema (cada tela só enxerga a instituição
+// selecionada).
 router.get('/buscar', masterMiddleware, asyncHandler(async (req, res) => {
-  const { q } = req.query;
+  const { q, id_instituicao } = req.query;
   const search = String(q || '').trim();
   if (!search || search.length < 2) {
     return res.status(400).json({ error: 'Informe pelo menos 2 caracteres para buscar.' });
   }
 
-  const [rows] = await pool.query(
-    `SELECT a.id, a.nome, a.data_nascimento, a.sexo, a.telefone, a.turma, a.turno, a.transporte, a.Inf, a.status, a.id_instituicao, i.nome AS nome_instituicao
+  let sql = `SELECT a.id, a.nome, a.data_nascimento, a.sexo, a.telefone, a.turma, a.turno, a.transporte, a.Inf, a.status, a.id_instituicao, i.nome AS nome_instituicao
      FROM alunos a
      JOIN instituicoes i ON a.id_instituicao = i.id
-     WHERE a.nome LIKE ?
-     ORDER BY a.nome ASC
-     LIMIT 50`,
-    [`%${search}%`]
-  );
+     WHERE a.nome LIKE ?`;
+  const params = [`%${search}%`];
+
+  const instId = parseInt(id_instituicao);
+  if (!isNaN(instId)) {
+    sql += ' AND a.id_instituicao = ?';
+    params.push(instId);
+  }
+
+  sql += ' ORDER BY a.nome ASC LIMIT 50';
+
+  const [rows] = await pool.query(sql, params);
   res.json(rows);
 }));
 
@@ -162,25 +158,59 @@ router.put('/:id', masterMiddleware, asyncHandler(async (req, res) => {
   res.json({ message: 'Dados do aluno atualizados com sucesso.' });
 }));
 
-// Editar uma matrícula específica (apenas master) — permite mexer em qualquer
-// campo, inclusive reabrir uma matrícula encerrada (limpando data_fim).
+// Busca dia_semana/horario/turno de uma turma (atividade) — usado por
+// PUT/POST de matrícula abaixo pra nunca aceitar esses 3 campos direto do
+// cliente. O dia/horário/turno de uma matrícula tem que ser sempre o mesmo da
+// turma que ela aponta (mesma regra que atividades.js aplica quando uma turma
+// é editada — ver migrate-split-atividades-por-horario.js); confiar no que o
+// front manda pra esses campos permitiria criar uma matrícula com posição
+// inconsistente com a turma escolhida.
+async function resolverHorarioDaTurma(idatividades) {
+  if (!idatividades) return { dia_semana: '', horario: '', turno: '' };
+  const [[turma]] = await pool.query(
+    'SELECT dia_semana, horario, turno FROM atividades WHERE idatividades = ?',
+    [idatividades]
+  );
+  if (!turma) return null;
+  return { dia_semana: turma.dia_semana || '', horario: turma.horario || '', turno: turma.turno || '' };
+}
+
+// Editar uma matrícula específica (apenas master) — permite mexer em status e
+// datas de uma matrícula ATIVA. Duas coisas NUNCA podem mudar aqui, mesmo numa
+// matrícula ativa:
+//   1. A turma (idatividades) — trocar a turma de uma matrícula que já existe
+//      reescreveria por cima de qual turma o aluno esteve de fato nesse
+//      período. Pra mudar de turma o jeito certo é encerrar essa matrícula e
+//      criar uma nova (ver POST acima) — o front só oferece o seletor de
+//      turma numa matrícula ainda não salva, mas o backend também recusa aqui
+//      por segurança.
+//   2. Qualquer campo, se a matrícula já virou histórico (data_fim
+//      preenchido) — aí só resta excluir (ver DELETE abaixo), nunca editar.
 router.put('/matricula/:id', masterMiddleware, asyncHandler(async (req, res) => {
   const matriculaId = parseInt(req.params.id);
   if (isNaN(matriculaId)) return res.status(400).json({ error: 'ID da matrícula inválido.' });
 
-  const { turno, horario, dia_semana, status, data_inicio, data_fim, idatividades } = req.body;
+  const { status, data_inicio, data_fim } = req.body;
 
-  const [[matricula]] = await pool.query('SELECT idmatricula FROM matricula WHERE idmatricula = ?', [matriculaId]);
+  const [[matricula]] = await pool.query('SELECT idmatricula, data_fim, idatividades FROM matricula WHERE idmatricula = ?', [matriculaId]);
   if (!matricula) return res.status(404).json({ error: 'Matrícula não encontrada.' });
+  if (matricula.data_fim) {
+    return res.status(409).json({ error: 'Essa matrícula já foi encerrada e virou histórico — não pode mais ser editada, só excluída.' });
+  }
+
+  // idatividades é sempre o que já está gravado — ignora qualquer valor
+  // diferente vindo do corpo da requisição (ver comentário acima).
+  const idatividades = matricula.idatividades;
+  const horarioTurma = await resolverHorarioDaTurma(idatividades);
 
   const [result] = await pool.query(
     `UPDATE matricula
      SET turno = ?, horario = ?, dia_semana = ?, status = ?, data_inicio = ?, data_fim = ?, idatividades = ?
      WHERE idmatricula = ?`,
     [
-      turno || '',
-      horario || '',
-      dia_semana || '',
+      horarioTurma.turno,
+      horarioTurma.horario,
+      horarioTurma.dia_semana,
       status || 'matriculado',
       data_inicio || null,
       data_fim || null,
@@ -198,27 +228,31 @@ router.put('/matricula/:id', masterMiddleware, asyncHandler(async (req, res) => 
 // aqui o id_instituicao vem explícito no corpo (o master não está "dentro" de uma
 // instituição selecionada, pode estar editando o aluno de qualquer uma).
 router.post('/matricula', masterMiddleware, asyncHandler(async (req, res) => {
-  const { idaluno, idatividades, turno, horario, dia_semana, status, data_inicio, data_fim, id_instituicao } = req.body;
+  const { idaluno, idatividades, status, data_inicio, data_fim, id_instituicao } = req.body;
 
   const alunoId = parseInt(idaluno);
   const instId = parseInt(id_instituicao);
 
   if (isNaN(alunoId)) return res.status(400).json({ error: 'ID do aluno inválido.' });
   if (isNaN(instId)) return res.status(400).json({ error: 'ID da instituição inválido.' });
+  if (!idatividades) return res.status(400).json({ error: 'Selecione uma turma.' });
 
   // Verifica se aluno pertence à instituição
   const [[aluno]] = await pool.query('SELECT id FROM alunos WHERE id = ? AND id_instituicao = ?', [alunoId, instId]);
   if (!aluno) return res.status(404).json({ error: 'Aluno não encontrado nesta instituição.' });
+
+  const horarioTurma = await resolverHorarioDaTurma(idatividades);
+  if (!horarioTurma) return res.status(404).json({ error: 'Turma não encontrada.' });
 
   const [result] = await pool.query(
     `INSERT INTO matricula (idaluno, idatividades, turno, horario, dia_semana, status, data_inicio, data_fim, id_instituicao)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       alunoId,
-      idatividades || null,
-      turno || '',
-      horario || '',
-      dia_semana || '',
+      idatividades,
+      horarioTurma.turno,
+      horarioTurma.horario,
+      horarioTurma.dia_semana,
       status || 'matriculado',
       data_inicio || null,
       data_fim || null,
@@ -230,21 +264,35 @@ router.post('/matricula', masterMiddleware, asyncHandler(async (req, res) => {
   res.status(201).json({ id: result.insertId, message: 'Matrícula criada com sucesso.' });
 }));
 
-// Encerrar (soft delete via data_fim + status) uma matrícula (apenas master).
+// Esta rota faz uma de duas coisas, dependendo do estado atual da matrícula:
+//   - ATIVA (data_fim NULL): soft-delete — vira histórico (data_fim = hoje,
+//     status 'cancelada', mesmo valor usado no resto do sistema — ver
+//     atividades.js, matriculas.js, alunos.js — nunca 'encerrado', que só
+//     existia aqui e deixava o histórico incoerente com o resto dos dados).
+//   - JÁ HISTÓRICA (data_fim preenchido): hard-delete — remove a linha de
+//     verdade. Uma matrícula histórica não pode ser "editada" (ver PUT acima),
+//     então a única forma de corrigir um registro errado do passado é
+//     apagando-o de vez; por isso essa ação é permanente e sem confirmação
+//     adicional no backend — a tela precisa confirmar bem antes de chamar isso.
 router.delete('/matricula/:id', masterMiddleware, asyncHandler(async (req, res) => {
   const matriculaId = parseInt(req.params.id);
   if (isNaN(matriculaId)) return res.status(400).json({ error: 'ID da matrícula inválido.' });
 
-  const [result] = await pool.query(
+  const [[matricula]] = await pool.query('SELECT idmatricula, id_instituicao, data_fim FROM matricula WHERE idmatricula = ?', [matriculaId]);
+  if (!matricula) return res.status(404).json({ error: 'Matrícula não encontrada.' });
+
+  if (matricula.data_fim) {
+    await pool.query('DELETE FROM matricula WHERE idmatricula = ?', [matriculaId]);
+    await logAuditEvent('MATRICULA_EXCLUIDA_PERMANENTEMENTE_MASTER', `Matrícula ID ${matriculaId} (já histórica) excluída permanentemente pelo master`, matricula.id_instituicao);
+    return res.json({ message: 'Matrícula excluída permanentemente.', permanente: true });
+  }
+
+  await pool.query(
     'UPDATE matricula SET data_fim = CURDATE(), status = ? WHERE idmatricula = ?',
-    ['encerrado', matriculaId]
+    ['cancelada', matriculaId]
   );
-
-  if (result.affectedRows === 0) return res.status(404).json({ error: 'Matrícula não encontrada.' });
-
-  const [[matriculaInfo]] = await pool.query('SELECT id_instituicao FROM matricula WHERE idmatricula = ?', [matriculaId]);
-  await logAuditEvent('MATRICULA_ENCERRADA_MASTER', `Matrícula ID ${matriculaId} encerrada pelo master`, matriculaInfo?.id_instituicao);
-  res.json({ message: 'Matrícula encerrada com sucesso.' });
+  await logAuditEvent('MATRICULA_ENCERRADA_MASTER', `Matrícula ID ${matriculaId} encerrada pelo master`, matricula.id_instituicao);
+  res.json({ message: 'Matrícula encerrada com sucesso.', permanente: false });
 }));
 
 // --- Contatos de emergência (versão master — ver também contatos-emergencia.js,

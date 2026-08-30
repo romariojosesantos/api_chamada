@@ -34,18 +34,79 @@ const validarTurno = (turno) => {
 };
 
 // Helper para parse de data de nascimento (simplificado)
+// Converte a data de nascimento vinda da planilha (ou do formulário) pro
+// formato YYYY-MM-DD que o banco espera. Aceita três formatos:
+//   1. Date de verdade (célula Excel formatada como data, lida com
+//      cellDates:true no front — mas se passar por JSON.stringify vira string
+//      ISO antes de chegar aqui, então esse branch quase nunca é usado no
+//      backend; mantido por segurança).
+//   2. Texto no formato brasileiro dd/mm/aaaa ou dd-mm-aaaa — o mais comum em
+//      planilha, quando a célula não é um tipo "data" de verdade no Excel, só
+//      texto. `new Date(string)` sozinho INTERPRETA ISSO COMO mm/dd (formato
+//      americano) e falha silenciosamente pra a maioria das datas — por isso
+//      esse formato precisa ser tratado à parte, ANTES de cair no new Date genérico.
+//   3. Texto ISO (aaaa-mm-dd, o formato que JSON.stringify produz a partir de
+//      um Date) — cai no new Date genérico, que entende esse formato certo.
 const parseDataNascimento = (data) => {
-  if (!data) return null;
+  if (data === null || data === undefined || data === '') return null;
+
   if (data instanceof Date) {
-    return data.toISOString().split('T')[0];
+    return isNaN(data.getTime()) ? null : data.toISOString().split('T')[0];
   }
+
   if (typeof data === 'string' && data.trim()) {
-    const parsedDate = new Date(data);
+    const texto = data.trim();
+
+    const matchBr = texto.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    if (matchBr) {
+      const [, dia, mes, ano] = matchBr;
+      const diaNum = Number(dia), mesNum = Number(mes), anoNum = Number(ano);
+      if (mesNum < 1 || mesNum > 12 || diaNum < 1 || diaNum > 31) return null;
+      return `${anoNum}-${String(mesNum).padStart(2, '0')}-${String(diaNum).padStart(2, '0')}`;
+    }
+
+    const parsedDate = new Date(texto);
     if (!isNaN(parsedDate.getTime())) {
       return parsedDate.toISOString().split('T')[0];
     }
   }
+
+  // Número serial de data do Excel (dias desde 1899-12-30) — acontece quando a
+  // célula é lida sem cellDates:true em algum ponto do fluxo, ou vem de um CSV
+  // que o Excel converteu. Só trata números plausíveis (evita interpretar um
+  // valor qualquer como data por engano).
+  if (typeof data === 'number' && Number.isFinite(data) && data > 0 && data < 100000) {
+    const dataBase = new Date(Date.UTC(1899, 11, 30));
+    const convertida = new Date(dataBase.getTime() + data * 86400000);
+    if (!isNaN(convertida.getTime())) {
+      return convertida.toISOString().split('T')[0];
+    }
+  }
+
   return null;
+};
+
+// Casos em que a letra final do nome NÃO é só sufixo de turma (que o corte
+// abaixo remove) e sim parte do nome real de uma turma distinta — ex.: "CUL -
+// Teclado 1 R" é uma turma diferente de "CUL - Teclado 1" (professor e
+// horário iguais, alunos diferentes). Mapeia pro nome exato já usado em
+// `atividades` pra essa turma, pulando o corte genérico.
+const EXCECOES_NOME_ATIVIDADE = {
+  'teclado 1 r': 'Teclado 1 (R)',
+};
+
+// Remove o prefixo "CUL - " e a letra solta no final (ex.: "CUL - Cello 1 A"
+// -> "Cello 1") de nomes de atividade vindos da planilha, para que continuem
+// batendo com os nomes já renomeados no banco (ver migração que limpou esse
+// prefixo em `atividades`). Só mexe em nomes que realmente têm o prefixo —
+// não corta letra final de nomes que nunca tiveram "CUL -".
+const normalizarNomeAtividade = (nome) => {
+  const texto = String(nome).trim();
+  if (!/^cul\s*-\s*/i.test(texto)) return texto;
+  const semPrefixo = texto.replace(/^cul\s*-\s*/i, '').trim();
+  const excecao = EXCECOES_NOME_ATIVIDADE[semPrefixo.toLowerCase()];
+  if (excecao) return excecao;
+  return semPrefixo.replace(/\s+(-\s+)?[A-Z]$/, '').trim();
 };
 
 // Listar Alunos com filtros dinâmicos.
@@ -322,16 +383,26 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     // Passo 3: varre as colunas de cada linha do Excel procurando o padrão de
     // matrícula (dia + horário, ex.: "SEG HR 1", "Segunda-HR2") e monta a lista de
     // matrículas a upsertar, junto com o conjunto de atividades/professores citados.
+    // Desde a migração que separou `atividades` por horário (ver
+    // migrate-split-atividades-por-horario.js), uma "turma" real é o par
+    // nome+dia_semana+horario+turno — o mesmo nome pode ter várias linhas em
+    // `atividades`, uma por horário. `slotsToFindOrCreate` guarda essa chave
+    // completa; `atividadeNomes` guarda só os nomes (usado para achar as
+    // linhas já existentes e sincronizar o professor declarado na planilha).
     const matriculasToUpsert = [];
-    const activitiesToFindOrCreate = new Set(); // Coleta nomes de atividades únicas
+    const atividadeNomes = new Set();
+    const slotsToFindOrCreate = new Map(); // slotKey "nome|dia|horario|turno" -> { nome, dia_semana, horario, turno }
     const excelActivityProfMap = new Map(); // Mapa de atividade -> professor
 
-    // Processa a aba de atividades enviada do Excel
+    // Processa a aba de atividades enviada do Excel (só declara o professor de
+    // cada nome de atividade — não cria linha em `atividades` sozinha, porque
+    // sem dia/horário/turno não há uma turma específica pra criar).
     for (const atv of atividadesExcel) {
-      const atvNome = String(atv.atividade || atv.nome || atv.atividades || '').trim();
+      const atvNomeBruto = String(atv.atividade || atv.nome || atv.atividades || '').trim();
+      const atvNome = atvNomeBruto ? normalizarNomeAtividade(atvNomeBruto) : '';
       const profNome = String(atv.professor || atv.professores || atv.prof || '').trim();
       if (atvNome) {
-        activitiesToFindOrCreate.add(atvNome);
+        atividadeNomes.add(atvNome);
         if (profNome) {
           excelActivityProfMap.set(atvNome, profNome);
         }
@@ -366,13 +437,17 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
           const horarioNum = match[3]; // Grupo de captura do número do horário
           const horario = `HR ${horarioNum}`; // Formata como "HR 1", "HR 2", etc.
           const dia_semana = diaSemanaMap[diaAbreviado];
-          const nome_atividade = String(alunoRaw[key]).trim();
+          const nome_atividade = normalizarNomeAtividade(alunoRaw[key]);
 
           if (dia_semana && nome_atividade && alunoTurno) { // Garante que todas as partes são válidas
-            activitiesToFindOrCreate.add(nome_atividade);
+            atividadeNomes.add(nome_atividade);
+            const slotKey = `${nome_atividade}|${dia_semana}|${horario}|${alunoTurno}`;
+            if (!slotsToFindOrCreate.has(slotKey)) {
+              slotsToFindOrCreate.set(slotKey, { nome: nome_atividade, dia_semana, horario, turno: alunoTurno });
+            }
             matriculasToUpsert.push({
               idaluno,
-              nome_atividade, // Armazena temporariamente o nome, será substituído por idatividades
+              nome_atividade, // Armazena temporariamente o nome (+ turno/horario/dia_semana abaixo), será resolvido pro idatividades certo no Passo 4
               turno: alunoTurno,
               horario,
               dia_semana,
@@ -383,9 +458,13 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       }
     }
 
-    // Passo 4: garante que toda atividade/professor citado na planilha exista no banco.
-    const activityIdMap = new Map();
-    if (activitiesToFindOrCreate.size > 0) {
+    // Passo 4: garante que toda TURMA (nome + dia + horário + turno) citada na
+    // planilha exista no banco — cada combinação é uma linha própria em
+    // `atividades` desde a separação por horário (ver
+    // migrate-split-atividades-por-horario.js); o nome sozinho não identifica
+    // mais qual turma é.
+    const activityIdMap = new Map(); // slotKey "nome|dia|horario|turno" -> idatividades
+    if (atividadeNomes.size > 0) {
       // 4.1 Professores: sempre garante 'Professor Padrão' (usado quando a planilha
       // não especifica professor para uma atividade).
       const profsToFindOrCreate = new Set(['Professor Padrão']);
@@ -417,38 +496,46 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
 
       const defaultProfessorId = profIdMap.get('Professor Padrão');
 
-      // 4.2 Atividades: cria as que ainda não existem, vinculando ao professor da
-      // planilha (ou ao Professor Padrão, se não informado).
+      // 4.2 Turmas: busca todas as linhas já existentes com algum dos nomes
+      // citados (pode haver várias por nome, uma por horário — ver comentário
+      // acima) e monta o mapa pelo slot exato (nome+dia+horário+turno).
       const [existingActivities] = await connection.query(
-        `SELECT idatividades, nome, idprofessor FROM atividades WHERE nome IN (?) AND id_instituicao = ?`,
-        [Array.from(activitiesToFindOrCreate), req.id_instituicao]
+        `SELECT idatividades, nome, idprofessor, dia_semana, horario, turno FROM atividades WHERE nome IN (?) AND id_instituicao = ?`,
+        [Array.from(atividadeNomes), req.id_instituicao]
       );
-      existingActivities.forEach(act => activityIdMap.set(act.nome, act.idatividades));
+      existingActivities.forEach(act => {
+        if (act.dia_semana && act.horario && act.turno) {
+          activityIdMap.set(`${act.nome}|${act.dia_semana}|${act.horario}|${act.turno}`, act.idatividades);
+        }
+      });
 
-      const activitiesToCreate = Array.from(activitiesToFindOrCreate).filter(
-        name => !activityIdMap.has(name)
+      // Cria as turmas (slots) que a planilha pede e que ainda não existem,
+      // vinculando ao professor da planilha (ou ao Professor Padrão, se não informado).
+      const slotsToCreate = Array.from(slotsToFindOrCreate.entries()).filter(
+        ([slotKey]) => !activityIdMap.has(slotKey)
       );
 
-      if (activitiesToCreate.length > 0) {
-        const newActivitiesValues = activitiesToCreate.map(name => {
-          const profNome = excelActivityProfMap.get(name);
+      if (slotsToCreate.length > 0) {
+        const newActivitiesValues = slotsToCreate.map(([, slot]) => {
+          const profNome = excelActivityProfMap.get(slot.nome);
           const idprof = profNome ? profIdMap.get(profNome) : defaultProfessorId;
-          return [name, idprof, req.id_instituicao];
+          return [slot.nome, idprof, req.id_instituicao, slot.dia_semana, slot.horario, slot.turno];
         });
-        await connection.query(
-          `INSERT INTO atividades (nome, idprofessor, id_instituicao) VALUES ?`,
+        const [insertResult] = await connection.query(
+          `INSERT INTO atividades (nome, idprofessor, id_instituicao, dia_semana, horario, turno) VALUES ?`,
           [newActivitiesValues]
         );
-        const [newlyCreatedActivities] = await connection.query(
-          `SELECT idatividades, nome FROM atividades WHERE nome IN (?) AND id_instituicao = ?`,
-          [activitiesToCreate, req.id_instituicao]
-        );
-        newlyCreatedActivities.forEach(act => activityIdMap.set(act.nome, act.idatividades));
+        // Insert em lote numa única conexão: o MySQL garante ids contíguos a
+        // partir de insertId, na mesma ordem dos VALUES — evita reconsultar.
+        const primeiroId = insertResult.insertId;
+        slotsToCreate.forEach(([slotKey], idx) => {
+          activityIdMap.set(slotKey, primeiroId + idx);
+        });
       }
 
-      // 4.3 Se uma atividade já existia mas a planilha trouxe um professor diferente
-      // do cadastrado, atualiza o vínculo (bulk update via CASE WHEN em vez de um
-      // UPDATE por linha, para não fazer N idas ao banco).
+      // 4.3 Se uma turma já existia mas a planilha trouxe um professor diferente
+      // do cadastrado, atualiza o vínculo em todas as linhas daquele nome (bulk
+      // update via CASE WHEN em vez de um UPDATE por linha, para não fazer N idas ao banco).
       const activitiesToUpdate = [];
       for (const existingAct of existingActivities) {
         const profNomeFromExcel = excelActivityProfMap.get(existingAct.nome);
@@ -489,10 +576,11 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       currentMatriculaMap.set(key, mat);
     }
 
-    // Resolve idatividades real de cada matrícula pendente
+    // Resolve idatividades real de cada matrícula pendente, pelo slot exato
+    // (nome+dia+horário+turno) — não basta mais o nome sozinho.
     const finalMatriculasValues = matriculasToUpsert.map(m => [
       m.idaluno,
-      activityIdMap.get(m.nome_atividade),
+      activityIdMap.get(`${m.nome_atividade}|${m.dia_semana}|${m.horario}|${m.turno}`),
       m.turno,
       m.horario,
       m.dia_semana,

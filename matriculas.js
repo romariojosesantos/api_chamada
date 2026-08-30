@@ -18,13 +18,14 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { syncAlunoStatusFromMatriculas } = require('./status-sync');
+const { logAuditEvent } = require('./audit');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // Listar matrículas ativas por instituição, com vínculo aluno → atividade → dia da semana.
 // Aceita filtros opcionais via querystring: ?status=matriculado&dia_semana=Segunda
 router.get('/por-instituicao', asyncHandler(async (req, res) => {
-  const { status, dia_semana } = req.query;
+  const { status, dia_semana, id_atividade } = req.query;
 
   let sql = `
     SELECT m.idmatricula AS id,
@@ -58,6 +59,13 @@ router.get('/por-instituicao', asyncHandler(async (req, res) => {
   if (dia_semana) {
     sql += " AND TRIM(m.dia_semana) = ?";
     params.push(dia_semana);
+  }
+
+  // Filtra pra uma turma específica (usado pela tela de Turmas, pra listar só
+  // quem está matriculado numa turma).
+  if (id_atividade) {
+    sql += " AND m.idatividades = ?";
+    params.push(id_atividade);
   }
 
   sql += " ORDER BY a.nome ASC, m.dia_semana ASC";
@@ -215,6 +223,108 @@ router.post('/', asyncHandler(async (req, res) => {
   } finally {
     connection.release();
   }
+}));
+
+// Matricular um aluno numa turma específica (tela de Turmas) — bem mais
+// simples que o POST '/' em lote acima, que é pra edição de grade
+// célula-a-célula. O dia/horário/turno vêm da PRÓPRIA turma (não do corpo da
+// requisição), então não tem como criar uma matrícula com posição
+// inconsistente com a atividade.
+router.post('/matricular', asyncHandler(async (req, res) => {
+  const { aluno_id, id_atividade } = req.body;
+
+  if (!aluno_id || !id_atividade) {
+    return res.status(400).json({ error: 'aluno_id e id_atividade são obrigatórios.' });
+  }
+
+  const [turmas] = await pool.query(
+    'SELECT idatividades, nome, dia_semana, horario, turno FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
+    [id_atividade, req.id_instituicao]
+  );
+  if (turmas.length === 0) return res.status(404).json({ error: 'Turma não encontrada.' });
+  const turma = turmas[0];
+  if (!turma.dia_semana || !turma.horario || !turma.turno) {
+    return res.status(400).json({ error: 'Essa turma ainda não tem dia/horário/turno definidos.' });
+  }
+
+  const [alunos] = await pool.query(
+    'SELECT id FROM alunos WHERE id = ? AND id_instituicao = ?',
+    [aluno_id, req.id_instituicao]
+  );
+  if (alunos.length === 0) return res.status(404).json({ error: 'Aluno não encontrado.' });
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // Já existe uma matrícula ativa desse aluno nesse exato dia+horário+turno
+    // (ou seja, ele já está "ocupado" nesse slot, na turma certa ou em outra)?
+    const [existentes] = await connection.query(
+      `SELECT idmatricula, idatividades FROM matricula
+       WHERE idaluno = ? AND dia_semana = ? AND horario = ? AND turno = ?
+         AND id_instituicao = ? AND data_fim IS NULL`,
+      [aluno_id, turma.dia_semana, turma.horario, turma.turno, req.id_instituicao]
+    );
+
+    if (existentes.length > 0 && Number(existentes[0].idatividades) === Number(id_atividade)) {
+      await connection.rollback();
+      return res.status(409).json({ error: 'Esse aluno já está matriculado nessa turma.' });
+    }
+
+    // Se ele já tinha outra turma nesse mesmo horário, encerra antes de criar
+    // a nova (um aluno não pode estar em duas turmas ao mesmo tempo).
+    if (existentes.length > 0) {
+      await connection.query(
+        `UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula = ?`,
+        [existentes[0].idmatricula]
+      );
+    }
+
+    await connection.query(
+      `INSERT INTO matricula (idaluno, idatividades, dia_semana, horario, turno, status, data_inicio, id_instituicao)
+       VALUES (?, ?, ?, ?, ?, 'matriculado', CURDATE(), ?)`,
+      [aluno_id, id_atividade, turma.dia_semana, turma.horario, turma.turno, req.id_instituicao]
+    );
+
+    await syncAlunoStatusFromMatriculas(connection, [Number(aluno_id)], req.id_instituicao);
+    await connection.commit();
+
+    await logAuditEvent('ALUNO_MATRICULADO_TURMA', `Aluno #${aluno_id} -> turma #${id_atividade} "${turma.nome}"`, req.id_instituicao);
+
+    res.status(201).json({ success: true });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Erro ao matricular aluno na turma:', error);
+    res.status(500).json({ error: 'Erro ao matricular aluno: ' + error.message });
+  } finally {
+    connection.release();
+  }
+}));
+
+// Cancelar (encerrar) uma matrícula específica — usado pra remover um aluno
+// de uma turma na tela de Turmas. Soft-delete via data_fim, igual ao resto do
+// sistema (nunca apaga a linha, pra manter histórico).
+router.delete('/:id', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const [matriculas] = await pool.query(
+    'SELECT idmatricula, idaluno FROM matricula WHERE idmatricula = ? AND id_instituicao = ? AND data_fim IS NULL',
+    [id, req.id_instituicao]
+  );
+  if (matriculas.length === 0) {
+    return res.status(404).json({ error: 'Matrícula não encontrada ou já cancelada.' });
+  }
+
+  await pool.query(
+    `UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula = ?`,
+    [id]
+  );
+
+  await syncAlunoStatusFromMatriculas(pool, [matriculas[0].idaluno], req.id_instituicao);
+
+  await logAuditEvent('MATRICULA_CANCELADA', `Matrícula #${id} (aluno #${matriculas[0].idaluno})`, req.id_instituicao);
+
+  res.json({ success: true });
 }));
 
 module.exports = router;

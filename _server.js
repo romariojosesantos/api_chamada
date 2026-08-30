@@ -50,6 +50,7 @@ const presencaRouter = require('./presenca');
 const relatoriosRouter = require('./relatorios');
 const gradeRouter = require('./grade');
 const matriculasRouter = require('./matriculas');
+const atividadesRouter = require('./atividades');
 const { router: authRouter, authMiddleware } = require('./auth');
 const { router: contatosEmergenciaRouter } = require('./contatos-emergencia');
 const diasSemAulaRouter = require('./dias-sem-aula');
@@ -203,31 +204,14 @@ app.get('/api/professores', async (req, res) => {
   }
 });
 
-// Rota para listar todas as atividades da instituição (para o dropdown de filtros
-// e para a tela de Ajuste de Grade, que usa dia_semana/horario/turno da atividade
-// pra saber em quais células da grade ela pode aparecer)
-app.get('/api/atividades', async (req, res) => {
-  try {
-    const sql = `
-      SELECT idatividades AS id, nome, dia_semana, horario, turno
-      FROM atividades
-      WHERE id_instituicao = ?
-      ORDER BY nome ASC
-    `;
-    const [results] = await pool.query(sql, [req.id_instituicao]);
-    res.json(results);
-  } catch (err) {
-    console.error("Erro em GET /api/atividades:", err);
-    res.status(500).json({ error: 'Erro ao buscar atividades: ' + err.message });
-  }
-});
-
 // Modularização de Rotas (Transferido para roteadores específicos)
 app.use('/api/alunos', alunosRouter);
 app.use('/api/presenca', presencaRouter);
 app.use('/api/relatorios', relatoriosRouter);
 app.use('/api/grade', gradeRouter);
 app.use('/api/matriculas', matriculasRouter);
+// CRUD de turmas (atividades) — GET/POST/PUT/DELETE, ver atividades.js.
+app.use('/api/atividades', atividadesRouter);
 app.use('/api/contatos-emergencia', contatosEmergenciaRouter);
 app.use('/api/dias-sem-aula', diasSemAulaRouter);
 
