@@ -15,7 +15,7 @@ const TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 7; // sessão válida por 7 dias
 const PERFIS = ['master', 'coordenador', 'professor', 'monitor'];
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const RESEND_FROM = process.env.RESEND_FROM_EMAIL || 'Atos On <onboarding@resend.dev>';
-const FRONTEND_URL = process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' ? 'https://atoson.com.br' : 'http://localhost:3000');
+const FRONTEND_URL = process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' ? 'https://controle-de-presenca-ten.vercel.app' : 'http://localhost:3000');
 
 // AUTH_SECRET é o que impede qualquer pessoa de forjar um token válido. Sem essa
 // variável configurada, o servidor não deve subir em produção usando um segredo
@@ -205,9 +205,15 @@ router.post('/register', asyncHandler(async (req, res) => {
   }
 
   if (status === 'pendente') {
-    notificarMastersNovoCadastro({ id: result.insertId, nome: cleanName, email: cleanEmail, perfil: cleanPerfil }).catch(e =>
-      console.error('Erro ao notificar masters sobre novo cadastro pendente:', e)
-    );
+    // Precisa de await antes de responder: em ambiente serverless (Vercel) a
+    // função pode ser congelada assim que a resposta é enviada, matando no
+    // meio do caminho qualquer envio de e-mail "fire-and-forget" que ainda
+    // não tivesse terminado — por isso não dá pra só disparar e seguir.
+    try {
+      await notificarMastersNovoCadastro({ id: result.insertId, nome: cleanName, email: cleanEmail, perfil: cleanPerfil });
+    } catch (e) {
+      console.error('Erro ao notificar masters sobre novo cadastro pendente:', e);
+    }
     return res.status(201).json({ message: 'Cadastro realizado. Aguarde aprovação do master para acessar o sistema.' });
   }
 
