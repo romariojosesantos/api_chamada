@@ -128,6 +128,18 @@ app.get('/api/instituicoes/todas', authMiddleware, async (req, res) => {
   }
 });
 
+// Data de "hoje" segundo o servidor, no fuso de Brasília — nunca o relógio do
+// aparelho do usuário. Existe porque a tela de Chamada usava só o relógio do
+// navegador pra decidir a data padrão ao abrir; se o aparelho estiver com a
+// data errada (relógio desconfigurado, fuso trocado etc.), a chamada podia
+// ser lançada no dia errado sem ninguém perceber. Usa Intl com timeZone fixo
+// em vez de `new Date()` puro porque o servidor roda em UTC — sem isso, entre
+// 21h e meia-noite (Brasília) a resposta já seria do dia seguinte.
+app.get('/api/hoje', authMiddleware, (req, res) => {
+  const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+  res.json({ hoje });
+});
+
 app.use('/api', authMiddleware);
 
 // Middleware para forçar o ID da instituição em todas as rotas da API
