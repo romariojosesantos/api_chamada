@@ -240,20 +240,26 @@ router.post('/', asyncHandler(async (req, res) => {
       .filter(id => Number.isInteger(id) && id > 0))];
 
     await syncAlunoStatusFromMatriculas(connection, idsParaSincronizar, req.id_instituicao);
-    await connection.commit();
 
     // Uma notificação por linha alterada inundaria a central quando alguém
     // salva um lote grande de uma vez (Ajuste de Grade é feito pra isso) — em
-    // vez disso, um resumo agregado só quando algo realmente mudou.
+    // vez disso, um resumo agregado só quando algo realmente mudou. Passa
+    // `connection` (mesma transação, ainda não commitada) — criarNotificacao
+    // nunca lança erro por conta própria (ver notificacoes-service.js), então
+    // isso não arrisca a transação principal; e evita abrir uma 2a conexão do
+    // `pool` compartilhado enquanto essa ainda está em uso (em produção,
+    // connectionLimit é 1 — abrir uma 2a travaria pra sempre esperando a
+    // primeira ser liberada, o que só aconteceria depois desta mesma chamada).
     if (results.length > 0) {
       await criarNotificacao({
         tipo: 'movimentacao',
         titulo: 'Grade ajustada em lote',
         mensagem: `${results.length} ${results.length === 1 ? 'alteração feita' : 'alterações feitas'} na grade (Ajuste de Grade).`,
         id_instituicao: req.id_instituicao
-      });
+      }, connection);
     }
 
+    await connection.commit();
     res.json({ success: true, updated: results.length, results });
 
   } catch (error) {
@@ -294,6 +300,7 @@ router.post('/matricular', asyncHandler(async (req, res) => {
   if (alunos.length === 0) return res.status(404).json({ error: 'Aluno não encontrado.' });
 
   const connection = await pool.getConnection();
+
   try {
     await connection.beginTransaction();
 
@@ -330,9 +337,15 @@ router.post('/matricular', asyncHandler(async (req, res) => {
     );
 
     await syncAlunoStatusFromMatriculas(connection, [Number(aluno_id)], req.id_instituicao);
-    await connection.commit();
 
-    await logAuditEvent('ALUNO_MATRICULADO_TURMA', `Aluno #${aluno_id} -> turma #${id_atividade} "${turma.nome}"`, req.id_instituicao);
+    // logAuditEvent/criarNotificacao recebem `connection` (mesma transação,
+    // ainda não commitada) — nenhuma das duas lança erro por conta própria
+    // (ver audit.js/notificacoes-service.js), então isso não arrisca a
+    // transação principal, e evita abrir uma 2a conexão do `pool`
+    // compartilhado enquanto essa ainda está em uso (em produção,
+    // connectionLimit é 1 — uma 2a conexão travaria pra sempre esperando a
+    // primeira ser liberada, o que só aconteceria depois desta mesma chamada).
+    await logAuditEvent('ALUNO_MATRICULADO_TURMA', `Aluno #${aluno_id} -> turma #${id_atividade} "${turma.nome}"`, req.id_instituicao, connection);
 
     const alunoNome = alunos[0].nome;
     const localTurma = `"${turma.nome}" (${turma.dia_semana} ${turma.horario}, ${turma.turno})`;
@@ -344,8 +357,9 @@ router.post('/matricular', asyncHandler(async (req, res) => {
         : `${alunoNome} foi matriculado(a) em ${localTurma}.`,
       id_instituicao: req.id_instituicao,
       id_aluno: Number(aluno_id)
-    });
+    }, connection);
 
+    await connection.commit();
     res.status(201).json({ success: true });
   } catch (error) {
     await connection.rollback();
@@ -392,6 +406,7 @@ router.post('/mover', asyncHandler(async (req, res) => {
   const [[aluno]] = await pool.query('SELECT nome FROM alunos WHERE id = ?', [aluno_id]);
 
   const connection = await pool.getConnection();
+
   try {
     await connection.beginTransaction();
 
@@ -407,9 +422,12 @@ router.post('/mover', asyncHandler(async (req, res) => {
     );
 
     await syncAlunoStatusFromMatriculas(connection, [Number(aluno_id)], req.id_instituicao);
-    await connection.commit();
 
-    await logAuditEvent('ALUNO_MOVIDO_TURMA', `Aluno #${aluno_id} -> turma #${id_atividade_destino} "${turma.nome}" (matrícula #${matricula_id} encerrada)`, req.id_instituicao);
+    // logAuditEvent/criarNotificacao recebem `connection` (mesma transação,
+    // ainda não commitada) — ver o mesmo comentário em /matricular acima:
+    // evita travar em produção (connectionLimit: 1) esperando uma 2a conexão
+    // que só se abriria depois desta mesma chamada terminar.
+    await logAuditEvent('ALUNO_MOVIDO_TURMA', `Aluno #${aluno_id} -> turma #${id_atividade_destino} "${turma.nome}" (matrícula #${matricula_id} encerrada)`, req.id_instituicao, connection);
 
     await criarNotificacao({
       tipo: 'movimentacao',
@@ -417,8 +435,9 @@ router.post('/mover', asyncHandler(async (req, res) => {
       mensagem: `${aluno?.nome || 'Aluno'} foi movido(a) para "${turma.nome}" (${turma.dia_semana} ${turma.horario}, ${turma.turno}).`,
       id_instituicao: req.id_instituicao,
       id_aluno: Number(aluno_id)
-    });
+    }, connection);
 
+    await connection.commit();
     res.json({ success: true });
   } catch (error) {
     await connection.rollback();

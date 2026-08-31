@@ -201,9 +201,15 @@ router.post('/:id/encerrar', asyncHandler(async (req, res) => {
       await syncAlunoStatusFromMatriculas(connection, alunosAtivos.map(m => m.idaluno), req.id_instituicao);
     }
 
-    await connection.commit();
+    // Passa `connection` (mesma transação, ainda não commitada) — logAuditEvent
+    // nunca lança erro por conta própria (ver audit.js), e em produção
+    // (connectionLimit: 1, ver db.js) abrir uma 2a conexão do `pool`
+    // compartilhado enquanto essa ainda está em uso travaria pra sempre
+    // esperando ela ser liberada, o que só aconteceria depois desta mesma
+    // chamada terminar.
+    await logAuditEvent('TURMA_ENCERRADA', `Turma #${id} "${turmas[0].nome}" — ${alunosAtivos.length} aluno(s) desmatriculado(s) junto`, req.id_instituicao, connection);
 
-    await logAuditEvent('TURMA_ENCERRADA', `Turma #${id} "${turmas[0].nome}" — ${alunosAtivos.length} aluno(s) desmatriculado(s) junto`, req.id_instituicao);
+    await connection.commit();
 
     res.json({ success: true, alunos_desmatriculados: alunosAtivos.length });
   } catch (error) {
