@@ -140,15 +140,27 @@ router.get('/historico-periodo', asyncHandler(async (req, res) => {
 
 // Atualizar matrículas em lote — usado pela tela de Ajuste de Grade: cada célula
 // da grade (aluno × dia × horário) manda uma "alteracao" com a nova atividade
-// (ou vazio, para remover). Processa uma por uma dentro da mesma transação:
+// (ou vazio, para remover):
 //   - id_atividade preenchido + já existe matrícula na mesma posição -> troca a atividade.
 //   - id_atividade preenchido + não existe -> cria matrícula nova.
 //   - id_atividade vazio + existe -> encerra (soft-delete) a matrícula daquela posição.
+//
+// Faz 2 SELECTs e até 3 escritas EM LOTE, nunca uma query por célula — a
+// versão anterior fazia 1 a 3 idas ao banco POR alteração (SELECT da posição
+// + UPDATE/INSERT), o que virava dezenas de segundos pra um lote grande (essa
+// tela existe pra editar várias células de uma vez) e estourava o timeout da
+// função serverless — a transação já tinha sido commitada no banco quando o
+// timeout estourava, por isso salvava mesmo aparecendo erro pro usuário.
 router.post('/', asyncHandler(async (req, res) => {
   const { alteracoes } = req.body;
 
   if (!alteracoes || !Array.isArray(alteracoes) || alteracoes.length === 0) {
     return res.status(400).json({ error: 'Nenhuma alteração fornecida' });
+  }
+  for (const a of alteracoes) {
+    if (!a.aluno_id || !a.dia_semana || !a.horario) {
+      return res.status(400).json({ error: 'Dados incompletos na alteração' });
+    }
   }
 
   const connection = await pool.getConnection();
@@ -156,54 +168,68 @@ router.post('/', asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
 
+    // 1 SELECT pra achar TODAS as matrículas já existentes nas posições
+    // envolvidas (comparação de tupla, suportada pelo MySQL), em vez de uma
+    // consulta por célula.
+    const tuplasPosicao = alteracoes.map(a => [Number(a.aluno_id), a.dia_semana, a.horario]);
+    const placeholdersPosicao = tuplasPosicao.map(() => '(?,?,?)').join(',');
+    const [existentes] = await connection.query(
+      `SELECT idmatricula, idaluno, dia_semana, horario FROM matricula
+       WHERE id_instituicao = ? AND data_fim IS NULL
+         AND (idaluno, dia_semana, horario) IN (${placeholdersPosicao})`,
+      [req.id_instituicao, ...tuplasPosicao.flat()]
+    );
+    const mapaExistentes = new Map(existentes.map(m => [`${m.idaluno}-${m.dia_semana}-${m.horario}`, m.idmatricula]));
+
+    // 1 SELECT pro turno de todo mundo envolvido (usado só nas criações, mas
+    // sair sempre com a lista inteira é mais simples e ainda é 1 query só).
+    const idsAlunos = [...new Set(alteracoes.map(a => Number(a.aluno_id)))];
+    const [alunosRows] = await connection.query('SELECT id, turno FROM alunos WHERE id IN (?)', [idsAlunos]);
+    const turnoPorAluno = new Map(alunosRows.map(a => [a.id, a.turno || '']));
+
+    const paraInserir = [];
+    const paraEncerrar = [];
+    const paraAtualizar = [];
     const results = [];
 
     for (const alteracao of alteracoes) {
       const { aluno_id, dia_semana, horario, id_atividade } = alteracao;
-
-      if (!aluno_id || !dia_semana || !horario) {
-        throw new Error('Dados incompletos na alteração');
-      }
-
-      // Busca matrícula existente nessa posição exata da grade (aluno + dia + horário)
-      const [existing] = await connection.query(
-        'SELECT idmatricula FROM matricula WHERE idaluno = ? AND dia_semana = ? AND horario = ? AND id_instituicao = ? AND data_fim IS NULL',
-        [aluno_id, dia_semana, horario, req.id_instituicao]
-      );
+      const idExistente = mapaExistentes.get(`${Number(aluno_id)}-${dia_semana}-${horario}`);
 
       if (id_atividade) {
-        // Atualizar ou criar matrícula
-        if (existing.length > 0) {
-          await connection.query(
-            'UPDATE matricula SET idatividades = ? WHERE idmatricula = ?',
-            [id_atividade, existing[0].idmatricula]
-          );
-          results.push({ action: 'updated', id: existing[0].idmatricula });
+        if (idExistente) {
+          paraAtualizar.push({ id: idExistente, id_atividade });
+          results.push({ action: 'updated', id: idExistente });
         } else {
-          // Turno da matrícula nova segue o turno cadastrado do aluno
-          const [aluno] = await connection.query(
-            'SELECT turno FROM alunos WHERE id = ?',
-            [aluno_id]
-          );
-
-          const turno = aluno[0]?.turno || '';
-
-          await connection.query(
-            'INSERT INTO matricula (idaluno, idatividades, dia_semana, horario, turno, status, data_inicio, id_instituicao) VALUES (?, ?, ?, ?, ?, ?, CURDATE(), ?)',
-            [aluno_id, id_atividade, dia_semana, horario, turno, 'matriculado', req.id_instituicao]
-          );
+          paraInserir.push({ aluno_id, dia_semana, horario, id_atividade, turno: turnoPorAluno.get(Number(aluno_id)) || '' });
           results.push({ action: 'created', aluno_id, dia_semana, horario });
         }
-      } else {
-        // Remover matrícula (id_atividade vazio) — soft-delete via data_fim
-        if (existing.length > 0) {
-          await connection.query(
-            'UPDATE matricula SET data_fim = CURDATE() WHERE idmatricula = ?',
-            [existing[0].idmatricula]
-          );
-          results.push({ action: 'deleted', id: existing[0].idmatricula });
-        }
+      } else if (idExistente) {
+        paraEncerrar.push(idExistente);
+        results.push({ action: 'deleted', id: idExistente });
       }
+    }
+
+    if (paraInserir.length > 0) {
+      const valores = paraInserir.map(x => [x.aluno_id, x.id_atividade, x.dia_semana, x.horario, x.turno, 'matriculado', req.id_instituicao]);
+      await connection.query(
+        `INSERT INTO matricula (idaluno, idatividades, dia_semana, horario, turno, status, data_inicio, id_instituicao)
+         VALUES ${valores.map(() => '(?, ?, ?, ?, ?, ?, CURDATE(), ?)').join(', ')}`,
+        valores.flat()
+      );
+    }
+
+    if (paraEncerrar.length > 0) {
+      await connection.query('UPDATE matricula SET data_fim = CURDATE() WHERE idmatricula IN (?)', [paraEncerrar]);
+    }
+
+    if (paraAtualizar.length > 0) {
+      const casos = paraAtualizar.map(() => 'WHEN ? THEN ?').join(' ');
+      const valoresCase = paraAtualizar.flatMap(x => [x.id, x.id_atividade]);
+      await connection.query(
+        `UPDATE matricula SET idatividades = CASE idmatricula ${casos} END WHERE idmatricula IN (?)`,
+        [...valoresCase, paraAtualizar.map(x => x.id)]
+      );
     }
 
     // Depois de mexer nas matrículas, garante que alunos.status reflita a
@@ -223,7 +249,7 @@ router.post('/', asyncHandler(async (req, res) => {
       await criarNotificacao({
         tipo: 'movimentacao',
         titulo: 'Grade ajustada em lote',
-        mensagem: `${results.length} alteração${results.length === 1 ? '' : 'ões'} feita${results.length === 1 ? '' : 's'} na grade (Ajuste de Grade).`,
+        mensagem: `${results.length} ${results.length === 1 ? 'alteração feita' : 'alterações feitas'} na grade (Ajuste de Grade).`,
         id_instituicao: req.id_instituicao
       });
     }
