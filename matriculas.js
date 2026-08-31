@@ -19,6 +19,7 @@ const router = express.Router();
 const pool = require('./db');
 const { syncAlunoStatusFromMatriculas } = require('./status-sync');
 const { logAuditEvent } = require('./audit');
+const { criarNotificacao } = require('./notificacoes-service');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -214,6 +215,19 @@ router.post('/', asyncHandler(async (req, res) => {
 
     await syncAlunoStatusFromMatriculas(connection, idsParaSincronizar, req.id_instituicao);
     await connection.commit();
+
+    // Uma notificação por linha alterada inundaria a central quando alguém
+    // salva um lote grande de uma vez (Ajuste de Grade é feito pra isso) — em
+    // vez disso, um resumo agregado só quando algo realmente mudou.
+    if (results.length > 0) {
+      await criarNotificacao({
+        tipo: 'movimentacao',
+        titulo: 'Grade ajustada em lote',
+        mensagem: `${results.length} alteração${results.length === 1 ? '' : 'ões'} feita${results.length === 1 ? '' : 's'} na grade (Ajuste de Grade).`,
+        id_instituicao: req.id_instituicao
+      });
+    }
+
     res.json({ success: true, updated: results.length, results });
 
   } catch (error) {
@@ -248,7 +262,7 @@ router.post('/matricular', asyncHandler(async (req, res) => {
   }
 
   const [alunos] = await pool.query(
-    'SELECT id FROM alunos WHERE id = ? AND id_instituicao = ?',
+    'SELECT id, nome FROM alunos WHERE id = ? AND id_instituicao = ?',
     [aluno_id, req.id_instituicao]
   );
   if (alunos.length === 0) return res.status(404).json({ error: 'Aluno não encontrado.' });
@@ -272,8 +286,11 @@ router.post('/matricular', asyncHandler(async (req, res) => {
     }
 
     // Se ele já tinha outra turma nesse mesmo horário, encerra antes de criar
-    // a nova (um aluno não pode estar em duas turmas ao mesmo tempo).
-    if (existentes.length > 0) {
+    // a nova (um aluno não pode estar em duas turmas ao mesmo tempo) — isso
+    // também é o sinal de que essa chamada é uma TROCA de turma, não uma
+    // matrícula nova (ver notificação abaixo).
+    const eraTroca = existentes.length > 0;
+    if (eraTroca) {
       await connection.query(
         `UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula = ?`,
         [existentes[0].idmatricula]
@@ -291,11 +308,96 @@ router.post('/matricular', asyncHandler(async (req, res) => {
 
     await logAuditEvent('ALUNO_MATRICULADO_TURMA', `Aluno #${aluno_id} -> turma #${id_atividade} "${turma.nome}"`, req.id_instituicao);
 
+    const alunoNome = alunos[0].nome;
+    const localTurma = `"${turma.nome}" (${turma.dia_semana} ${turma.horario}, ${turma.turno})`;
+    await criarNotificacao({
+      tipo: eraTroca ? 'movimentacao' : 'matricula',
+      titulo: eraTroca ? 'Aluno mudou de turma' : 'Novo aluno matriculado',
+      mensagem: eraTroca
+        ? `${alunoNome} foi movido(a) para ${localTurma}.`
+        : `${alunoNome} foi matriculado(a) em ${localTurma}.`,
+      id_instituicao: req.id_instituicao,
+      id_aluno: Number(aluno_id)
+    });
+
     res.status(201).json({ success: true });
   } catch (error) {
     await connection.rollback();
     console.error('Erro ao matricular aluno na turma:', error);
     res.status(500).json({ error: 'Erro ao matricular aluno: ' + error.message });
+  } finally {
+    connection.release();
+  }
+}));
+
+// Mover um aluno de uma matrícula pra outra turma qualquer — mesmo dia/horário
+// ou não, mesma área ou não (usado pelo modal "Mover" de GradeTurmas.js).
+// Diferente de POST /matricular (que só troca automaticamente quando o
+// conflito está no MESMO dia+horário+turno da turma de destino), aqui a
+// matrícula de origem é conhecida explicitamente (matricula_id) — então
+// funciona pra qualquer combinação de origem/destino. Encerra a antiga e cria
+// a nova numa transação só (evita o aluno ficar sem matrícula nenhuma se a
+// segunda metade falhar, que era o risco de fazer isso como dois requests
+// separados do cliente).
+router.post('/mover', asyncHandler(async (req, res) => {
+  const { matricula_id, id_atividade_destino } = req.body;
+
+  if (!matricula_id || !id_atividade_destino) {
+    return res.status(400).json({ error: 'matricula_id e id_atividade_destino são obrigatórios.' });
+  }
+
+  const [origemRows] = await pool.query(
+    'SELECT idmatricula, idaluno FROM matricula WHERE idmatricula = ? AND id_instituicao = ? AND data_fim IS NULL',
+    [matricula_id, req.id_instituicao]
+  );
+  if (origemRows.length === 0) return res.status(404).json({ error: 'Matrícula de origem não encontrada ou já encerrada.' });
+  const aluno_id = origemRows[0].idaluno;
+
+  const [turmas] = await pool.query(
+    'SELECT idatividades, nome, dia_semana, horario, turno FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
+    [id_atividade_destino, req.id_instituicao]
+  );
+  if (turmas.length === 0) return res.status(404).json({ error: 'Turma de destino não encontrada.' });
+  const turma = turmas[0];
+  if (!turma.dia_semana || !turma.horario || !turma.turno) {
+    return res.status(400).json({ error: 'Essa turma ainda não tem dia/horário/turno definidos.' });
+  }
+
+  const [[aluno]] = await pool.query('SELECT nome FROM alunos WHERE id = ?', [aluno_id]);
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    await connection.query(
+      `UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula = ?`,
+      [matricula_id]
+    );
+
+    await connection.query(
+      `INSERT INTO matricula (idaluno, idatividades, dia_semana, horario, turno, status, data_inicio, id_instituicao)
+       VALUES (?, ?, ?, ?, ?, 'matriculado', CURDATE(), ?)`,
+      [aluno_id, id_atividade_destino, turma.dia_semana, turma.horario, turma.turno, req.id_instituicao]
+    );
+
+    await syncAlunoStatusFromMatriculas(connection, [Number(aluno_id)], req.id_instituicao);
+    await connection.commit();
+
+    await logAuditEvent('ALUNO_MOVIDO_TURMA', `Aluno #${aluno_id} -> turma #${id_atividade_destino} "${turma.nome}" (matrícula #${matricula_id} encerrada)`, req.id_instituicao);
+
+    await criarNotificacao({
+      tipo: 'movimentacao',
+      titulo: 'Aluno mudou de turma',
+      mensagem: `${aluno?.nome || 'Aluno'} foi movido(a) para "${turma.nome}" (${turma.dia_semana} ${turma.horario}, ${turma.turno}).`,
+      id_instituicao: req.id_instituicao,
+      id_aluno: Number(aluno_id)
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Erro ao mover aluno de turma:', error);
+    res.status(500).json({ error: 'Erro ao mover aluno: ' + error.message });
   } finally {
     connection.release();
   }

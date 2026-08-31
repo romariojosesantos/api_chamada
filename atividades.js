@@ -13,6 +13,11 @@ const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next
 
 const DIAS_VALIDOS = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 const TURNOS_VALIDOS = ['Manhã', 'Tarde'];
+// Área de atuação da turma dentro da instituição — usada pelos filtros da
+// tela Grade por Turma (GradeTurmas.js). Backfill de todas as turmas
+// existentes feito a partir do prefixo do nome (E.P./ESP/TEC/CAP) ou, pra
+// quem não tinha prefixo (as ex-"CUL -"), classificado como cultural.
+const AREAS_VALIDAS = ['educacional', 'esportivo', 'cultural', 'tecnologico', 'capelania'];
 
 // Valida os campos comuns a criar/editar turma e resolve o professor: se vier
 // `idprofessor`, usa direto; se vier só `professor_nome`, acha o professor
@@ -38,6 +43,11 @@ async function validarECresolverProfessor(req, res, body) {
     res.status(400).json({ error: 'Turno inválido. Use: ' + TURNOS_VALIDOS.join(', ') });
     return null;
   }
+  const area = body.area;
+  if (!AREAS_VALIDAS.includes(area)) {
+    res.status(400).json({ error: 'Área inválida. Use: ' + AREAS_VALIDAS.join(', ') });
+    return null;
+  }
 
   let idProfessorFinal = idprofessor ? Number(idprofessor) : null;
 
@@ -58,7 +68,7 @@ async function validarECresolverProfessor(req, res, body) {
     }
   }
 
-  return { nomeLimpo, dia_semana, horario: String(horario).trim(), turno, idProfessorFinal };
+  return { nomeLimpo, dia_semana, horario: String(horario).trim(), turno, area, idProfessorFinal };
 }
 
 // Listar todas as turmas da instituição, já com professor e contagem de
@@ -69,7 +79,7 @@ async function validarECresolverProfessor(req, res, body) {
 router.get('/', asyncHandler(async (req, res) => {
   const sql = `
     SELECT atv.idatividades AS id, atv.nome, atv.dia_semana, atv.horario, atv.turno, atv.idprofessor,
-           atv.data_inicio, atv.data_fim,
+           atv.area, atv.data_inicio, atv.data_fim,
            p.nome AS nome_professor,
            (SELECT COUNT(*) FROM matricula m
             WHERE m.idatividades = atv.idatividades AND m.status = 'matriculado' AND m.data_fim IS NULL) AS total_alunos
@@ -103,8 +113,8 @@ router.post('/', asyncHandler(async (req, res) => {
   const dataInicio = req.body.data_inicio || new Date().toISOString().split('T')[0];
 
   const [result] = await pool.query(
-    'INSERT INTO atividades (nome, idprofessor, id_instituicao, dia_semana, horario, turno, data_inicio) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [dados.nomeLimpo, dados.idProfessorFinal, req.id_instituicao, dados.dia_semana, dados.horario, dados.turno, dataInicio]
+    'INSERT INTO atividades (nome, idprofessor, id_instituicao, dia_semana, horario, turno, area, data_inicio) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [dados.nomeLimpo, dados.idProfessorFinal, req.id_instituicao, dados.dia_semana, dados.horario, dados.turno, dados.area, dataInicio]
   );
 
   await logAuditEvent('TURMA_CRIADA', `Turma "${dados.nomeLimpo}" (${dados.dia_semana} ${dados.horario} ${dados.turno})`, req.id_instituicao);
@@ -115,6 +125,7 @@ router.post('/', asyncHandler(async (req, res) => {
     dia_semana: dados.dia_semana,
     horario: dados.horario,
     turno: dados.turno,
+    area: dados.area,
     idprofessor: dados.idProfessorFinal,
     data_inicio: dataInicio,
     data_fim: null
@@ -135,8 +146,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
   if (!dados) return;
 
   await pool.query(
-    'UPDATE atividades SET nome = ?, idprofessor = ?, dia_semana = ?, horario = ?, turno = ? WHERE idatividades = ? AND id_instituicao = ?',
-    [dados.nomeLimpo, dados.idProfessorFinal, dados.dia_semana, dados.horario, dados.turno, id, req.id_instituicao]
+    'UPDATE atividades SET nome = ?, idprofessor = ?, dia_semana = ?, horario = ?, turno = ?, area = ? WHERE idatividades = ? AND id_instituicao = ?',
+    [dados.nomeLimpo, dados.idProfessorFinal, dados.dia_semana, dados.horario, dados.turno, dados.area, id, req.id_instituicao]
   );
 
   // Mantém as matrículas da turma consistentes com o horário dela — a mesma

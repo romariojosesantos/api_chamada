@@ -54,6 +54,7 @@ const atividadesRouter = require('./atividades');
 const { router: authRouter, authMiddleware } = require('./auth');
 const { router: contatosEmergenciaRouter } = require('./contatos-emergencia');
 const diasSemAulaRouter = require('./dias-sem-aula');
+const notificacoesRouter = require('./notificacoes');
 const historicoAlunoRouter = require('./historico-aluno');
 
 // Middlewares
@@ -226,6 +227,7 @@ app.use('/api/matriculas', matriculasRouter);
 app.use('/api/atividades', atividadesRouter);
 app.use('/api/contatos-emergencia', contatosEmergenciaRouter);
 app.use('/api/dias-sem-aula', diasSemAulaRouter);
+app.use('/api/notificacoes', notificacoesRouter);
 
 // Middleware de Tratamento de Erros Global (Melhoria de UX/Estabilidade)
 app.use((err, req, res, next) => {

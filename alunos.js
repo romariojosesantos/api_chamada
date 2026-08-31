@@ -7,6 +7,7 @@ const pool = require('./db');
 const { validate } = require('./validation');
 const { logAuditEvent } = require('./audit');
 const { syncAlunoStatusFromMatriculas } = require('./status-sync');
+const { criarNotificacao } = require('./notificacoes-service');
 
 // Helper para envolver rotas assíncronas e capturar erros
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -717,12 +718,33 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Campo não permitido para atualização.' });
   }
 
+  // Pra "desistência" (ver notificação abaixo), precisa saber o status ANTES
+  // de trocar — só é um evento novo se ele não já estava inativo.
+  let statusAnterior = null;
+  let nomeAluno = null;
+  if (campo === 'status' && valor === 'inativo') {
+    const [[atual]] = await pool.query('SELECT status, nome FROM alunos WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
+    statusAnterior = atual?.status;
+    nomeAluno = atual?.nome;
+  }
+
   const sql = 'UPDATE alunos SET ?? = ? WHERE id = ? AND id_instituicao = ?';
   const [result] = await pool.query(sql, [campo, valor, id, req.id_instituicao]);
 
   if (result.affectedRows === 0) return res.status(404).json({ error: 'Aluno não encontrado.' });
 
   await logAuditEvent('ATUALIZAR_ALUNO', `Aluno ID: ${id}, Campo: ${campo}`, req.id_instituicao);
+
+  if (campo === 'status' && valor === 'inativo' && statusAnterior && statusAnterior !== 'inativo') {
+    await criarNotificacao({
+      tipo: 'desistencia',
+      titulo: 'Aluno marcado como desistente',
+      mensagem: `${nomeAluno || 'Um aluno'} foi marcado(a) como inativo(a).`,
+      id_instituicao: req.id_instituicao,
+      id_aluno: Number(id)
+    });
+  }
+
   res.json({ message: 'Campo atualizado com sucesso.' });
 }));
 

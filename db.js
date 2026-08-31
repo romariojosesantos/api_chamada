@@ -25,4 +25,13 @@ const pool = mysql.createPool({
   connectTimeout: 60000
 });
 
+// Sem esse listener, um erro de conexão em background do pool (ex.: o MySQL
+// remoto derrubando uma conexão ociosa com ECONNRESET) não fica ligado a
+// nenhuma query específica — vira um evento 'error' sem listener no
+// EventEmitter do pool, e o Node trata isso como exceção não capturada,
+// derrubando o processo inteiro. Só logar aqui evita o crash sem mascarar o problema.
+pool.on('error', (err) => {
+  console.error('[MySQL Pool] Erro de conexão:', err.code || err.message);
+});
+
 module.exports = pool;
