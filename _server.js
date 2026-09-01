@@ -60,7 +60,7 @@ const historicoAlunoRouter = require('./historico-aluno');
 // Middlewares
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'
-    ? ['https://controle-de-presenca-ten.vercel.app', 'https://api-chamada.vercel.app', 'https://atoson.com.br'] // Domínios permitidos em produção
+    ? ['https://controle-de-presenca-ten.vercel.app', 'https://api-chamada.vercel.app', 'https://atoson.com.br', 'https://www.atoson.com.br'] // Domínios permitidos em produção
     : '*',
   allowedHeaders: ['Content-Type', 'x-institution-id', 'Authorization', 'Pragma', 'Cache-Control', 'Expires'],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']

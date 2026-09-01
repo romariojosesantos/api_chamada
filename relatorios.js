@@ -218,19 +218,15 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
   });
 }));
 
-// Consolidado de um período (seção "Estatísticas por Período" do dashboard).
-// Mistura duas unidades de contagem — a leitura de cada campo da resposta importa:
+// Consolidado de um período — usado tanto por GET /estatisticas-periodo (seção
+// "Estatísticas por Período" do dashboard) quanto por GET /estatisticas-mensais
+// (visão mensal, que é o mesmo cálculo com data_inicio/data_fim derivados do mês
+// em vez de escolhidos manualmente). Mistura duas unidades de contagem — a
+// leitura de cada campo da resposta importa:
 //   - "..._alunos"/"total_justificados"/"total_nao_justificados": ALUNOS ÚNICOS
 //     (um aluno que faltou 5 dias conta 1 vez).
 //   - "..._registros": REGISTROS de presença (uma linha por aluno por dia).
-router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
-  const { data_inicio, data_fim } = req.query;
-  const inst = req.id_instituicao;
-  
-  if (!data_inicio || !data_fim) {
-    return res.status(400).json({ error: 'data_inicio e data_fim são obrigatórios' });
-  }
-
+async function calcularEstatisticasPeriodo(inst, data_inicio, data_fim) {
   // Gerar lista de dias letivos no período (excluindo dias_sem_aula)
   const [diasLetivos] = await pool.query(
     `WITH RECURSIVE datas AS (
@@ -250,7 +246,7 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
 
   // Se não houver dias letivos, retornar zeros
   if (diasLetivos.length === 0) {
-    return res.json({
+    return {
       data_inicio,
       data_fim,
       total_esperados_alunos: 0,
@@ -258,11 +254,14 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
       total_ausentes_alunos: 0,
       total_justificados: 0,
       total_nao_justificados: 0,
+      total_esperados_registros: 0,
       total_presentes_registros: 0,
       total_faltas_registros: 0,
       total_justificativas_registros: 0,
-      justificativas: []
-    });
+      justificativas: [],
+      total_dias_letivos: 0,
+      media_alunos_dia: 0
+    };
   }
 
   const [
@@ -301,18 +300,30 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
       [inst, data_inicio, data_fim, inst]
     ),
 
-    // Total de alunos esperados no período (matriculados que deveriam ter aula)
+    // Total de alunos esperados no período (matriculados que deveriam ter aula
+    // em ALGUM dia letivo do período). Usa QUALQUER matrícula que cobria cada
+    // dia (m.data_inicio <= dia <= data_fim, ou ainda ativa se data_fim for
+    // NULL) — não só a matrícula ATUAL do aluno. Turma trocada/reorganizada
+    // depois não pode apagar retroativamente quem estava matriculado naquele
+    // dia (mesmo raciocínio de esperados_por_aluno em GET /estatisticas-mensais).
     pool.query(
-      `SELECT COUNT(DISTINCT a.id) as total
-       FROM alunos a
-       JOIN matricula m ON a.id = m.idaluno AND m.status = 'matriculado' AND m.data_fim IS NULL
-       LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) BETWEEN ? AND ? 
-         AND p.id_instituicao = a.id_instituicao
-         AND NOT EXISTS (
-           SELECT 1 FROM dias_sem_aula d 
-           WHERE d.data = DATE(p.data) AND d.id_instituicao = ?
+      `WITH RECURSIVE datas AS (
+         SELECT ? as data
+         UNION ALL
+         SELECT DATE_ADD(data, INTERVAL 1 DAY) FROM datas WHERE data < ?
+       ),
+       dias_letivos AS (
+         SELECT data FROM datas
+         WHERE NOT EXISTS (SELECT 1 FROM dias_sem_aula WHERE data = datas.data AND id_instituicao = ?)
+       )
+       SELECT COUNT(DISTINCT a.id) as total
+       FROM dias_letivos d
+       JOIN matricula m ON TRIM(m.dia_semana) = ELT(
+           DAYOFWEEK(d.data), 'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
          )
-       WHERE a.id_instituicao = ? AND a.status = 'ativo'`,
+         AND d.data >= m.data_inicio
+         AND (m.data_fim IS NULL OR d.data <= m.data_fim)
+       JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo' AND a.excluido_em IS NULL`,
       [data_inicio, data_fim, inst, inst]
     ),
 
@@ -337,18 +348,20 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
         )
       ),
       esperados_por_dia AS (
-        SELECT 
+        -- Mesma correção histórica das demais consultas desta função: qualquer
+        -- matrícula que cobria aquele dia, não só a atual (ver comentário grande
+        -- em esperados_por_aluno, GET /estatisticas-mensais).
+        SELECT
           d.data,
           COUNT(DISTINCT a.id) as esperados
         FROM dias_letivos d
         JOIN matricula m ON TRIM(m.dia_semana) = ELT(
             DAYOFWEEK(d.data),
             'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
-          ) 
-          AND m.status = 'matriculado'
-          AND m.data_fim IS NULL
-          AND (m.data_inicio IS NULL OR m.data_inicio <= d.data)
-        JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo'
+          )
+          AND d.data >= m.data_inicio
+          AND (m.data_fim IS NULL OR d.data <= m.data_fim)
+        JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo' AND a.excluido_em IS NULL
         GROUP BY d.data
       )
       SELECT COALESCE(SUM(esperados), 0) as total
@@ -412,7 +425,7 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
   // Média de alunos esperados por dia letivo
   const mediaAlunosDia = diasLetivos.length > 0 ? Math.round(totalOportunidadesRegistros / diasLetivos.length) : 0;
 
-  res.json({
+  return {
     data_inicio,
     data_fim,
     // Por aluno
@@ -421,7 +434,8 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
     total_ausentes_alunos: totalAusentesAlunos,
     total_justificados: totalJustificados,
     total_nao_justificados: totalNaoJustificados,
-    // Por registro (total de ocorrências)
+    // Por registro (total de ocorrências — soma de aluno-dia, não alunos distintos)
+    total_esperados_registros: totalOportunidadesRegistros,
     total_presentes_registros: totalPresentesRegistros,
     total_faltas_registros: totalFaltasRegistros,
     total_justificativas_registros: totalJustificativasRegistros,
@@ -432,6 +446,196 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
     // Info adicional para transparência do cálculo
     total_dias_letivos: diasLetivos.length,
     media_alunos_dia: mediaAlunosDia
+  };
+}
+
+router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
+  const { data_inicio, data_fim } = req.query;
+  if (!data_inicio || !data_fim) {
+    return res.status(400).json({ error: 'data_inicio e data_fim são obrigatórios' });
+  }
+  res.json(await calcularEstatisticasPeriodo(req.id_instituicao, data_inicio, data_fim));
+}));
+
+// Visão mensal do dashboard (alternador Diário/Mensal): mesmo cálculo de
+// /estatisticas-periodo, com data_inicio/data_fim derivados do mês (?mes=YYYY-MM)
+// em vez de escolhidos manualmente, mais uma série dia a dia (tendencia_diaria)
+// pro gráfico de frequência do mês. Se o mês pedido for o mês corrente, o
+// período vai só até hoje — não faz sentido "esperar" presença em dias futuros.
+router.get('/estatisticas-mensais', asyncHandler(async (req, res) => {
+  const { mes } = req.query; // formato YYYY-MM
+  const inst = req.id_instituicao;
+
+  if (!mes || !/^\d{4}-\d{2}$/.test(mes)) {
+    return res.status(400).json({ error: 'Parâmetro "mes" é obrigatório, no formato YYYY-MM.' });
+  }
+
+  const [anoStr, mesStr] = mes.split('-');
+  const ano = Number(anoStr);
+  const mesNum = Number(mesStr);
+  const dataInicio = `${mes}-01`;
+  const ultimoDiaDoMes = new Date(ano, mesNum, 0).getDate(); // dia 0 do mês seguinte = último dia deste mês
+  const hoje = new Date().toISOString().split('T')[0];
+  const dataFimCalendario = `${mes}-${String(ultimoDiaDoMes).padStart(2, '0')}`;
+  const dataFim = dataFimCalendario > hoje ? hoje : dataFimCalendario;
+
+  // Mês totalmente no futuro (dataInicio já depois de hoje): não há o que calcular.
+  if (dataInicio > hoje) {
+    return res.json({
+      mes, data_inicio: dataInicio, data_fim: dataInicio,
+      total_esperados_alunos: 0, total_presentes_alunos: 0, total_ausentes_alunos: 0,
+      total_justificados: 0, total_nao_justificados: 0, total_esperados_registros: 0, total_presentes_registros: 0,
+      total_faltas_registros: 0, total_justificativas_registros: 0, justificativas: [],
+      total_dias_letivos: 0, media_alunos_dia: 0, tendencia_diaria: [],
+      frequencia_por_aluno: [], media_frequencia_individual: 0, total_alunos_com_falta: 0
+    });
+  }
+
+  const [periodo, [tendenciaDiariaRes], [frequenciaPorAlunoRes], [comFaltaRes]] = await Promise.all([
+    calcularEstatisticasPeriodo(inst, dataInicio, dataFim),
+
+    // Série dia a dia (esperados/presentes por dia letivo) — alimenta o
+    // gráfico de tendência de frequência do mês.
+    pool.query(
+      `WITH RECURSIVE datas AS (
+         SELECT ? as data
+         UNION ALL
+         SELECT DATE_ADD(data, INTERVAL 1 DAY) FROM datas WHERE data < ?
+       ),
+       dias_letivos AS (
+         SELECT data FROM datas
+         WHERE NOT EXISTS (SELECT 1 FROM dias_sem_aula WHERE data = datas.data AND id_instituicao = ?)
+       ),
+       esperados_por_dia AS (
+         -- Usa QUALQUER matrícula que cobria aquele dia (m.data_inicio <= dia <=
+         -- data_fim, ou ainda ativa se data_fim for NULL) — não só a matrícula
+         -- ATUAL do aluno. Turma trocada/movida/reorganizada depois não pode
+         -- apagar retroativamente quem estava matriculado naquele dia (ver nota
+         -- grande abaixo, em esperados_por_aluno).
+         SELECT d.data, COUNT(DISTINCT a.id) as esperados
+         FROM dias_letivos d
+         JOIN matricula m ON TRIM(m.dia_semana) = ELT(
+             DAYOFWEEK(d.data), 'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
+           )
+           AND d.data >= m.data_inicio
+           AND (m.data_fim IS NULL OR d.data <= m.data_fim)
+         JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo' AND a.excluido_em IS NULL
+         GROUP BY d.data
+       ),
+       presentes_por_dia AS (
+         SELECT DATE(p.data) as data, COUNT(DISTINCT p.aluno_id) as presentes
+         FROM presenca p
+         WHERE p.id_instituicao = ? AND p.status = 'presente' AND DATE(p.data) BETWEEN ? AND ?
+         GROUP BY DATE(p.data)
+       )
+       SELECT dl.data, COALESCE(ep.esperados, 0) as esperados, COALESCE(pp.presentes, 0) as presentes
+       FROM dias_letivos dl
+       LEFT JOIN esperados_por_dia ep ON ep.data = dl.data
+       LEFT JOIN presentes_por_dia pp ON pp.data = dl.data
+       ORDER BY dl.data`,
+      [dataInicio, dataFim, inst, inst, inst, dataInicio, dataFim]
+    ),
+
+    // Frequência REAL por aluno no mês: soma de dias esperados e dias
+    // presentes de CADA aluno individualmente (não a conta agregada da
+    // instituição) — pedido explícito pra dar dado acionável, não só "quantos
+    // vieram pelo menos uma vez" (ver conversa: as médias por período/dia
+    // acima escondem quem faltou muito porque outro aluno com frequência alta
+    // "compensa" na média agregada).
+    pool.query(
+      `WITH RECURSIVE datas AS (
+         SELECT ? as data
+         UNION ALL
+         SELECT DATE_ADD(data, INTERVAL 1 DAY) FROM datas WHERE data < ?
+       ),
+       dias_letivos AS (
+         SELECT data FROM datas
+         WHERE NOT EXISTS (SELECT 1 FROM dias_sem_aula WHERE data = datas.data AND id_instituicao = ?)
+       ),
+       esperados_por_aluno AS (
+         -- Usa QUALQUER matrícula que cobria aquele dia (m.data_inicio <= dia <=
+         -- data_fim, ou ainda ativa se data_fim for NULL), não só a matrícula
+         -- ATUAL do aluno. Diferença importante: nesta semana várias matrículas
+         -- foram encerradas e recriadas (troca de turma, reorganização de
+         -- nomes/áreas) com data_inicio = hoje — se eu olhasse só a matrícula
+         -- ativa agora, um aluno trocado de turma dia 30 apareceria como "não
+         -- esperado" nos outros 20 dias letivos do mês em que ele SIM estava
+         -- matriculado (na turma antiga), inflando a % de frequência acima de
+         -- 100% artificialmente. Olhando toda matrícula que já existiu (ativa ou
+         -- encerrada) e checando se aquele dia cai dentro do intervalo de
+         -- vigência dela, cada dia letivo é creditado à turma certa da época.
+         SELECT a.id AS aluno_id, a.nome, COUNT(DISTINCT d.data) AS dias_esperados
+         FROM dias_letivos d
+         JOIN matricula m ON TRIM(m.dia_semana) = ELT(
+             DAYOFWEEK(d.data), 'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
+           )
+           AND d.data >= m.data_inicio
+           AND (m.data_fim IS NULL OR d.data <= m.data_fim)
+         JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo' AND a.excluido_em IS NULL
+         GROUP BY a.id, a.nome
+       ),
+       presentes_por_aluno AS (
+         SELECT p.aluno_id, COUNT(DISTINCT DATE(p.data)) AS dias_presentes
+         FROM presenca p
+         WHERE p.id_instituicao = ? AND p.status = 'presente' AND DATE(p.data) BETWEEN ? AND ?
+         GROUP BY p.aluno_id
+       )
+       SELECT ep.aluno_id, ep.nome, ep.dias_esperados, COALESCE(pp.dias_presentes, 0) AS dias_presentes
+       FROM esperados_por_aluno ep
+       LEFT JOIN presentes_por_aluno pp ON pp.aluno_id = ep.aluno_id
+       ORDER BY ep.nome ASC`,
+      [dataInicio, dataFim, inst, inst, inst, dataInicio, dataFim]
+    ),
+
+    // Alunos ÚNICOS com QUALQUER falta no mês (justificada ou não) — "Faltas
+    // no Mês" no card do topo. "Justificados no Mês" (já calculado em
+    // calcularEstatisticasPeriodo) é sempre um SUBCONJUNTO deste número, por
+    // construção: 'justificado' é um dos dois status somados aqui.
+    pool.query(
+      `SELECT COUNT(DISTINCT p.aluno_id) as total
+       FROM presenca p
+       WHERE p.id_instituicao = ?
+         AND p.status IN ('ausente', 'justificado')
+         AND DATE(p.data) BETWEEN ? AND ?
+         AND NOT EXISTS (
+           SELECT 1 FROM dias_sem_aula d
+           WHERE d.data = DATE(p.data) AND d.id_instituicao = ?
+         )`,
+      [inst, dataInicio, dataFim, inst]
+    )
+  ]);
+
+  const tendenciaDiaria = tendenciaDiariaRes.map(row => ({
+    data: row.data instanceof Date ? row.data.toISOString().split('T')[0] : row.data,
+    esperados: row.esperados,
+    presentes: row.presentes,
+    frequencia_pct: row.esperados > 0 ? Math.round((row.presentes / row.esperados) * 100) : 0
+  }));
+
+  const frequenciaPorAluno = frequenciaPorAlunoRes.map(row => ({
+    aluno_id: row.aluno_id,
+    nome: row.nome,
+    dias_esperados: row.dias_esperados,
+    dias_presentes: row.dias_presentes,
+    dias_falta: Math.max(0, row.dias_esperados - row.dias_presentes),
+    frequencia_pct: row.dias_esperados > 0 ? Math.round((row.dias_presentes / row.dias_esperados) * 100) : 0
+  }));
+
+  // Média das % INDIVIDUAIS (cada aluno pesa igual) — diferente da conta
+  // agregada de frequencia_pct no card do topo, que é dominada por quem tem
+  // mais dias esperados. Essa é a "média real" pedida.
+  const mediaFrequenciaIndividual = frequenciaPorAluno.length > 0
+    ? Math.round(frequenciaPorAluno.reduce((soma, a) => soma + a.frequencia_pct, 0) / frequenciaPorAluno.length)
+    : 0;
+
+  const totalComFalta = comFaltaRes[0].total || 0;
+
+  res.json({
+    mes, ...periodo,
+    tendencia_diaria: tendenciaDiaria,
+    frequencia_por_aluno: frequenciaPorAluno,
+    media_frequencia_individual: mediaFrequenciaIndividual,
+    total_alunos_com_falta: totalComFalta
   });
 }));
 
