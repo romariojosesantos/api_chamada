@@ -294,7 +294,7 @@ router.post('/matricular', asyncHandler(async (req, res) => {
   }
 
   const [alunos] = await pool.query(
-    'SELECT id, nome FROM alunos WHERE id = ? AND id_instituicao = ?',
+    'SELECT id, nome FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL',
     [aluno_id, req.id_instituicao]
   );
   if (alunos.length === 0) return res.status(404).json({ error: 'Aluno não encontrado.' });

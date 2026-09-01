@@ -123,7 +123,7 @@ router.get('/', asyncHandler(async (req, res) => {
            a.acompanhamento, a.ponto,
            ${getDiasMatriculadosSubquery()}
     FROM alunos a
-    WHERE a.id_instituicao = ?
+    WHERE a.id_instituicao = ? AND a.excluido_em IS NULL
   `;
   const params = [req.id_instituicao];
 
@@ -375,8 +375,13 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     // Passo 2: result.insertId não é confiável em upsert de lote (não retorna o id
     // de cada linha), então recarregamos os alunos processados pelo nome.
     const studentNames = alunos.map(a => String(a.nome || a.ALUNO || a.Aluno).trim());
+    // excluido_em IS NULL: um aluno excluído (soft-delete) não deve ser
+    // "reaproveitado" silenciosamente por reimportar uma planilha com o mesmo
+    // nome — se o nome bater com um registro excluído, o upsert acima ainda
+    // atualiza a linha antiga (é a mesma restrição UNIQUE do banco), mas aqui
+    // a gente simplesmente não processa matrícula pra ela.
     const [existingStudents] = await connection.query(
-      `SELECT id, nome, turno FROM alunos WHERE nome IN (?) AND id_instituicao = ?`,
+      `SELECT id, nome, turno FROM alunos WHERE nome IN (?) AND id_instituicao = ? AND excluido_em IS NULL`,
       [studentNames, req.id_instituicao]
     );
     const studentIdMap = new Map(existingStudents.map(s => [s.nome, { id: s.id, turno: s.turno }]));
@@ -641,7 +646,7 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     if (studentNames.length > 0) {
       const placeholders = studentNames.map(() => '?').join(',');
       const [result] = await connection.query(
-        `SELECT id FROM alunos WHERE id_instituicao = ? AND status = 'ativo' AND nome NOT IN (${placeholders})`,
+        `SELECT id FROM alunos WHERE id_instituicao = ? AND status = 'ativo' AND excluido_em IS NULL AND nome NOT IN (${placeholders})`,
         [req.id_instituicao, ...studentNames]
       );
       activeStudentsNotInImport = result;
@@ -748,7 +753,14 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   res.json({ message: 'Campo atualizado com sucesso.' });
 }));
 
-// Excluir Aluno (Com proteção de Instituição)
+// Excluir Aluno — soft-delete: marca excluido_em/excluido_por em vez de
+// apagar a linha, e encerra (soft-delete também, mesmo padrão de
+// status='cancelada'+data_fim usado no resto do sistema) as matrículas ATIVAS
+// dele. Matrículas já encerradas antes da exclusão não são tocadas — já
+// representam corretamente "isso não vale mais" e continuam no histórico.
+// Um aluno excluído nunca mais aparece em nenhuma lista/busca (ver
+// `AND excluido_em IS NULL` nas consultas de listagem) até ser restaurado —
+// ver GET '/excluidos' e POST '/:id/restaurar' logo abaixo.
 router.delete('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params;
   const connection = await pool.getConnection();
@@ -756,22 +768,64 @@ router.delete('/:id', asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // Remove matrículas primeiro (Integridade Referencial)
-    await connection.query('DELETE FROM matricula WHERE idaluno = ? AND id_instituicao = ?', [id, req.id_instituicao]);
-
-    const [result] = await connection.query('DELETE FROM alunos WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
+    const [result] = await connection.query(
+      'UPDATE alunos SET excluido_em = NOW(), excluido_por = ? WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL',
+      [req.user.id, id, req.id_instituicao]
+    );
 
     if (result.affectedRows === 0) throw new Error('Aluno não encontrado');
 
-    await logAuditEvent('EXCLUIR_ALUNO', `Aluno ID: ${id} excluído com matrículas`, req.id_instituicao, connection);
+    await connection.query(
+      `UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idaluno = ? AND id_instituicao = ? AND data_fim IS NULL`,
+      [id, req.id_instituicao]
+    );
+
+    await logAuditEvent('EXCLUIR_ALUNO', `Aluno ID: ${id} excluído (soft-delete) por usuário #${req.user.id}, matrículas ativas encerradas`, req.id_instituicao, connection);
     await connection.commit();
-    res.json({ message: 'Aluno e suas matrículas excluídos com sucesso!' });
+    res.json({ message: 'Aluno excluído com sucesso!' });
   } catch (err) {
     await connection.rollback();
     throw err;
   } finally {
     connection.release();
   }
+}));
+
+// Lista alunos excluídos (soft-delete) da instituição — usado pela tela de
+// Gerenciar Matrículas pra achar quem restaurar (esses alunos não aparecem em
+// nenhuma outra busca/listagem do sistema, ver `excluido_em IS NULL` em GET
+// '/' e no resto do backend).
+router.get('/excluidos', asyncHandler(async (req, res) => {
+  const [results] = await pool.query(
+    `SELECT a.id, a.nome, a.excluido_em, u.nome AS excluido_por_nome
+     FROM alunos a
+     LEFT JOIN usuarios u ON u.id = a.excluido_por
+     WHERE a.id_instituicao = ? AND a.excluido_em IS NOT NULL
+     ORDER BY a.excluido_em DESC`,
+    [req.id_instituicao]
+  );
+  res.json(results);
+}));
+
+// Restaura um aluno excluído: limpa excluido_em/excluido_por, volta a
+// aparecer em todas as listas/buscas. NÃO recria as matrículas antigas (elas
+// continuam encerradas no histórico) — o aluno precisa ser matriculado de
+// novo nas turmas que for o caso, é uma decisão deliberada de quem restaura,
+// não algo automático (a turma antiga pode nem existir mais, ter mudado de
+// horário, etc.).
+router.post('/:id/restaurar', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const [result] = await pool.query(
+    'UPDATE alunos SET excluido_em = NULL, excluido_por = NULL WHERE id = ? AND id_instituicao = ? AND excluido_em IS NOT NULL',
+    [id, req.id_instituicao]
+  );
+
+  if (result.affectedRows === 0) return res.status(404).json({ error: 'Aluno excluído não encontrado.' });
+
+  await logAuditEvent('ALUNO_RESTAURADO', `Aluno ID: ${id} restaurado por usuário #${req.user.id}`, req.id_instituicao);
+
+  res.json({ message: 'Aluno restaurado com sucesso!' });
 }));
 
 module.exports = router;

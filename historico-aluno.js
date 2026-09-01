@@ -29,7 +29,7 @@ router.get('/buscar', masterMiddleware, asyncHandler(async (req, res) => {
   let sql = `SELECT a.id, a.nome, a.data_nascimento, a.sexo, a.telefone, a.turma, a.turno, a.transporte, a.Inf, a.status, a.id_instituicao, i.nome AS nome_instituicao
      FROM alunos a
      JOIN instituicoes i ON a.id_instituicao = i.id
-     WHERE a.nome LIKE ?`;
+     WHERE a.nome LIKE ? AND a.excluido_em IS NULL`;
   const params = [`%${search}%`];
 
   const instId = parseInt(id_instituicao);

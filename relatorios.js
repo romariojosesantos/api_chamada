@@ -52,11 +52,13 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
     [justificativasRes],
     [totalPresencasRegistradasRes],
     [listaPresencasRegistradasRes],
-    [presentesReaisPorTurnoRes]
+    [presentesReaisPorTurnoRes],
+    [justificadosCountRes],
+    [ativosSemMatriculaRes]
   ] = await Promise.all([
     // 1. Total de alunos ativos
     pool.query(
-      "SELECT COUNT(*) as total FROM alunos WHERE id_instituicao = ? AND status = 'ativo'",
+      "SELECT COUNT(*) as total FROM alunos WHERE id_instituicao = ? AND status = 'ativo' AND excluido_em IS NULL",
       [inst]
     ),
 
@@ -146,6 +148,27 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
        WHERE p.id_instituicao = ? AND DATE(p.data) = ? AND p.status = 'presente'
        GROUP BY a.turno`,
       [inst, data]
+    ),
+
+    // 9. Alunos ÚNICOS com falta justificada no dia — status literal 'justificado',
+    // não "tem alguma observação" (é o mesmo critério do relatório por período).
+    pool.query(
+      `SELECT COUNT(DISTINCT p.aluno_id) as total
+       FROM presenca p
+       WHERE p.id_instituicao = ? AND DATE(p.data) = ? AND p.status = 'justificado'`,
+      [inst, data]
+    ),
+
+    // 10. Alunos marcados como ativo mas SEM NENHUMA matrícula (nem ativa, nem
+    // histórica) — sinal de dado incompleto: a ficha existe mas o aluno nunca
+    // foi de fato matriculado em turma nenhuma (ex.: import que criou o aluno
+    // mas não conseguiu casar a atividade dele com nenhuma turma).
+    pool.query(
+      `SELECT COUNT(*) as total
+       FROM alunos a
+       WHERE a.id_instituicao = ? AND a.status = 'ativo' AND a.excluido_em IS NULL
+         AND NOT EXISTS (SELECT 1 FROM matricula m WHERE m.idaluno = a.id)`,
+      [inst]
     )
   ]);
 
@@ -180,6 +203,8 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
     total_esperado: totalEsperado,
     total_presentes: totalPresentes,
     total_ausentes: ausentesCountRes[0].total,
+    total_justificados: justificadosCountRes[0].total || 0,
+    total_ativos_sem_matricula: ativosSemMatriculaRes[0].total || 0,
     total_presencas_registradas: totalPresencasRegistradasRes[0].total,
     lista_presencas_registradas: listaPresencasRegistradasRes,
     presentes_reais_por_turno: presentesReaisPorTurnoRes,
