@@ -1158,7 +1158,7 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     // chave natural já é o ANO (não uma janela contínua), então não precisa de
     // "encerrar e recriar": é um upsert simples por (aluno, ano). Cada virada
     // de ano cria uma linha nova sozinha, formando o histórico ano a ano.
-    const anoAtual = new Date().getFullYear();
+    const anoAtual = Number(hojeBrasil().slice(0, 4));
     const situacoesFromExcel = [];
     for (const alunoRaw of alunos) {
       const alunoNome = String(alunoRaw.nome || alunoRaw.ALUNO || alunoRaw.Aluno).trim();

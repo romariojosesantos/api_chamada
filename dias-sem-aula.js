@@ -16,6 +16,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { authMiddleware } = require('./auth');
+const { hojeBrasil } = require('./data-brasil');
 
 // Redundante com o `app.use('/api', authMiddleware)` de _server.js (que já roda
 // antes deste router ser montado), mas inofensivo — mantido por clareza/segurança
@@ -184,7 +185,7 @@ router.delete('/:id', async (req, res) => {
 router.post('/marcar-fins-de-semana', async (req, res) => {
   try {
     const { ano } = req.body;
-    const year = ano || new Date().getFullYear();
+    const year = ano || Number(hojeBrasil().slice(0, 4));
 
     const startDate = new Date(Date.UTC(year, 0, 1));
     const endDate = new Date(Date.UTC(year, 11, 31));
@@ -227,7 +228,7 @@ router.post('/marcar-fins-de-semana', async (req, res) => {
 router.post('/adicionar-feriados-nacionais', async (req, res) => {
   try {
     const { ano } = req.body;
-    const year = ano || new Date().getFullYear();
+    const year = ano || Number(hojeBrasil().slice(0, 4));
 
     // Feriados nacionais fixos do Brasil
     const feriadosFixos = [

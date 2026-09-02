@@ -239,7 +239,7 @@ router.post('/adicao-manual', asyncHandler(async (req, res) => {
 // indefinido) de cada caso. Serve pra limpar cadastro errado em lote em vez
 // de depender de alguém lembrar de cada notificação avulsa.
 router.get('/adicoes-manuais', asyncHandler(async (req, res) => {
-  const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '') ? req.query.mes : new Date().toISOString().slice(0, 7);
+  const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '') ? req.query.mes : hojeBrasil().slice(0, 7);
   const [rows] = await pool.query(
     `SELECT am.id, am.aluno_id, a.nome AS aluno_nome, am.data, am.turno_selecionado,
        am.transporte_selecionado, am.aluno_transporte, am.motivo_provavel, am.criado_em
@@ -413,7 +413,7 @@ router.post('/finalizar-dia', asyncHandler(async (req, res) => {
 // ainda não aconteceu) e ignora dias marcados como "sem aula". Mesma condição
 // de período (NULL só cobre manhã/tarde) do resto do sistema.
 router.get('/pendencias-mes', asyncHandler(async (req, res) => {
-  const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '') ? req.query.mes : new Date().toISOString().slice(0, 7);
+  const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '') ? req.query.mes : hojeBrasil().slice(0, 7);
   const inst = req.id_instituicao;
   const hoje = hojeBrasil();
   const primeiroDiaMes = `${mes}-01`;
