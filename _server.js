@@ -98,6 +98,13 @@ app.use('/api/auth', authRouter);
 // próprio historico-aluno.js) porque também precisa de authMiddleware, mas NÃO
 // do middleware de x-institution-id logo abaixo (master vê alunos de qualquer instituição).
 app.use('/api/historico-aluno', authMiddleware, historicoAlunoRouter);
+// Tela de perfil/gamificação do aluno: mesmo motivo do historico-aluno acima
+// (authMiddleware direto, sem x-institution-id — o token de aluno já traz
+// id_instituicao embutido, ver POST /api/auth/aluno-login).
+app.use('/api/aluno', authMiddleware, require('./aluno-gamificacao'));
+// Lado do aluno do sistema de formação de caráter (missões, diário, indicar
+// colega) — mesmo motivo acima, montado ao lado de aluno-gamificacao.
+app.use('/api/aluno', authMiddleware, require('./aluno-carater'));
 
 // Lista de instituições para o seletor do usuário logado: master vê todas, os
 // demais perfis só as instituições vinculadas a eles (req.user.instituicoes).
@@ -228,6 +235,7 @@ app.use('/api/atividades', atividadesRouter);
 app.use('/api/contatos-emergencia', contatosEmergenciaRouter);
 app.use('/api/dias-sem-aula', diasSemAulaRouter);
 app.use('/api/notificacoes', notificacoesRouter);
+app.use('/api/carater', require('./carater'));
 
 // Middleware de Tratamento de Erros Global (Melhoria de UX/Estabilidade)
 app.use((err, req, res, next) => {

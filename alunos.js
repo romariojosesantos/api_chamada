@@ -828,4 +828,35 @@ router.post('/:id/restaurar', asyncHandler(async (req, res) => {
   res.json({ message: 'Aluno restaurado com sucesso!' });
 }));
 
+// Gera (ou regenera) o código de acesso de 6 dígitos do aluno — é o que ele
+// usa pra entrar na tela dele (ver POST /api/auth/aluno-login). Gerar de novo
+// invalida o código antigo na hora (é a mesma coluna sendo sobrescrita) — útil
+// se o aluno esquecer ou perder o código anterior.
+router.post('/:id/gerar-codigo', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const [alunos] = await pool.query('SELECT id FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL', [id, req.id_instituicao]);
+  if (alunos.length === 0) return res.status(404).json({ error: 'Aluno não encontrado.' });
+
+  // Tenta gerar um código único (6 dígitos, com zero à esquerda) — a chance de
+  // colisão é baixíssima (1 em 1 milhão), mas a coluna tem UNIQUE KEY como
+  // garantia final; algumas tentativas cobrem o caso raro de bater com um já
+  // existente.
+  let codigo, salvou = false;
+  for (let tentativa = 0; tentativa < 10 && !salvou; tentativa++) {
+    codigo = String(Math.floor(100000 + Math.random() * 900000));
+    try {
+      const [result] = await pool.query('UPDATE alunos SET codigo_acesso = ? WHERE id = ?', [codigo, id]);
+      salvou = result.affectedRows > 0;
+    } catch (err) {
+      if (err.code !== 'ER_DUP_ENTRY') throw err;
+    }
+  }
+  if (!salvou) return res.status(500).json({ error: 'Não foi possível gerar um código único. Tente novamente.' });
+
+  await logAuditEvent('ALUNO_CODIGO_ACESSO_GERADO', `Aluno ID: ${id}, código gerado por usuário #${req.user.id}`, req.id_instituicao);
+
+  res.json({ codigo_acesso: codigo });
+}));
+
 module.exports = router;

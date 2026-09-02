@@ -248,8 +248,43 @@ router.post('/login', asyncHandler(async (req, res) => {
   res.json({ message: 'Login realizado com sucesso.', token, user });
 }));
 
-// Usado pelo front para revalidar a sessão ao carregar a página (token salvo no localStorage).
+// Login de aluno via código de acesso — sem e-mail/senha, pensado pra criança/
+// adolescente digitar fácil (a equipe gera o código pela tela de Matrículas e
+// entrega ao aluno). Token tem formato PRÓPRIO (perfil: 'aluno', aluno_id em
+// vez de id de usuarios) — a rota de gamificação que consome esse token não
+// passa pelo middleware genérico de x-institution-id (ver _server.js), já que
+// o aluno não escolhe instituição, ela já vem embutida no token.
+router.post('/aluno-login', asyncHandler(async (req, res) => {
+  const codigo = String(req.body.codigo_acesso || '').trim();
+  if (!codigo) return res.status(400).json({ error: 'Informe o código de acesso.' });
+
+  const [rows] = await pool.query(
+    "SELECT id, nome, id_instituicao FROM alunos WHERE codigo_acesso = ? AND excluido_em IS NULL AND status = 'ativo'",
+    [codigo]
+  );
+  if (rows.length === 0) return res.status(401).json({ error: 'Código de acesso inválido.' });
+
+  const aluno = rows[0];
+  const user = { aluno_id: aluno.id, nome: aluno.nome, perfil: 'aluno', id_instituicao: aluno.id_instituicao };
+  const token = signToken(user);
+
+  res.json({ message: 'Login realizado com sucesso.', token, user });
+}));
+
+// Usado pelo front para revalidar a sessão ao carregar a página (token salvo
+// no localStorage) — ramifica por perfil porque token de aluno não tem `id`
+// de usuarios pra consultar (ver POST /aluno-login acima).
 router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
+  if (req.user.perfil === 'aluno') {
+    const [rows] = await pool.query(
+      "SELECT id, nome, id_instituicao FROM alunos WHERE id = ? AND excluido_em IS NULL AND status = 'ativo'",
+      [req.user.aluno_id]
+    );
+    if (rows.length === 0) return res.status(401).json({ error: 'Aluno não encontrado.' });
+    const aluno = rows[0];
+    return res.json({ user: { aluno_id: aluno.id, nome: aluno.nome, perfil: 'aluno', id_instituicao: aluno.id_instituicao } });
+  }
+
   const [rows] = await pool.query('SELECT id, nome, email, perfil, status, id_professor FROM usuarios WHERE id = ? LIMIT 1', [req.user.id]);
   if (rows.length === 0) return res.status(401).json({ error: 'Usuário não encontrado.' });
   const user = await buildUserSession(rows[0]);
