@@ -12,6 +12,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
+const { agoraBrasil } = require('./data-brasil');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -32,7 +33,10 @@ async function medirSaudeBanco() {
     max_connections: maxConnections,
     max_used_connections: maxUsedConnections,
     pct_atual: pctAtual,
-    status
+    status,
+    // Hora do SERVIDOR (Brasília), não do computador de quem está vendo a
+    // tela — mesmo motivo/abordagem de agoraBrasilia() em pontos.js.
+    atualizado_em: agoraBrasil()
   };
 }
 
