@@ -15,6 +15,7 @@ const { PRINCIPIOS_CARATER, PRINCIPIO_IDS } = require('./carater-principios');
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 const LIMITE_EMBLEMA_PRINCIPIO = 3; // atos confirmados num princípio pra desbloquear o emblema dele
+const PRINCIPIO_PADRAO_DIARIO = PRINCIPIOS_CARATER.find(p => p.chave === 'semear_colher').id; // Diário de Semeadura sugere esse princípio quando o aluno não escolhe outro
 const RANKS_LIDERANCA = [
   { min: 0, nome: 'Aprendiz de Serviço' },
   { min: 3, nome: 'Servo Fiel' },
@@ -142,7 +143,7 @@ router.post('/diario', asyncHandler(async (req, res) => {
   const alunoId = req.user.aluno_id;
   const idInstituicao = req.user.id_instituicao;
   const texto = String(req.body.texto || '').trim();
-  const principio = PRINCIPIO_IDS.includes(parseInt(req.body.principio)) ? parseInt(req.body.principio) : 5;
+  const principio = PRINCIPIO_IDS.includes(parseInt(req.body.principio)) ? parseInt(req.body.principio) : PRINCIPIO_PADRAO_DIARIO;
 
   if (texto.length < 10) return res.status(400).json({ error: 'Escreva um pouco mais sobre o que você viveu (pelo menos 10 caracteres).' });
 

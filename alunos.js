@@ -118,9 +118,9 @@ router.get('/', asyncHandler(async (req, res) => {
   const { nome, turno, transporte, status } = req.query;
 
   let sql = `
-    SELECT a.id, a.nome, a.data_nascimento, a.sexo, a.telefone,
+    SELECT a.id, a.nome, a.data_nascimento, a.data_cadastro, a.sexo, a.telefone,
            a.turma, a.turno, a.transporte, a.status, a.Inf,
-           a.acompanhamento, a.ponto,
+           a.acompanhamento, a.ponto, a.informacoes_gerais, a.escola_atual,
            ${getDiasMatriculadosSubquery()}
     FROM alunos a
     WHERE a.id_instituicao = ? AND a.excluido_em IS NULL
@@ -338,25 +338,39 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
 
+    const today = new Date().toISOString().split('T')[0];
+
     // Passo 1: upsert dos alunos. Aceita nome vindo de diferentes cabeçalhos de
     // planilha (nome/ALUNO/Aluno) porque a planilha já mudou de formato antes.
     const values = alunos.map(a => [
       String(a.nome || a.ALUNO || a.Aluno).trim(),
       parseDataNascimento(a.data_nascimento),
+      parseDataNascimento(a.data_cadastro) || today,
       a.sexo || null,
       a.telefone || null,
       String(a.turma || '').trim() || null,
       a.turno || null,
       a.transporte || null,
-      a.Inf || null,
+      // O front sempre baixa o cabeçalho da planilha pra minúsculo antes de
+      // enviar (ver processImportedData em GerenciarMatriculas.js) — `a.Inf`
+      // com I maiúsculo nunca batia com nada e a coluna nunca era importada.
+      a.inf || null,
       a.acompanhamento || null,
       a.ponto || null,
+      a.informacoes_gerais || null,
+      a.escola_atual || null,
       'ativo',
       req.id_instituicao
     ]);
 
+    // `data_cadastro` fica de fora do ON DUPLICATE KEY UPDATE de propósito: é a
+    // data do PRIMEIRO cadastro do aluno na instituição — uma vez gravada, uma
+    // reimportação da planilha (mesmo sem essa coluna preenchida) nunca deve
+    // sobrescrever esse valor histórico. `informacoes_gerais` e `escola_atual`
+    // são o oposto por pedido explícito: sobrescritos a cada reimportação, sem
+    // guardar histórico (se o aluno mudar de escola, só troca o valor).
     const sql = `
-      INSERT INTO alunos (nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf, acompanhamento, ponto, status, id_instituicao)
+      INSERT INTO alunos (nome, data_nascimento, data_cadastro, sexo, telefone, turma, turno, transporte, Inf, acompanhamento, ponto, informacoes_gerais, escola_atual, status, id_instituicao)
       VALUES ?
       ON DUPLICATE KEY UPDATE
         data_nascimento = VALUES(data_nascimento),
@@ -367,7 +381,9 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         transporte = VALUES(transporte),
         Inf = VALUES(Inf),
         acompanhamento = VALUES(acompanhamento),
-        ponto = VALUES(ponto)
+        ponto = VALUES(ponto),
+        informacoes_gerais = VALUES(informacoes_gerais),
+        escola_atual = VALUES(escola_atual)
     `;
 
     const [alunosUpsertResult] = await connection.query(sql, [values]);
@@ -568,12 +584,17 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     // Passo 5: compara com as matrículas atuais (por aluno+turno+horario+dia_semana,
     // a "posição" na grade) para decidir upsert vs. encerrar-e-recriar.
     const studentIds = [...new Set(matriculasToUpsert.map(m => m.idaluno))];
-    const [currentMatriculas] = await connection.query(
-      `SELECT idmatricula, idaluno, idatividades, turno, horario, dia_semana
-       FROM matricula
-       WHERE idaluno IN (?) AND id_instituicao = ? AND status = 'matriculado' AND data_fim IS NULL`,
-      [studentIds, req.id_instituicao]
-    );
+    // `idaluno IN ()` é SQL inválido — acontece quando nenhuma linha da
+    // planilha trouxe coluna de matrícula (ex.: upload só pra atualizar
+    // cadastro/nível, sem mexer em turma).
+    const [currentMatriculas] = studentIds.length > 0
+      ? await connection.query(
+          `SELECT idmatricula, idaluno, idatividades, turno, horario, dia_semana
+           FROM matricula
+           WHERE idaluno IN (?) AND id_instituicao = ? AND status = 'matriculado' AND data_fim IS NULL`,
+          [studentIds, req.id_instituicao]
+        )
+      : [[]];
 
     // Mapa de matrículas atuais por aluno + posição na grade (turno, horario, dia_semana)
     const currentMatriculaMap = new Map();
@@ -592,8 +613,6 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       m.dia_semana,
       m.id_instituicao
     ]);
-
-    const today = new Date().toISOString().split('T')[0];
 
     // Decide, posição por posição da grade, se mantém (nada a fazer), encerra a
     // antiga e cria uma nova (atividade mudou), ou cria do zero (posição nova).
@@ -639,6 +658,200 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       matriculasAffected = matriculaResult.affectedRows;
     }
 
+    // Passo 5b: nível/subnível — mesmo padrão de "encerra e recria" das
+    // matrículas acima (ver tabela aluno_niveis: histórico com data_inicio/
+    // data_fim, igual à `matricula`). Colunas opcionais na planilha; aluno sem
+    // `nivel` preenchido simplesmente não mexe no nível dele.
+    const niveisFromExcel = [];
+    for (const alunoRaw of alunos) {
+      const alunoNome = String(alunoRaw.nome || alunoRaw.ALUNO || alunoRaw.Aluno).trim();
+      const idaluno = studentIdMap.get(alunoNome)?.id;
+      if (!idaluno) continue;
+
+      const nivelRaw = alunoRaw.nivel;
+      if (nivelRaw === undefined || nivelRaw === null || String(nivelRaw).trim() === '') continue;
+      const nivel = parseInt(nivelRaw);
+      if (isNaN(nivel)) continue;
+      const subnivel = alunoRaw.subnivel ? String(alunoRaw.subnivel).trim() : null;
+
+      niveisFromExcel.push({ idaluno, nivel, subnivel });
+    }
+
+    let niveisAfetados = 0;
+    if (niveisFromExcel.length > 0) {
+      const alunoIdsComNivel = [...new Set(niveisFromExcel.map(n => n.idaluno))];
+      const [niveisAtuais] = await connection.query(
+        `SELECT id, id_aluno, nivel, subnivel FROM aluno_niveis WHERE id_aluno IN (?) AND id_instituicao = ? AND data_fim IS NULL`,
+        [alunoIdsComNivel, req.id_instituicao]
+      );
+      const nivelAtualPorAluno = new Map(niveisAtuais.map(n => [n.id_aluno, n]));
+
+      const idsParaFechar = [];
+      const novosNiveis = [];
+      for (const item of niveisFromExcel) {
+        const atual = nivelAtualPorAluno.get(item.idaluno);
+        // Se a planilha não trouxe subnível nessa linha, mantém o subnível
+        // atual em vez de tratar como "limpar o campo" — evita que uma
+        // reimportação só com `nivel` preenchido apague um subnível já salvo.
+        const subnivelEfetivo = item.subnivel !== null ? item.subnivel : (atual ? atual.subnivel : null);
+        const mudou = !atual || atual.nivel !== item.nivel || (atual.subnivel || null) !== (subnivelEfetivo || null);
+        if (!mudou) continue;
+        if (atual) idsParaFechar.push(atual.id);
+        novosNiveis.push([req.id_instituicao, item.idaluno, item.nivel, subnivelEfetivo, today]);
+      }
+
+      if (idsParaFechar.length > 0) {
+        await connection.query(`UPDATE aluno_niveis SET data_fim = ? WHERE id IN (?)`, [today, idsParaFechar]);
+      }
+      if (novosNiveis.length > 0) {
+        const [nivelResult] = await connection.query(
+          `INSERT INTO aluno_niveis (id_instituicao, id_aluno, nivel, subnivel, data_inicio) VALUES ?`,
+          [novosNiveis]
+        );
+        niveisAfetados = nivelResult.affectedRows;
+      }
+    }
+
+    // Passo 5c: situação anual (matrícula/dívida) — diferente do nível, aqui a
+    // chave natural já é o ANO (não uma janela contínua), então não precisa de
+    // "encerrar e recriar": é um upsert simples por (aluno, ano). Cada virada
+    // de ano cria uma linha nova sozinha, formando o histórico ano a ano.
+    const anoAtual = new Date().getFullYear();
+    const situacoesFromExcel = [];
+    for (const alunoRaw of alunos) {
+      const alunoNome = String(alunoRaw.nome || alunoRaw.ALUNO || alunoRaw.Aluno).trim();
+      const idaluno = studentIdMap.get(alunoNome)?.id;
+      if (!idaluno) continue;
+
+      const situacaoMatricula = alunoRaw.situacao_matricula_ano ? String(alunoRaw.situacao_matricula_ano).trim() : null;
+      const situacaoDivida = alunoRaw.situacao_divida_ano ? String(alunoRaw.situacao_divida_ano).trim() : null;
+      if (!situacaoMatricula && !situacaoDivida) continue;
+
+      situacoesFromExcel.push([req.id_instituicao, idaluno, anoAtual, situacaoMatricula, situacaoDivida]);
+    }
+
+    let situacoesAfetadas = 0;
+    if (situacoesFromExcel.length > 0) {
+      const [situacaoResult] = await connection.query(
+        `INSERT INTO aluno_situacao_anual (id_instituicao, id_aluno, ano, situacao_matricula, situacao_divida)
+         VALUES ?
+         ON DUPLICATE KEY UPDATE
+           situacao_matricula = COALESCE(VALUES(situacao_matricula), situacao_matricula),
+           situacao_divida = COALESCE(VALUES(situacao_divida), situacao_divida)`,
+        [situacoesFromExcel]
+      );
+      situacoesAfetadas = situacaoResult.affectedRows;
+    }
+
+    // Passo 5d: observações de saúde — o aluno pode ter mais de uma (comorbidade,
+    // doença, laudo...), então não cabe numa coluna simples: vai numa tabela
+    // 1-para-muitos (mesmo padrão de contatos_emergencia). A coluna na
+    // planilha aceita uma lista separada por ";"; o import é ADITIVO — só
+    // insere o que ainda não existe pra aquele aluno, nunca apaga nada
+    // automaticamente (dado sensível, não é seguro sumir de uma reimportação
+    // com a coluna em branco).
+    const saudeFromExcel = []; // { idaluno, descricoes: [...] }
+    for (const alunoRaw of alunos) {
+      const alunoNome = String(alunoRaw.nome || alunoRaw.ALUNO || alunoRaw.Aluno).trim();
+      const idaluno = studentIdMap.get(alunoNome)?.id;
+      if (!idaluno || !alunoRaw.observacoes_saude) continue;
+
+      const descricoes = String(alunoRaw.observacoes_saude)
+        .split(';')
+        .map(s => s.trim())
+        .filter(Boolean);
+      if (descricoes.length > 0) saudeFromExcel.push({ idaluno, descricoes });
+    }
+
+    let saudeAfetada = 0;
+    if (saudeFromExcel.length > 0) {
+      const alunoIdsComSaude = [...new Set(saudeFromExcel.map(s => s.idaluno))];
+      const [saudeExistente] = await connection.query(
+        `SELECT id_aluno, descricao FROM aluno_saude WHERE id_aluno IN (?) AND id_instituicao = ?`,
+        [alunoIdsComSaude, req.id_instituicao]
+      );
+      const existentesPorAluno = new Map();
+      for (const row of saudeExistente) {
+        const set = existentesPorAluno.get(row.id_aluno) || new Set();
+        set.add(row.descricao.trim().toLowerCase());
+        existentesPorAluno.set(row.id_aluno, set);
+      }
+
+      const novasEntradas = [];
+      for (const item of saudeFromExcel) {
+        const jaTem = existentesPorAluno.get(item.idaluno) || new Set();
+        for (const descricao of item.descricoes) {
+          if (jaTem.has(descricao.toLowerCase())) continue;
+          novasEntradas.push([req.id_instituicao, item.idaluno, descricao]);
+          jaTem.add(descricao.toLowerCase());
+        }
+      }
+
+      if (novasEntradas.length > 0) {
+        const [saudeResult] = await connection.query(
+          `INSERT INTO aluno_saude (id_instituicao, id_aluno, descricao) VALUES ?`,
+          [novasEntradas]
+        );
+        saudeAfetada = saudeResult.affectedRows;
+      }
+    }
+
+    // Passo 5e: responsável legal — diferente de contatos_emergencia (lista
+    // livre de "quem ligar"), aqui é UMA pessoa só por aluno, com documento,
+    // que assinou a matrícula. Upsert simples por aluno (1 registro cada),
+    // sobrescrito a cada reimportação — sem histórico, mesmo padrão de
+    // informacoes_gerais/escola_atual.
+    const responsaveisFromExcel = [];
+    for (const alunoRaw of alunos) {
+      const alunoNome = String(alunoRaw.nome || alunoRaw.ALUNO || alunoRaw.Aluno).trim();
+      const idaluno = studentIdMap.get(alunoNome)?.id;
+      if (!idaluno) continue;
+
+      const campos = {
+        nome: alunoRaw.responsavel_nome ? String(alunoRaw.responsavel_nome).trim() : null,
+        cpf: alunoRaw.responsavel_cpf ? String(alunoRaw.responsavel_cpf).trim() : null,
+        rg: alunoRaw.responsavel_rg ? String(alunoRaw.responsavel_rg).trim() : null,
+        data_nascimento: parseDataNascimento(alunoRaw.responsavel_data_nascimento),
+        email: alunoRaw.responsavel_email ? String(alunoRaw.responsavel_email).trim() : null,
+        endereco: alunoRaw.responsavel_endereco ? String(alunoRaw.responsavel_endereco).trim() : null,
+        bairro: alunoRaw.responsavel_bairro ? String(alunoRaw.responsavel_bairro).trim() : null,
+        cep: alunoRaw.responsavel_cep ? String(alunoRaw.responsavel_cep).trim() : null,
+        telefone: alunoRaw.responsavel_telefone ? String(alunoRaw.responsavel_telefone).trim() : null
+      };
+      const temAlgumCampo = Object.values(campos).some(v => v !== null);
+      if (!temAlgumCampo) continue;
+
+      responsaveisFromExcel.push([
+        req.id_instituicao, idaluno, campos.nome, campos.cpf, campos.rg,
+        campos.data_nascimento, campos.email, campos.endereco, campos.bairro,
+        campos.cep, campos.telefone
+      ]);
+    }
+
+    let responsaveisAfetados = 0;
+    if (responsaveisFromExcel.length > 0) {
+      // COALESCE(VALUES(x), x): só sobrescreve o campo que veio preenchido
+      // nessa linha da planilha — uma reimportação parcial (ex.: só corrigindo
+      // o telefone) não pode apagar CPF/RG/endereço já cadastrados antes.
+      const [responsavelResult] = await connection.query(
+        `INSERT INTO responsavel_legal
+           (id_instituicao, id_aluno, nome, cpf, rg, data_nascimento, email, endereco, bairro, cep, telefone)
+         VALUES ?
+         ON DUPLICATE KEY UPDATE
+           nome = COALESCE(VALUES(nome), nome),
+           cpf = COALESCE(VALUES(cpf), cpf),
+           rg = COALESCE(VALUES(rg), rg),
+           data_nascimento = COALESCE(VALUES(data_nascimento), data_nascimento),
+           email = COALESCE(VALUES(email), email),
+           endereco = COALESCE(VALUES(endereco), endereco),
+           bairro = COALESCE(VALUES(bairro), bairro),
+           cep = COALESCE(VALUES(cep), cep),
+           telefone = COALESCE(VALUES(telefone), telefone)`,
+        [responsaveisFromExcel]
+      );
+      responsaveisAfetados = responsavelResult.affectedRows;
+    }
+
     // Passo 6: quem estava ativo mas não veio nesta planilha vira inativo, e suas
     // matrículas correntes são encerradas — a planilha é a fonte da verdade de
     // "quem está matriculado agora".
@@ -682,6 +895,10 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         total_recebido: alunos.length,
         alunos_afetados: alunosUpsertResult.affectedRows,
         matriculas_afetadas: matriculasAffected,
+        niveis_afetados: niveisAfetados,
+        situacoes_anuais_afetadas: situacoesAfetadas,
+        observacoes_saude_adicionadas: saudeAfetada,
+        responsaveis_afetados: responsaveisAfetados,
         alunos_inativados: inactivatedCount
       }
     });
@@ -696,15 +913,15 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
 
 // Criar Aluno com Validação
 router.post('/', validate('aluno'), asyncHandler(async (req, res) => {
-  const { nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf, status, acompanhamento, ponto } = req.body;
+  const { nome, data_nascimento, data_cadastro, sexo, telefone, turma, turno, transporte, Inf, status, acompanhamento, ponto, informacoes_gerais, escola_atual } = req.body;
   const sql = `
-    INSERT INTO alunos (nome, data_nascimento, sexo, telefone, turma, turno, transporte, Inf, acompanhamento, ponto, status, id_instituicao)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO alunos (nome, data_nascimento, data_cadastro, sexo, telefone, turma, turno, transporte, Inf, acompanhamento, ponto, informacoes_gerais, escola_atual, status, id_instituicao)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const [result] = await pool.query(sql, [
-    nome, data_nascimento || null, sexo || null, telefone || null,
+    nome, data_nascimento || null, data_cadastro || new Date().toISOString().split('T')[0], sexo || null, telefone || null,
     turma || null, turno || null, transporte || null, Inf || null,
-    acompanhamento || null, ponto || null,
+    acompanhamento || null, ponto || null, informacoes_gerais || null, escola_atual || null,
     status || 'ativo', req.id_instituicao
   ]);
 
@@ -717,7 +934,7 @@ router.post('/', validate('aluno'), asyncHandler(async (req, res) => {
 router.patch('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { campo, valor } = req.body;
-  const colunasPermitidas = ['data_nascimento', 'sexo', 'telefone', 'turma', 'turno', 'transporte', 'Inf', 'acompanhamento', 'ponto', 'status'];
+  const colunasPermitidas = ['data_nascimento', 'data_cadastro', 'sexo', 'telefone', 'turma', 'turno', 'transporte', 'Inf', 'acompanhamento', 'ponto', 'informacoes_gerais', 'escola_atual', 'status'];
 
   if (!colunasPermitidas.includes(campo)) {
     return res.status(400).json({ error: 'Campo não permitido para atualização.' });
@@ -857,6 +1074,89 @@ router.post('/:id/gerar-codigo', asyncHandler(async (req, res) => {
   await logAuditEvent('ALUNO_CODIGO_ACESSO_GERADO', `Aluno ID: ${id}, código gerado por usuário #${req.user.id}`, req.id_instituicao);
 
   res.json({ codigo_acesso: codigo });
+}));
+
+// Histórico de nível/subnível do aluno (ver Passo 5b do upsert-bulk, que é
+// quem popula essa tabela hoje) — mais recente primeiro; o registro com
+// data_fim NULL é o nível atual.
+router.get('/:id/niveis', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const [rows] = await pool.query(
+    'SELECT id, nivel, subnivel, data_inicio, data_fim FROM aluno_niveis WHERE id_aluno = ? AND id_instituicao = ? ORDER BY data_inicio DESC',
+    [id, req.id_instituicao]
+  );
+  res.json(rows);
+}));
+
+// Histórico ano a ano de situação de matrícula/dívida (ver Passo 5c do
+// upsert-bulk) — mais recente primeiro.
+router.get('/:id/situacao-anual', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const [rows] = await pool.query(
+    'SELECT id, ano, situacao_matricula, situacao_divida FROM aluno_situacao_anual WHERE id_aluno = ? AND id_instituicao = ? ORDER BY ano DESC',
+    [id, req.id_instituicao]
+  );
+  res.json(rows);
+}));
+
+// Lista de observações de saúde do aluno (comorbidades, doenças, laudos —
+// pode ter mais de uma, ver Passo 5d do upsert-bulk).
+router.get('/:id/saude', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const [rows] = await pool.query(
+    'SELECT id, descricao, created_at FROM aluno_saude WHERE id_aluno = ? AND id_instituicao = ? ORDER BY created_at DESC',
+    [id, req.id_instituicao]
+  );
+  res.json(rows);
+}));
+
+// Remove uma observação de saúde específica (correção de um lançamento errado
+// — o import em massa só adiciona, nunca apaga, então isso é o único jeito de
+// tirar uma entrada indevida).
+router.delete('/:alunoId/saude/:saudeId', asyncHandler(async (req, res) => {
+  const { alunoId, saudeId } = req.params;
+  const [result] = await pool.query(
+    'DELETE FROM aluno_saude WHERE id = ? AND id_aluno = ? AND id_instituicao = ?',
+    [saudeId, alunoId, req.id_instituicao]
+  );
+  if (result.affectedRows === 0) return res.status(404).json({ error: 'Observação de saúde não encontrada.' });
+  await logAuditEvent('OBSERVACAO_SAUDE_REMOVIDA', `Aluno ID: ${alunoId}, observação #${saudeId} removida`, req.id_instituicao);
+  res.json({ message: 'Observação removida com sucesso.' });
+}));
+
+// Responsável legal do aluno (ver Passo 5e do upsert-bulk) — um registro só
+// por aluno; devolve null se ainda não foi preenchido.
+router.get('/:id/responsavel', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const [rows] = await pool.query(
+    'SELECT id, nome, cpf, rg, data_nascimento, email, endereco, bairro, cep, telefone FROM responsavel_legal WHERE id_aluno = ? AND id_instituicao = ?',
+    [id, req.id_instituicao]
+  );
+  res.json(rows[0] || null);
+}));
+
+// Cria ou atualiza o responsável legal do aluno (edição manual — o import em
+// massa faz a mesma coisa, ver Passo 5e). Upsert por id_aluno.
+router.put('/:id/responsavel', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { nome, cpf, rg, data_nascimento, email, endereco, bairro, cep, telefone } = req.body;
+
+  const [alunoRows] = await pool.query('SELECT id FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL', [id, req.id_instituicao]);
+  if (alunoRows.length === 0) return res.status(404).json({ error: 'Aluno não encontrado.' });
+
+  await pool.query(
+    `INSERT INTO responsavel_legal (id_instituicao, id_aluno, nome, cpf, rg, data_nascimento, email, endereco, bairro, cep, telefone)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       nome = VALUES(nome), cpf = VALUES(cpf), rg = VALUES(rg),
+       data_nascimento = VALUES(data_nascimento), email = VALUES(email),
+       endereco = VALUES(endereco), bairro = VALUES(bairro), cep = VALUES(cep),
+       telefone = VALUES(telefone)`,
+    [req.id_instituicao, id, nome || null, cpf || null, rg || null, data_nascimento || null, email || null, endereco || null, bairro || null, cep || null, telefone || null]
+  );
+
+  await logAuditEvent('RESPONSAVEL_LEGAL_ATUALIZADO', `Aluno ID: ${id}`, req.id_instituicao);
+  res.json({ message: 'Responsável legal salvo com sucesso.' });
 }));
 
 module.exports = router;
