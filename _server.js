@@ -56,6 +56,7 @@ const { router: contatosEmergenciaRouter } = require('./contatos-emergencia');
 const diasSemAulaRouter = require('./dias-sem-aula');
 const notificacoesRouter = require('./notificacoes');
 const historicoAlunoRouter = require('./historico-aluno');
+const notasRouter = require('./notas');
 
 // Middlewares
 app.use(cors({
@@ -234,6 +235,7 @@ app.use('/api/matriculas', matriculasRouter);
 app.use('/api/atividades', atividadesRouter);
 app.use('/api/contatos-emergencia', contatosEmergenciaRouter);
 app.use('/api/dias-sem-aula', diasSemAulaRouter);
+app.use('/api/notas', notasRouter);
 app.use('/api/notificacoes', notificacoesRouter);
 app.use('/api/carater', require('./carater'));
 

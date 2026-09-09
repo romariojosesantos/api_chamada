@@ -15,7 +15,7 @@ const schemas = {
     turno: Joi.string().allow(null, ''),
     transporte: Joi.string().allow(null, ''),
     Inf: Joi.string().allow(null, ''),
-    status: Joi.string().valid('ativo', 'inativo').default('ativo')
+    status: Joi.string().valid('ativo', 'inativo', 'espera').default('ativo')
   }).unknown(true), // permite campos extras no payload (ex.: acompanhamento/ponto, tratados fora do schema)
 
   presenca: Joi.object({

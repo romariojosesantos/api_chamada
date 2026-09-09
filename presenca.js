@@ -6,6 +6,7 @@ const router = express.Router();
 const pool = require('./db');
 const { validate } = require('./validation');
 const { logAuditEvent } = require('./audit');
+const { criarNotificacao } = require('./notificacoes-service');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -107,6 +108,42 @@ router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
   } finally {
     connection.release();
   }
+}));
+
+// Registra quando um aluno precisou ser adicionado manualmente (via busca) na
+// chamada, por não ter aparecido na lista automática (/api/alunos/por-dia) do
+// turno/dia. Isso indica um provável problema de matrícula/turno cadastrado
+// errado — gera auditoria + notificação pra instituição investigar. Chamado
+// pelo frontend assim que o professor seleciona o aluno na busca (ver
+// addManualStudent em AttendanceList.jsx), independente de ele marcar presença.
+router.post('/adicao-manual', asyncHandler(async (req, res) => {
+  const { aluno_id, data, turno } = req.body;
+
+  if (!aluno_id || !data || !turno) {
+    return res.status(400).json({ error: 'aluno_id, data e turno são obrigatórios.' });
+  }
+
+  const [[aluno]] = await pool.query(
+    'SELECT nome FROM alunos WHERE id = ? AND id_instituicao = ?',
+    [aluno_id, req.id_instituicao]
+  );
+  if (!aluno) return res.status(404).json({ error: 'Aluno não encontrado.' });
+
+  await logAuditEvent(
+    'ALUNO_ADICIONADO_MANUALMENTE_CHAMADA',
+    `Aluno ID: ${aluno_id} (${aluno.nome}) adicionado manualmente na chamada de ${data} (turno: ${turno}) — não apareceu na lista automática.`,
+    req.id_instituicao
+  );
+
+  await criarNotificacao({
+    tipo: 'sistema',
+    titulo: 'Aluno adicionado manualmente à chamada',
+    mensagem: `${aluno.nome} não apareceu automaticamente na lista de chamada do turno ${turno} em ${data} e precisou ser adicionado via busca. Verifique a matrícula/turno desse aluno.`,
+    id_instituicao: req.id_instituicao,
+    id_aluno: aluno_id
+  });
+
+  res.status(201).json({ success: true });
 }));
 
 // Finalizar chamada: para a data+turno informados, registra 'ausente' para todo

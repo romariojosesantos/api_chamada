@@ -3,6 +3,12 @@
 // 'matriculado'), senão é "inativo". Chamado depois de qualquer operação que
 // cria/encerra matrículas em lote (import de Excel, ajuste de grade), para que o
 // status não fique desatualizado manualmente.
+//
+// Exceção: "espera" (aluno na fila esperando vaga, sem matrícula ainda) é um
+// estado deliberado, não derivado de matrícula — ganhar uma matrícula promove
+// ele pra "ativo" normalmente, mas a AUSÊNCIA de matrícula não pode rebaixar
+// "espera" pra "inativo" sozinha (senão toda sincronização em lote apagaria a
+// fila de espera). Só um PATCH manual tira alguém de "espera".
 
 function resolveAlunoStatus(temMatriculaAtiva) {
   return temMatriculaAtiva ? 'ativo' : 'inativo';
@@ -33,6 +39,7 @@ async function syncAlunoStatusFromMatriculas(connection, alunoIds, idInstituicao
                    AND m.data_fim IS NULL
                    AND TRIM(LOWER(m.status)) = 'matriculado'
                ) THEN 'ativo'
+               WHEN TRIM(LOWER(a.status)) = 'espera' THEN 'espera'
                ELSE 'inativo'
              END AS novo_status
       FROM alunos a

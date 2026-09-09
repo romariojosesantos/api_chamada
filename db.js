@@ -22,7 +22,17 @@ const pool = mysql.createPool({
   queueLimit: 0,
   enableKeepAlive: !isVercel, // keep-alive não faz sentido numa conexão que só vive 1 execução
   keepAliveInitialDelay: 0,
-  connectTimeout: 60000
+  connectTimeout: 60000,
+  // Sem isso, o mysql2 devolve toda coluna DATE (data_nascimento, data_cadastro,
+  // data_inicio/data_fim de matrícula e nível, etc.) como um objeto Date do
+  // JavaScript — e a conversão pra objeto Date depende do fuso horário do
+  // processo Node, então o dia pode vir deslocado dependendo de onde o backend
+  // roda (só "funciona" hoje porque o dev local e o Brasil coincidem por
+  // acaso). DATE não tem hora nem fuso — é só ano/mês/dia — então a única
+  // forma de nunca deslocar um dia é nunca deixar isso passar por um objeto
+  // Date: essa opção faz o driver devolver "2021-09-01" como texto puro,
+  // idêntico ao que está armazenado, sem nenhuma conversão de fuso no meio.
+  dateStrings: ['DATE']
 });
 
 // Sem esse listener, um erro de conexão em background do pool (ex.: o MySQL

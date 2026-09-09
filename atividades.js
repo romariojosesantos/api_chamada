@@ -8,16 +8,14 @@ const router = express.Router();
 const pool = require('./db');
 const { logAuditEvent } = require('./audit');
 const { syncAlunoStatusFromMatriculas } = require('./status-sync');
+const { AREAS_VALIDAS } = require('./areas');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 const DIAS_VALIDOS = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
-const TURNOS_VALIDOS = ['Manhã', 'Tarde'];
-// Área de atuação da turma dentro da instituição — usada pelos filtros da
-// tela Grade por Turma (GradeTurmas.js). Backfill de todas as turmas
-// existentes feito a partir do prefixo do nome (E.P./ESP/TEC/CAP) ou, pra
-// quem não tinha prefixo (as ex-"CUL -"), classificado como cultural.
-const AREAS_VALIDAS = ['educacional', 'esportivo', 'cultural', 'tecnologico', 'capelania'];
+// "Noite" é o turno dos ensaios — aceita aluno de qualquer turno, ver
+// regras-matricula.js (podeMatricular).
+const TURNOS_VALIDOS = ['Manhã', 'Tarde', 'Noite'];
 
 // Valida os campos comuns a criar/editar turma e resolve o professor: se vier
 // `idprofessor`, usa direto; se vier só `professor_nome`, acha o professor

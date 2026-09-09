@@ -18,6 +18,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { syncAlunoStatusFromMatriculas } = require('./status-sync');
+const { podeMatricular } = require('./regras-matricula');
 const { logAuditEvent } = require('./audit');
 const { criarNotificacao } = require('./notificacoes-service');
 
@@ -181,27 +182,45 @@ router.post('/', asyncHandler(async (req, res) => {
     );
     const mapaExistentes = new Map(existentes.map(m => [`${m.idaluno}-${m.dia_semana}-${m.horario}`, m.idmatricula]));
 
-    // 1 SELECT pro turno de todo mundo envolvido (usado só nas criações, mas
-    // sair sempre com a lista inteira é mais simples e ainda é 1 query só).
+    // 1 SELECT pro turno de todo mundo envolvido.
     const idsAlunos = [...new Set(alteracoes.map(a => Number(a.aluno_id)))];
-    const [alunosRows] = await connection.query('SELECT id, turno FROM alunos WHERE id IN (?)', [idsAlunos]);
-    const turnoPorAluno = new Map(alunosRows.map(a => [a.id, a.turno || '']));
+    const [alunosRows] = await connection.query('SELECT id, nome, turno FROM alunos WHERE id IN (?)', [idsAlunos]);
+    const alunoPorId = new Map(alunosRows.map(a => [a.id, a]));
+
+    // 1 SELECT pro turno de toda atividade envolvida — precisa pra checar
+    // conflito de turno E pra gravar o turno CERTO em `matricula.turno` (antes
+    // essa coluna copiava o turno do ALUNO, não da turma escolhida na célula;
+    // ficava errado sempre que a célula era um ensaio, por exemplo).
+    const idsAtividades = [...new Set(alteracoes.map(a => a.id_atividade).filter(Boolean).map(Number))];
+    let turmaPorAtividade = new Map();
+    if (idsAtividades.length > 0) {
+      const [atividadesRows] = await connection.query('SELECT idatividades, nome, turno FROM atividades WHERE idatividades IN (?)', [idsAtividades]);
+      turmaPorAtividade = new Map(atividadesRows.map(a => [a.idatividades, a]));
+    }
 
     const paraInserir = [];
     const paraEncerrar = [];
     const paraAtualizar = [];
     const results = [];
+    const conflitosTurno = [];
 
     for (const alteracao of alteracoes) {
       const { aluno_id, dia_semana, horario, id_atividade } = alteracao;
       const idExistente = mapaExistentes.get(`${Number(aluno_id)}-${dia_semana}-${horario}`);
 
       if (id_atividade) {
+        const aluno = alunoPorId.get(Number(aluno_id));
+        const turma = turmaPorAtividade.get(Number(id_atividade));
+        if (turma && !podeMatricular(aluno?.turno, turma.turno)) {
+          conflitosTurno.push(`${aluno?.nome || 'Aluno'} (turno ${aluno?.turno}) x "${turma.nome}" (turno ${turma.turno}), ${dia_semana} ${horario}`);
+          continue; // pula essa célula sem travar o lote inteiro — mesmo espírito do upsert-bulk
+        }
+
         if (idExistente) {
-          paraAtualizar.push({ id: idExistente, id_atividade });
+          paraAtualizar.push({ id: idExistente, id_atividade, turno: turma?.turno || '' });
           results.push({ action: 'updated', id: idExistente });
         } else {
-          paraInserir.push({ aluno_id, dia_semana, horario, id_atividade, turno: turnoPorAluno.get(Number(aluno_id)) || '' });
+          paraInserir.push({ aluno_id, dia_semana, horario, id_atividade, turno: turma?.turno || '' });
           results.push({ action: 'created', aluno_id, dia_semana, horario });
         }
       } else if (idExistente) {
@@ -224,11 +243,19 @@ router.post('/', asyncHandler(async (req, res) => {
     }
 
     if (paraAtualizar.length > 0) {
-      const casos = paraAtualizar.map(() => 'WHEN ? THEN ?').join(' ');
-      const valoresCase = paraAtualizar.flatMap(x => [x.id, x.id_atividade]);
+      const casosAtividade = paraAtualizar.map(() => 'WHEN ? THEN ?').join(' ');
+      const casosTurno = paraAtualizar.map(() => 'WHEN ? THEN ?').join(' ');
+      const idsParaAtualizar = paraAtualizar.map(x => x.id);
       await connection.query(
-        `UPDATE matricula SET idatividades = CASE idmatricula ${casos} END WHERE idmatricula IN (?)`,
-        [...valoresCase, paraAtualizar.map(x => x.id)]
+        `UPDATE matricula SET
+           idatividades = CASE idmatricula ${casosAtividade} END,
+           turno = CASE idmatricula ${casosTurno} END
+         WHERE idmatricula IN (?)`,
+        [
+          ...paraAtualizar.flatMap(x => [x.id, x.id_atividade]),
+          ...paraAtualizar.flatMap(x => [x.id, x.turno]),
+          idsParaAtualizar
+        ]
       );
     }
 
@@ -260,7 +287,7 @@ router.post('/', asyncHandler(async (req, res) => {
     }
 
     await connection.commit();
-    res.json({ success: true, updated: results.length, results });
+    res.json({ success: true, updated: results.length, results, conflitos_turno: conflitosTurno });
 
   } catch (error) {
     await connection.rollback();
@@ -294,10 +321,18 @@ router.post('/matricular', asyncHandler(async (req, res) => {
   }
 
   const [alunos] = await pool.query(
-    'SELECT id, nome FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL',
+    'SELECT id, nome, turno FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL',
     [aluno_id, req.id_instituicao]
   );
   if (alunos.length === 0) return res.status(404).json({ error: 'Aluno não encontrado.' });
+
+  // Turno oposto: aluno cadastrado como "Tarde" não pode entrar numa turma
+  // "Manhã" (e vice-versa) — mesma regra aplicada no import em massa. Ensaio
+  // (turno "Noite") é sempre permitido, ver podeMatricular.
+  const turnoAluno = alunos[0].turno ? String(alunos[0].turno).trim() : null;
+  if (!podeMatricular(turnoAluno, turma.turno)) {
+    return res.status(409).json({ error: `Conflito de turno: ${alunos[0].nome} é do turno ${turnoAluno}, mas essa turma é do turno ${turma.turno}.` });
+  }
 
   const connection = await pool.getConnection();
 
@@ -307,7 +342,8 @@ router.post('/matricular', asyncHandler(async (req, res) => {
     // Já existe uma matrícula ativa desse aluno nesse exato dia+horário+turno
     // (ou seja, ele já está "ocupado" nesse slot, na turma certa ou em outra)?
     const [existentes] = await connection.query(
-      `SELECT idmatricula, idatividades FROM matricula
+      `SELECT idmatricula, idatividades, (SELECT nome FROM atividades WHERE idatividades = matricula.idatividades) AS nome_turma_atual
+       FROM matricula
        WHERE idaluno = ? AND dia_semana = ? AND horario = ? AND turno = ?
          AND id_instituicao = ? AND data_fim IS NULL`,
       [aluno_id, turma.dia_semana, turma.horario, turma.turno, req.id_instituicao]
@@ -318,16 +354,15 @@ router.post('/matricular', asyncHandler(async (req, res) => {
       return res.status(409).json({ error: 'Esse aluno já está matriculado nessa turma.' });
     }
 
-    // Se ele já tinha outra turma nesse mesmo horário, encerra antes de criar
-    // a nova (um aluno não pode estar em duas turmas ao mesmo tempo) — isso
-    // também é o sinal de que essa chamada é uma TROCA de turma, não uma
-    // matrícula nova (ver notificação abaixo).
-    const eraTroca = existentes.length > 0;
-    if (eraTroca) {
-      await connection.query(
-        `UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula = ?`,
-        [existentes[0].idmatricula]
-      );
+    // Conflito de horário: o aluno já tem OUTRA turma nesse mesmo dia+horário+
+    // turno — bloqueia em vez de trocar automaticamente (mesma regra do
+    // import em massa). Quem quiser mesmo mudar o aluno de turma usa o botão
+    // "Mover" (POST /mover abaixo), que já pede essa intenção explicitamente.
+    if (existentes.length > 0) {
+      await connection.rollback();
+      return res.status(409).json({
+        error: `Conflito de horário: ${alunos[0].nome} já está matriculado(a) em "${existentes[0].nome_turma_atual}" nesse mesmo dia/horário/turno. Use "Mover" se a intenção é trocar de turma.`
+      });
     }
 
     await connection.query(
@@ -350,11 +385,9 @@ router.post('/matricular', asyncHandler(async (req, res) => {
     const alunoNome = alunos[0].nome;
     const localTurma = `"${turma.nome}" (${turma.dia_semana} ${turma.horario}, ${turma.turno})`;
     await criarNotificacao({
-      tipo: eraTroca ? 'movimentacao' : 'matricula',
-      titulo: eraTroca ? 'Aluno mudou de turma' : 'Novo aluno matriculado',
-      mensagem: eraTroca
-        ? `${alunoNome} foi movido(a) para ${localTurma}.`
-        : `${alunoNome} foi matriculado(a) em ${localTurma}.`,
+      tipo: 'matricula',
+      titulo: 'Novo aluno matriculado',
+      mensagem: `${alunoNome} foi matriculado(a) em ${localTurma}.`,
       id_instituicao: req.id_instituicao,
       id_aluno: Number(aluno_id)
     }, connection);
@@ -403,7 +436,13 @@ router.post('/mover', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Essa turma ainda não tem dia/horário/turno definidos.' });
   }
 
-  const [[aluno]] = await pool.query('SELECT nome FROM alunos WHERE id = ?', [aluno_id]);
+  const [[aluno]] = await pool.query('SELECT nome, turno FROM alunos WHERE id = ?', [aluno_id]);
+
+  // Mesma regra de turno usada em /matricular — faltava aqui, permitindo mover
+  // um aluno pra uma turma de turno diferente sem aviso nenhum.
+  if (!podeMatricular(aluno?.turno, turma.turno)) {
+    return res.status(409).json({ error: `Conflito de turno: ${aluno?.nome || 'Aluno'} é do turno ${aluno?.turno}, mas essa turma é do turno ${turma.turno}.` });
+  }
 
   const connection = await pool.getConnection();
 
