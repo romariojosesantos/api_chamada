@@ -8,6 +8,7 @@ const express = require('express');
 const crypto = require('crypto');
 const pool = require('./db');
 const { Resend } = require('resend');
+const { AREAS_VALIDAS } = require('./areas');
 
 const router = express.Router();
 const TOKEN_SECRET = process.env.AUTH_SECRET;
@@ -79,6 +80,11 @@ const loadUserInstitutions = async (userId, perfil) => {
 // `professores` — é o que permite telas como Grade.js saberem "este usuário
 // logado É o professor X" sem precisar perguntar (ver PUT /admin/usuarios/:id,
 // onde o master faz esse vínculo manualmente).
+// `area_coordenacao` só faz sentido pra perfil 'coordenador': null = geral
+// (vê/edita todas as áreas, é o comportamento de sempre); preenchida = só
+// aquela área (ex.: ponto — ver backend/pontos.js). Como fica dentro do
+// token, mudar a área de um coordenador só reflete no próximo login dele
+// (mesma limitação que id_professor já tem).
 const buildUserSession = async (userRow) => {
   const instituicoes = await loadUserInstitutions(userRow.id, userRow.perfil);
   return {
@@ -87,6 +93,7 @@ const buildUserSession = async (userRow) => {
     email: userRow.email,
     perfil: userRow.perfil,
     id_professor: userRow.id_professor || null,
+    area_coordenacao: userRow.area_coordenacao || null,
     instituicoes
   };
 };
@@ -139,6 +146,15 @@ const resolverIdProfessor = async (cleanPerfil, id_professor, selectedInstitutio
     return { erro: 'Esse professor pertence a uma instituição não vinculada a este usuário.' };
   }
   return { idProfessorFinal: profRows[0].id };
+};
+
+// Só se aplica a perfil "coordenador"; qualquer outro perfil sempre grava
+// null (evita ficar um valor obsoleto se alguém trocar o perfil depois).
+// null = coordenador geral (todas as áreas); string = só aquela área.
+const resolverAreaCoordenacao = (cleanPerfil, area_coordenacao) => {
+  if (cleanPerfil !== 'coordenador' || !area_coordenacao) return { areaCoordenacaoFinal: null };
+  if (!AREAS_VALIDAS.includes(area_coordenacao)) return { erro: 'Área de coordenação inválida.' };
+  return { areaCoordenacaoFinal: area_coordenacao };
 };
 
 // Avisa todo master ativo por e-mail quando um cadastro novo fica pendente de
@@ -227,7 +243,7 @@ router.post('/login', asyncHandler(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const senha = String(req.body.senha || '');
 
-  const [rows] = await pool.query('SELECT id, nome, email, senha_hash, perfil, status, id_professor FROM usuarios WHERE email = ? LIMIT 1', [email]);
+  const [rows] = await pool.query('SELECT id, nome, email, senha_hash, perfil, status, id_professor, area_coordenacao FROM usuarios WHERE email = ? LIMIT 1', [email]);
   // Mensagem de erro deliberadamente genérica (não diz se foi o e-mail ou a senha
   // que errou) para não ajudar a enumerar quais e-mails estão cadastrados.
   if (rows.length === 0 || !verifyPassword(senha, rows[0].senha_hash)) {
@@ -285,7 +301,7 @@ router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
     return res.json({ user: { aluno_id: aluno.id, nome: aluno.nome, perfil: 'aluno', id_instituicao: aluno.id_instituicao } });
   }
 
-  const [rows] = await pool.query('SELECT id, nome, email, perfil, status, id_professor FROM usuarios WHERE id = ? LIMIT 1', [req.user.id]);
+  const [rows] = await pool.query('SELECT id, nome, email, perfil, status, id_professor, area_coordenacao FROM usuarios WHERE id = ? LIMIT 1', [req.user.id]);
   if (rows.length === 0) return res.status(401).json({ error: 'Usuário não encontrado.' });
   const user = await buildUserSession(rows[0]);
   res.json({ user: { ...user, status: rows[0].status } });
@@ -452,7 +468,7 @@ router.get('/admin/professores', authMiddleware, masterMiddleware, asyncHandler(
 
 router.get('/admin/usuarios', authMiddleware, masterMiddleware, asyncHandler(async (req, res) => {
   const [users] = await pool.query(
-    `SELECT u.id, u.nome, u.email, u.perfil, u.status, u.created_at, u.id_professor, p.nome AS nome_professor
+    `SELECT u.id, u.nome, u.email, u.perfil, u.status, u.created_at, u.id_professor, u.area_coordenacao, p.nome AS nome_professor
      FROM usuarios u
      LEFT JOIN professores p ON p.id = u.id_professor
      WHERE u.status != ? ORDER BY u.nome ASC`,
@@ -504,7 +520,7 @@ router.delete('/admin/usuarios/:id/rejeitar', authMiddleware, masterMiddleware, 
 // Criação direta de usuário pelo master (pula o fluxo de aprovação — já entra ativo,
 // pois não recebe status 'pendente' aqui).
 router.post('/admin/usuarios', authMiddleware, masterMiddleware, asyncHandler(async (req, res) => {
-  const { nome, email, senha, perfil, instituicoes, id_professor } = req.body;
+  const { nome, email, senha, perfil, instituicoes, id_professor, area_coordenacao } = req.body;
   const cleanName = String(nome || '').trim();
   const cleanEmail = String(email || '').trim().toLowerCase();
   const cleanPassword = String(senha || '');
@@ -520,8 +536,13 @@ router.post('/admin/usuarios', authMiddleware, masterMiddleware, asyncHandler(as
 
   const { idProfessorFinal, erro: erroProfessor } = await resolverIdProfessor(cleanPerfil, id_professor, selectedInstitutions);
   if (erroProfessor) return res.status(400).json({ error: erroProfessor });
+  const { areaCoordenacaoFinal, erro: erroArea } = resolverAreaCoordenacao(cleanPerfil, area_coordenacao);
+  if (erroArea) return res.status(400).json({ error: erroArea });
 
-  const [result] = await pool.query('INSERT INTO usuarios (nome, email, senha_hash, perfil, id_professor) VALUES (?, ?, ?, ?, ?)', [cleanName, cleanEmail, hashPassword(cleanPassword), cleanPerfil, idProfessorFinal]);
+  const [result] = await pool.query(
+    'INSERT INTO usuarios (nome, email, senha_hash, perfil, id_professor, area_coordenacao) VALUES (?, ?, ?, ?, ?, ?)',
+    [cleanName, cleanEmail, hashPassword(cleanPassword), cleanPerfil, idProfessorFinal, areaCoordenacaoFinal]
+  );
   const userId = result.insertId;
 
   for (const idInst of selectedInstitutions) {
@@ -533,7 +554,7 @@ router.post('/admin/usuarios', authMiddleware, masterMiddleware, asyncHandler(as
 
 router.put('/admin/usuarios/:id', authMiddleware, masterMiddleware, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.id);
-  const { nome, email, perfil, instituicoes, status, id_professor } = req.body;
+  const { nome, email, perfil, instituicoes, status, id_professor, area_coordenacao } = req.body;
   const cleanName = String(nome || '').trim();
   const cleanEmail = String(email || '').trim().toLowerCase();
   const cleanPerfil = String(perfil || 'monitor').trim().toLowerCase();
@@ -551,15 +572,17 @@ router.put('/admin/usuarios/:id', authMiddleware, masterMiddleware, asyncHandler
 
   const { idProfessorFinal, erro: erroProfessor } = await resolverIdProfessor(cleanPerfil, id_professor, selectedInstitutions);
   if (erroProfessor) return res.status(400).json({ error: erroProfessor });
+  const { areaCoordenacaoFinal, erro: erroArea } = resolverAreaCoordenacao(cleanPerfil, area_coordenacao);
+  if (erroArea) return res.status(400).json({ error: erroArea });
 
-  const updates = [cleanName, cleanEmail, cleanPerfil, idProfessorFinal];
+  const updates = [cleanName, cleanEmail, cleanPerfil, idProfessorFinal, areaCoordenacaoFinal];
   let statusSql = '';
   if (cleanStatus) {
     updates.push(cleanStatus);
     statusSql = ', status = ?';
   }
 
-  await pool.query(`UPDATE usuarios SET nome = ?, email = ?, perfil = ?, id_professor = ?${statusSql}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [...updates, userId]);
+  await pool.query(`UPDATE usuarios SET nome = ?, email = ?, perfil = ?, id_professor = ?, area_coordenacao = ?${statusSql}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [...updates, userId]);
   // Vínculos de instituição são substituídos por completo (apaga tudo e recria) em
   // vez de calcular um diff — mais simples e o volume de linhas por usuário é pequeno.
   await pool.query('DELETE FROM usuario_instituicoes WHERE id_usuario = ?', [userId]);
