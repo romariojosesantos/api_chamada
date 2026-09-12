@@ -180,7 +180,30 @@ router.post('/', asyncHandler(async (req, res) => {
          AND (idaluno, dia_semana, horario) IN (${placeholdersPosicao})`,
       [req.id_instituicao, ...tuplasPosicao.flat()]
     );
-    const mapaExistentes = new Map(existentes.map(m => [`${m.idaluno}-${m.dia_semana}-${m.horario}`, m.idmatricula]));
+    // Nunca era pra existir mais de uma matrícula ATIVA pro mesmo aluno+dia+
+    // horário, mas um bug antigo (já corrigido) deixava isso acontecer — e
+    // quando acontecia, um `new Map(existentes.map(...))` simples descartava
+    // uma das duplicatas em silêncio (a última processada "ganhava" o slot no
+    // Map), podendo fazer o UPDATE cair na linha ERRADA: a tela mostrava
+    // "salvo com sucesso", mas a célula continuava exibindo o valor antigo,
+    // porque a linha de verdade em uso não era a que recebeu o UPDATE. Agora,
+    // se acharmos mais de uma linha pro mesmo slot, ficamos com a MAIS RECENTE
+    // (maior idmatricula) e encerramos as outras automaticamente nesta mesma
+    // transação — a edição se autocorrige na próxima vez que alguém tocar
+    // naquela célula, em vez de perpetuar a duplicidade.
+    const porSlot = new Map(); // "idaluno-dia-horario" -> [idmatricula, ...]
+    existentes.forEach(m => {
+      const chave = `${m.idaluno}-${m.dia_semana}-${m.horario}`;
+      if (!porSlot.has(chave)) porSlot.set(chave, []);
+      porSlot.get(chave).push(m.idmatricula);
+    });
+    const mapaExistentes = new Map();
+    const duplicatasParaEncerrar = [];
+    porSlot.forEach((ids, chave) => {
+      const maisRecente = Math.max(...ids);
+      mapaExistentes.set(chave, maisRecente);
+      ids.filter(id => id !== maisRecente).forEach(id => duplicatasParaEncerrar.push(id));
+    });
 
     // 1 SELECT pro turno de todo mundo envolvido.
     const idsAlunos = [...new Set(alteracoes.map(a => Number(a.aluno_id)))];
@@ -238,8 +261,12 @@ router.post('/', asyncHandler(async (req, res) => {
       );
     }
 
-    if (paraEncerrar.length > 0) {
-      await connection.query('UPDATE matricula SET data_fim = CURDATE() WHERE idmatricula IN (?)', [paraEncerrar]);
+    // Junta com as duplicatas descobertas acima (nunca se sobrepõem: essa
+    // lista só tem as linhas MAIS ANTIGAS de cada slot duplicado, nunca a
+    // `idExistente`/mais recente usada no restante da função).
+    const idsParaEncerrar = [...new Set([...paraEncerrar, ...duplicatasParaEncerrar])];
+    if (idsParaEncerrar.length > 0) {
+      await connection.query('UPDATE matricula SET data_fim = CURDATE() WHERE idmatricula IN (?)', [idsParaEncerrar]);
     }
 
     if (paraAtualizar.length > 0) {
@@ -287,7 +314,13 @@ router.post('/', asyncHandler(async (req, res) => {
     }
 
     await connection.commit();
-    res.json({ success: true, updated: results.length, results, conflitos_turno: conflitosTurno });
+    res.json({
+      success: true,
+      updated: results.length,
+      results,
+      conflitos_turno: conflitosTurno,
+      duplicatas_resolvidas: duplicatasParaEncerrar.length
+    });
 
   } catch (error) {
     await connection.rollback();
@@ -296,6 +329,84 @@ router.post('/', asyncHandler(async (req, res) => {
   } finally {
     connection.release();
   }
+}));
+
+// Lista, pra instituição atual, todo aluno com mais de uma matrícula ATIVA
+// no mesmo dia_semana+horario — nunca devia acontecer (ver comentário em
+// POST '/' acima), mas um bug antigo já deixou isso acontecer algumas vezes.
+// Ferramenta manual pra um master/coordenador escolher qual manter, sem
+// precisar de acesso direto ao banco.
+router.get('/duplicidades', asyncHandler(async (req, res) => {
+  const [grupos] = await pool.query(
+    `SELECT idaluno, dia_semana, horario, GROUP_CONCAT(idmatricula) AS ids
+     FROM matricula
+     WHERE id_instituicao = ? AND status = 'matriculado' AND data_fim IS NULL
+     GROUP BY idaluno, dia_semana, horario
+     HAVING COUNT(*) > 1`,
+    [req.id_instituicao]
+  );
+
+  if (grupos.length === 0) return res.json([]);
+
+  const todosIds = grupos.flatMap(g => g.ids.split(',').map(Number));
+  const [linhas] = await pool.query(
+    `SELECT m.idmatricula, m.idaluno, a.nome AS nome_aluno, m.idatividades, atv.nome AS nome_turma,
+            atv.dia_semana, atv.horario, atv.turno, p.nome AS nome_professor, m.data_inicio
+     FROM matricula m
+     JOIN alunos a ON a.id = m.idaluno
+     LEFT JOIN atividades atv ON atv.idatividades = m.idatividades
+     LEFT JOIN professores p ON p.id = atv.idprofessor
+     WHERE m.idmatricula IN (?)
+     ORDER BY m.idmatricula DESC`,
+    [todosIds]
+  );
+  const linhaPorId = new Map(linhas.map(l => [l.idmatricula, l]));
+
+  const resultado = grupos.map(g => {
+    const ids = g.ids.split(',').map(Number);
+    const opcoes = ids.map(id => linhaPorId.get(id)).filter(Boolean);
+    return {
+      idaluno: g.idaluno,
+      nome_aluno: opcoes[0]?.nome_aluno || '',
+      dia_semana: g.dia_semana,
+      horario: g.horario,
+      opcoes
+    };
+  });
+  res.json(resultado);
+}));
+
+// Resolve uma duplicidade: mantém a matrícula `manter` e encerra (mesmo
+// soft-close usado no resto do arquivo — data_fim = hoje) qualquer OUTRA
+// matrícula ativa do mesmo aluno no mesmo dia_semana+horario.
+router.post('/duplicidades/resolver', asyncHandler(async (req, res) => {
+  const manter = parseInt(req.body.manter);
+  if (!manter) return res.status(400).json({ error: 'Informe a matrícula a manter (manter).' });
+
+  const [[matricula]] = await pool.query(
+    'SELECT idmatricula, idaluno, dia_semana, horario FROM matricula WHERE idmatricula = ? AND id_instituicao = ? AND data_fim IS NULL',
+    [manter, req.id_instituicao]
+  );
+  if (!matricula) return res.status(404).json({ error: 'Matrícula não encontrada (ou já encerrada) nesta instituição.' });
+
+  const [outras] = await pool.query(
+    `SELECT idmatricula FROM matricula
+     WHERE id_instituicao = ? AND idaluno = ? AND dia_semana = ? AND horario = ?
+       AND status = 'matriculado' AND data_fim IS NULL AND idmatricula != ?`,
+    [req.id_instituicao, matricula.idaluno, matricula.dia_semana, matricula.horario, manter]
+  );
+  if (outras.length === 0) return res.json({ success: true, encerradas: 0 });
+
+  const idsEncerrar = outras.map(o => o.idmatricula);
+  await pool.query('UPDATE matricula SET data_fim = CURDATE() WHERE idmatricula IN (?)', [idsEncerrar]);
+  // `pool` serve aqui igual a uma `connection` (mysql2/promise expõe `.query`
+  // nos dois) — NUNCA usar `pool.getConnection()` sem depois dar `.release()`;
+  // em produção o connectionLimit é 1, então uma conexão esquecida aberta
+  // travaria toda e qualquer query seguinte pra sempre.
+  await syncAlunoStatusFromMatriculas(pool, [matricula.idaluno], req.id_instituicao);
+  await logAuditEvent('MATRICULA_DUPLICIDADE_RESOLVIDA', `Aluno #${matricula.idaluno}, ${matricula.dia_semana} ${matricula.horario}: manteve #${manter}, encerrou #${idsEncerrar.join(', #')}`, req.id_instituicao);
+
+  res.json({ success: true, encerradas: idsEncerrar.length });
 }));
 
 // Matricular um aluno numa turma específica (tela de Turmas) — bem mais
@@ -339,14 +450,20 @@ router.post('/matricular', asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // Já existe uma matrícula ativa desse aluno nesse exato dia+horário+turno
-    // (ou seja, ele já está "ocupado" nesse slot, na turma certa ou em outra)?
+    // Já existe uma matrícula ativa desse aluno nesse exato dia+horário (ou
+    // seja, ele já está "ocupado" nesse slot, na turma certa ou em outra)?
+    // NÃO filtra por turno: dia+horário já é o slot de tempo real (ex.:
+    // "Quarta HR3" é o mesmo período de aula esteja a turma marcada como
+    // turno "Tarde" ou "Noite" — turno é só uma categorização da turma, não
+    // um segundo eixo de tempo independente). Filtrar por turno aqui deixava
+    // passar exatamente esse caso, criando duas matrículas ativas pro mesmo
+    // horário de fato.
     const [existentes] = await connection.query(
       `SELECT idmatricula, idatividades, (SELECT nome FROM atividades WHERE idatividades = matricula.idatividades) AS nome_turma_atual
        FROM matricula
-       WHERE idaluno = ? AND dia_semana = ? AND horario = ? AND turno = ?
+       WHERE idaluno = ? AND dia_semana = ? AND horario = ?
          AND id_instituicao = ? AND data_fim IS NULL`,
-      [aluno_id, turma.dia_semana, turma.horario, turma.turno, req.id_instituicao]
+      [aluno_id, turma.dia_semana, turma.horario, req.id_instituicao]
     );
 
     if (existentes.length > 0 && Number(existentes[0].idatividades) === Number(id_atividade)) {
@@ -354,10 +471,10 @@ router.post('/matricular', asyncHandler(async (req, res) => {
       return res.status(409).json({ error: 'Esse aluno já está matriculado nessa turma.' });
     }
 
-    // Conflito de horário: o aluno já tem OUTRA turma nesse mesmo dia+horário+
-    // turno — bloqueia em vez de trocar automaticamente (mesma regra do
-    // import em massa). Quem quiser mesmo mudar o aluno de turma usa o botão
-    // "Mover" (POST /mover abaixo), que já pede essa intenção explicitamente.
+    // Conflito de horário: o aluno já tem OUTRA turma nesse mesmo dia+horário
+    // — bloqueia em vez de trocar automaticamente (mesma regra do import em
+    // massa). Quem quiser mesmo mudar o aluno de turma usa o botão "Mover"
+    // (POST /mover abaixo), que já pede essa intenção explicitamente.
     if (existentes.length > 0) {
       await connection.rollback();
       return res.status(409).json({
@@ -453,6 +570,28 @@ router.post('/mover', asyncHandler(async (req, res) => {
       `UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula = ?`,
       [matricula_id]
     );
+
+    // Essa rota só recebia a matrícula de ORIGEM explicitamente — nunca
+    // checava se o aluno já tinha OUTRA matrícula ativa bem no dia+horário de
+    // DESTINO (possível mesmo com turmas de turno diferente, já que dia+
+    // horário não inclui turno: ex. "Ensaio" de Quarta HR3 à Tarde E outro
+    // "Ensaio" de Quarta HR3 à Noite contam como o mesmo slot). Sem essa
+    // checagem, mover pra lá criava uma SEGUNDA matrícula ativa no mesmo
+    // slot em vez de substituir — a mesma classe de bug corrigida no POST
+    // '/' acima. Encerra qualquer uma que já exista ali (exceto a que
+    // acabamos de encerrar) antes de inserir a nova.
+    const [duplicataNoDestino] = await connection.query(
+      `SELECT idmatricula FROM matricula
+       WHERE id_instituicao = ? AND idaluno = ? AND dia_semana = ? AND horario = ?
+         AND status = 'matriculado' AND data_fim IS NULL AND idmatricula != ?`,
+      [req.id_instituicao, aluno_id, turma.dia_semana, turma.horario, matricula_id]
+    );
+    if (duplicataNoDestino.length > 0) {
+      await connection.query(
+        'UPDATE matricula SET data_fim = CURDATE() WHERE idmatricula IN (?)',
+        [duplicataNoDestino.map(d => d.idmatricula)]
+      );
+    }
 
     await connection.query(
       `INSERT INTO matricula (idaluno, idatividades, dia_semana, horario, turno, status, data_inicio, id_instituicao)
