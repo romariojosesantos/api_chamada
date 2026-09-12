@@ -4,4 +4,5 @@
 // divergir. Mesmos valores da lista AREAS do frontend (utils/areas.js).
 const AREAS_VALIDAS = ['educacional', 'esportivo', 'cultural', 'tecnologico', 'capelania'];
 
+
 module.exports = { AREAS_VALIDAS };
