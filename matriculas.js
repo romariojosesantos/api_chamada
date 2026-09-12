@@ -175,11 +175,12 @@ router.post('/', asyncHandler(async (req, res) => {
     const tuplasPosicao = alteracoes.map(a => [Number(a.aluno_id), a.dia_semana, a.horario]);
     const placeholdersPosicao = tuplasPosicao.map(() => '(?,?,?)').join(',');
     const [existentes] = await connection.query(
-      `SELECT idmatricula, idaluno, dia_semana, horario FROM matricula
+      `SELECT idmatricula, idaluno, dia_semana, horario, idatividades FROM matricula
        WHERE id_instituicao = ? AND data_fim IS NULL
          AND (idaluno, dia_semana, horario) IN (${placeholdersPosicao})`,
       [req.id_instituicao, ...tuplasPosicao.flat()]
     );
+    const existentesPorId = new Map(existentes.map(m => [m.idmatricula, m]));
     // Nunca era pra existir mais de uma matrícula ATIVA pro mesmo aluno+dia+
     // horário, mas um bug antigo (já corrigido) deixava isso acontecer — e
     // quando acontecia, um `new Map(existentes.map(...))` simples descartava
@@ -213,26 +214,44 @@ router.post('/', asyncHandler(async (req, res) => {
     // 1 SELECT pro turno de toda atividade envolvida — precisa pra checar
     // conflito de turno E pra gravar o turno CERTO em `matricula.turno` (antes
     // essa coluna copiava o turno do ALUNO, não da turma escolhida na célula;
-    // ficava errado sempre que a célula era um ensaio, por exemplo).
-    const idsAtividades = [...new Set(alteracoes.map(a => a.id_atividade).filter(Boolean).map(Number))];
+    // ficava errado sempre que a célula era um ensaio, por exemplo). Também
+    // inclui as atividades das matrículas ANTIGAS (não só as novas escolhas),
+    // e o professor de cada uma — é o que permite montar o "de/para" salvo em
+    // `criarNotificacao` (ver `detalhesAlteracoes` abaixo), pra tela de
+    // notificações poder mostrar de qual turma pra qual turma cada aluno foi.
+    const idsAtividades = [...new Set([
+      ...alteracoes.map(a => a.id_atividade).filter(Boolean).map(Number),
+      ...existentes.map(m => m.idatividades).filter(Boolean).map(Number)
+    ])];
     let turmaPorAtividade = new Map();
     if (idsAtividades.length > 0) {
-      const [atividadesRows] = await connection.query('SELECT idatividades, nome, turno FROM atividades WHERE idatividades IN (?)', [idsAtividades]);
+      const [atividadesRows] = await connection.query(
+        `SELECT atv.idatividades, atv.nome, atv.turno, p.nome AS nome_professor
+         FROM atividades atv LEFT JOIN professores p ON p.id = atv.idprofessor
+         WHERE atv.idatividades IN (?)`,
+        [idsAtividades]
+      );
       turmaPorAtividade = new Map(atividadesRows.map(a => [a.idatividades, a]));
     }
+    const formatarLadoTurma = (turma, dia_semana, horario) => turma
+      ? { turma: turma.nome, professor: turma.nome_professor || null, dia_semana, horario, turno: turma.turno }
+      : null;
 
     const paraInserir = [];
     const paraEncerrar = [];
     const paraAtualizar = [];
     const results = [];
     const conflitosTurno = [];
+    const detalhesAlteracoes = [];
 
     for (const alteracao of alteracoes) {
       const { aluno_id, dia_semana, horario, id_atividade } = alteracao;
       const idExistente = mapaExistentes.get(`${Number(aluno_id)}-${dia_semana}-${horario}`);
+      const aluno = alunoPorId.get(Number(aluno_id));
+      const atividadeAntiga = existentesPorId.get(idExistente)?.idatividades;
+      const de = formatarLadoTurma(turmaPorAtividade.get(Number(atividadeAntiga)), dia_semana, horario);
 
       if (id_atividade) {
-        const aluno = alunoPorId.get(Number(aluno_id));
         const turma = turmaPorAtividade.get(Number(id_atividade));
         if (turma && !podeMatricular(aluno?.turno, turma.turno)) {
           conflitosTurno.push(`${aluno?.nome || 'Aluno'} (turno ${aluno?.turno}) x "${turma.nome}" (turno ${turma.turno}), ${dia_semana} ${horario}`);
@@ -246,9 +265,11 @@ router.post('/', asyncHandler(async (req, res) => {
           paraInserir.push({ aluno_id, dia_semana, horario, id_atividade, turno: turma?.turno || '' });
           results.push({ action: 'created', aluno_id, dia_semana, horario });
         }
+        detalhesAlteracoes.push({ aluno_id: Number(aluno_id), aluno_nome: aluno?.nome || null, de, para: formatarLadoTurma(turma, dia_semana, horario) });
       } else if (idExistente) {
         paraEncerrar.push(idExistente);
         results.push({ action: 'deleted', id: idExistente });
+        detalhesAlteracoes.push({ aluno_id: Number(aluno_id), aluno_nome: aluno?.nome || null, de, para: null });
       }
     }
 
@@ -309,7 +330,8 @@ router.post('/', asyncHandler(async (req, res) => {
         tipo: 'movimentacao',
         titulo: 'Grade ajustada em lote',
         mensagem: `${results.length} ${results.length === 1 ? 'alteração feita' : 'alterações feitas'} na grade (Ajuste de Grade).`,
-        id_instituicao: req.id_instituicao
+        id_instituicao: req.id_instituicao,
+        detalhes: detalhesAlteracoes
       }, connection);
     }
 
@@ -422,7 +444,9 @@ router.post('/matricular', asyncHandler(async (req, res) => {
   }
 
   const [turmas] = await pool.query(
-    'SELECT idatividades, nome, dia_semana, horario, turno FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
+    `SELECT atv.idatividades, atv.nome, atv.dia_semana, atv.horario, atv.turno, p.nome AS nome_professor
+     FROM atividades atv LEFT JOIN professores p ON p.id = atv.idprofessor
+     WHERE atv.idatividades = ? AND atv.id_instituicao = ?`,
     [id_atividade, req.id_instituicao]
   );
   if (turmas.length === 0) return res.status(404).json({ error: 'Turma não encontrada.' });
@@ -506,7 +530,13 @@ router.post('/matricular', asyncHandler(async (req, res) => {
       titulo: 'Novo aluno matriculado',
       mensagem: `${alunoNome} foi matriculado(a) em ${localTurma}.`,
       id_instituicao: req.id_instituicao,
-      id_aluno: Number(aluno_id)
+      id_aluno: Number(aluno_id),
+      detalhes: [{
+        aluno_id: Number(aluno_id),
+        aluno_nome: alunoNome,
+        de: null,
+        para: { turma: turma.nome, professor: turma.nome_professor || null, dia_semana: turma.dia_semana, horario: turma.horario, turno: turma.turno }
+      }]
     }, connection);
 
     await connection.commit();
@@ -537,14 +567,21 @@ router.post('/mover', asyncHandler(async (req, res) => {
   }
 
   const [origemRows] = await pool.query(
-    'SELECT idmatricula, idaluno FROM matricula WHERE idmatricula = ? AND id_instituicao = ? AND data_fim IS NULL',
+    `SELECT m.idmatricula, m.idaluno, atv.nome AS nome_turma, atv.dia_semana, atv.horario, atv.turno, p.nome AS nome_professor
+     FROM matricula m
+     LEFT JOIN atividades atv ON atv.idatividades = m.idatividades
+     LEFT JOIN professores p ON p.id = atv.idprofessor
+     WHERE m.idmatricula = ? AND m.id_instituicao = ? AND m.data_fim IS NULL`,
     [matricula_id, req.id_instituicao]
   );
   if (origemRows.length === 0) return res.status(404).json({ error: 'Matrícula de origem não encontrada ou já encerrada.' });
-  const aluno_id = origemRows[0].idaluno;
+  const origem = origemRows[0];
+  const aluno_id = origem.idaluno;
 
   const [turmas] = await pool.query(
-    'SELECT idatividades, nome, dia_semana, horario, turno FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
+    `SELECT atv.idatividades, atv.nome, atv.dia_semana, atv.horario, atv.turno, p.nome AS nome_professor
+     FROM atividades atv LEFT JOIN professores p ON p.id = atv.idprofessor
+     WHERE atv.idatividades = ? AND atv.id_instituicao = ?`,
     [id_atividade_destino, req.id_instituicao]
   );
   if (turmas.length === 0) return res.status(404).json({ error: 'Turma de destino não encontrada.' });
@@ -612,7 +649,15 @@ router.post('/mover', asyncHandler(async (req, res) => {
       titulo: 'Aluno mudou de turma',
       mensagem: `${aluno?.nome || 'Aluno'} foi movido(a) para "${turma.nome}" (${turma.dia_semana} ${turma.horario}, ${turma.turno}).`,
       id_instituicao: req.id_instituicao,
-      id_aluno: Number(aluno_id)
+      id_aluno: Number(aluno_id),
+      detalhes: [{
+        aluno_id: Number(aluno_id),
+        aluno_nome: aluno?.nome || null,
+        de: origem.nome_turma
+          ? { turma: origem.nome_turma, professor: origem.nome_professor || null, dia_semana: origem.dia_semana, horario: origem.horario, turno: origem.turno }
+          : null,
+        para: { turma: turma.nome, professor: turma.nome_professor || null, dia_semana: turma.dia_semana, horario: turma.horario, turno: turma.turno }
+      }]
     }, connection);
 
     await connection.commit();

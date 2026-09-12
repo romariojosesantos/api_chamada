@@ -1400,7 +1400,13 @@ router.patch('/:id', asyncHandler(async (req, res) => {
       titulo: 'Aluno marcado como desistente',
       mensagem: `${nomeAluno || 'Um aluno'} foi marcado(a) como inativo(a).`,
       id_instituicao: req.id_instituicao,
-      id_aluno: Number(id)
+      id_aluno: Number(id),
+      detalhes: [{
+        aluno_id: Number(id),
+        aluno_nome: nomeAluno || null,
+        de: { status: statusAnterior },
+        para: { status: 'inativo' }
+      }]
     });
   }
 

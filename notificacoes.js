@@ -24,7 +24,7 @@ const CLAUSULA_VISIVEIS = '(n.id_instituicao IS NULL OR n.id_instituicao = ?)';
 
 router.get('/', asyncHandler(async (req, res) => {
   const [results] = await pool.query(
-    `SELECT n.id, n.tipo, n.titulo, n.mensagem, n.id_instituicao, n.id_aluno, n.created_at,
+    `SELECT n.id, n.tipo, n.titulo, n.mensagem, n.id_instituicao, n.id_aluno, n.detalhes, n.created_at,
             (nl.id_usuario IS NOT NULL) AS lida
      FROM notificacoes n
      LEFT JOIN notificacoes_lidas nl ON nl.id_notificacao = n.id AND nl.id_usuario = ?
