@@ -294,6 +294,24 @@ router.get('/matriculas-por-area', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
+// Contagem de alunos por status, EXCETO 'ativo' (esse já tem o próprio card
+// "Inscritos Ativos" no dashboard) — "no geral", sem recorte de dia/período,
+// mesmo espírito de matriculas-por-area. `status` é livre (varchar), não um
+// enum fixo — devolve o que existir de fato (inativo, espera, ou qualquer
+// outro valor usado), pra não deixar a tela hardcoded num conjunto que pode
+// mudar. Exclui quem já foi excluído (soft-delete via excluido_em) — esse é
+// outro conceito, não um "status" de matrícula/frequência.
+router.get('/alunos-por-status', asyncHandler(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT COALESCE(status, 'sem_status') AS status, COUNT(*) AS total
+     FROM alunos
+     WHERE id_instituicao = ? AND excluido_em IS NULL AND (status IS NULL OR status != 'ativo')
+     GROUP BY status`,
+    [req.id_instituicao]
+  );
+  res.json(rows);
+}));
+
 // Frequência REAL de CADA aluno individualmente num intervalo de datas —
 // dias esperados (qualquer matrícula, ativa ou encerrada, que cobria aquele
 // dia — ver comentário grande abaixo, no uso original desta query em

@@ -10,8 +10,42 @@
 // "espera" pra "inativo" sozinha (senão toda sincronização em lote apagaria a
 // fila de espera). Só um PATCH manual tira alguém de "espera".
 
+const { podeMatricular } = require('./regras-matricula');
+
 function resolveAlunoStatus(temMatriculaAtiva) {
   return temMatriculaAtiva ? 'ativo' : 'inativo';
+}
+
+// Encerra as matrículas ATIVAS do aluno que ficaram incompatíveis com o
+// `novoTurno` dele — chamado sempre que `alunos.turno` muda (edição de
+// cadastro, PATCH rápido, ou import em massa). Usa a MESMA regra de
+// compatibilidade (`podeMatricular`) já aplicada ao criar uma matrícula nova:
+// turma do mesmo turno, OU turma de ensaio (turno "Noite" — sempre permitido,
+// porque um ensaio pode ter tanto alunos de Manhã quanto de Tarde ao mesmo
+// tempo; não é exclusivo de um turno como as turmas comuns são pro aluno).
+// Sem isso, a matrícula antiga simplesmente nunca é revisitada e fica aberta
+// pra sempre, mesmo o aluno não frequentando mais aquele turno (bug real
+// encontrado em produção — ver Mayza/Yanne).
+async function encerrarMatriculasForaDoTurno(connection, idAluno, novoTurno, idInstituicao) {
+  if (!novoTurno) return { encerradas: 0, turmas: [] };
+
+  const [ativas] = await connection.query(
+    `SELECT m.idmatricula, atv.turno AS turno_turma, atv.nome AS nome_turma
+     FROM matricula m
+     JOIN atividades atv ON atv.idatividades = m.idatividades
+     WHERE m.idaluno = ? AND m.id_instituicao = ? AND m.status = 'matriculado' AND m.data_fim IS NULL`,
+    [idAluno, idInstituicao]
+  );
+
+  const incompativeis = ativas.filter(m => !podeMatricular(novoTurno, m.turno_turma));
+  if (incompativeis.length === 0) return { encerradas: 0, turmas: [] };
+
+  await connection.query(
+    `UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula IN (?)`,
+    [incompativeis.map(m => m.idmatricula)]
+  );
+
+  return { encerradas: incompativeis.length, turmas: incompativeis.map(m => m.nome_turma) };
 }
 
 // Recalcula e grava o status de cada aluno em `alunoIds` com base em suas
@@ -80,5 +114,6 @@ async function syncAlunoStatusFromMatriculas(connection, alunoIds, idInstituicao
 
 module.exports = {
   resolveAlunoStatus,
-  syncAlunoStatusFromMatriculas
+  syncAlunoStatusFromMatriculas,
+  encerrarMatriculasForaDoTurno
 };

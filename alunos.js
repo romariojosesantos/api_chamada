@@ -6,7 +6,7 @@ const router = express.Router();
 const pool = require('./db');
 const { validate } = require('./validation');
 const { logAuditEvent } = require('./audit');
-const { syncAlunoStatusFromMatriculas } = require('./status-sync');
+const { syncAlunoStatusFromMatriculas, encerrarMatriculasForaDoTurno } = require('./status-sync');
 const { criarNotificacao } = require('./notificacoes-service');
 const { podeMatricular } = require('./regras-matricula');
 const { AREAS_VALIDAS } = require('./areas');
@@ -34,6 +34,17 @@ const getNivelAtualSubquery = () => `
   (SELECT an.subnivel FROM aluno_niveis an
    WHERE an.id_aluno = a.id AND an.id_instituicao = a.id_instituicao AND an.data_fim IS NULL
    ORDER BY an.data_inicio DESC LIMIT 1) as subnivel
+`;
+
+// Helper para subquery de saúde (todas as observações do aluno, concatenadas
+// — ver `aluno_saude`, tabela 1-para-muitos preenchida em CadastrarAluno.js/
+// import em massa). Usada só pra exibição em lista (ex.: coluna "Saúde" no
+// Ajuste de Grade); editar de verdade continua sendo feito no cadastro do
+// aluno, uma entrada por vez.
+const getSaudeSubquery = () => `
+  IFNULL((SELECT GROUP_CONCAT(descricao SEPARATOR '; ')
+   FROM aluno_saude
+   WHERE id_aluno = a.id AND id_instituicao = a.id_instituicao), '') as saude
 `;
 
 // Helper para validar e normalizar turno (ex.: " manhã " -> "Manhã")
@@ -205,7 +216,8 @@ router.get('/', asyncHandler(async (req, res) => {
            a.turma, a.turno, a.transporte, a.status, a.Inf,
            a.acompanhamento, a.ponto, a.informacoes_gerais, a.escola_atual,
            ${getDiasMatriculadosSubquery()},
-           ${getNivelAtualSubquery()}
+           ${getNivelAtualSubquery()},
+           ${getSaudeSubquery()}
     FROM alunos a
     WHERE a.id_instituicao = ? AND a.excluido_em IS NULL
   `;
@@ -424,6 +436,20 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     await connection.beginTransaction();
 
     const today = new Date().toISOString().split('T')[0];
+
+    // Turno de cada aluno ANTES do upsert (Passo 1) — precisa pra decidir, no
+    // Passo 5f mais abaixo, se o turno mudou de verdade e vale a pena revisitar
+    // as matrículas dele. Depois do upsert essa informação já teria sido
+    // sobrescrita, por isso é buscada aqui, antes de tudo.
+    const nomesParaTurnoAntigo = alunos.map(a => String(a.nome || a.ALUNO || a.Aluno).trim());
+    let turnoAntigoPorNome = new Map();
+    if (nomesParaTurnoAntigo.length > 0) {
+      const [alunosAntes] = await connection.query(
+        `SELECT nome, turno FROM alunos WHERE nome IN (?) AND id_instituicao = ? AND excluido_em IS NULL`,
+        [nomesParaTurnoAntigo, req.id_instituicao]
+      );
+      turnoAntigoPorNome = new Map(alunosAntes.map(a => [a.nome, a.turno]));
+    }
 
     // Passo 1: upsert dos alunos. Aceita nome vindo de diferentes cabeçalhos de
     // planilha (nome/ALUNO/Aluno) porque a planilha já mudou de formato antes.
@@ -1108,6 +1134,38 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       responsaveisAfetados = responsavelResult.affectedRows;
     }
 
+    // Passo 5f: turno mudou na planilha — encerra as matrículas do aluno que
+    // ficaram incompatíveis com o turno novo (mesma lógica do PUT/PATCH de
+    // aluno, ver encerrarMatriculasForaDoTurno em status-sync.js). O Passo 5
+    // acima já cuida de quando a ATIVIDADE muda numa posição específica da
+    // grade; isso aqui cobre o caso de uma matrícula antiga que a planilha
+    // simplesmente não menciona mais (porque o aluno mudou de turno todo, não
+    // só de uma turma) — sem isso, ela ficava aberta pra sempre.
+    let matriculasEncerradasTrocaTurno = 0;
+    const turmasEncerradasTrocaTurno = [];
+    for (const alunoRaw of alunos) {
+      const alunoNome = String(alunoRaw.nome || alunoRaw.ALUNO || alunoRaw.Aluno).trim();
+      const idaluno = studentIdMap.get(alunoNome)?.id;
+      if (!idaluno) continue;
+
+      const turnoAntigo = turnoAntigoPorNome.get(alunoNome);
+      if (turnoAntigo === undefined) continue; // aluno novo nesta importação — não tem matrícula antiga pra revisitar
+      const turnoNovo = truncar(alunoRaw.turno, 50) || null;
+      if (turnoNovo === (turnoAntigo || null)) continue;
+
+      const resultadoTurno = await encerrarMatriculasForaDoTurno(connection, idaluno, turnoNovo, req.id_instituicao);
+      matriculasEncerradasTrocaTurno += resultadoTurno.encerradas;
+      turmasEncerradasTrocaTurno.push(...resultadoTurno.turmas);
+    }
+    if (matriculasEncerradasTrocaTurno > 0) {
+      await logAuditEvent(
+        'MATRICULAS_ENCERRADAS_TROCA_TURNO',
+        `Import em massa: ${matriculasEncerradasTrocaTurno} matrícula(s) encerrada(s) por troca de turno: ${turmasEncerradasTrocaTurno.join(', ')}`,
+        req.id_instituicao,
+        connection
+      );
+    }
+
     // Passo 6: quem estava ativo mas não veio nesta planilha vira inativo, e suas
     // matrículas correntes são encerradas — a planilha é a fonte da verdade de
     // "quem está matriculado agora".
@@ -1158,6 +1216,8 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         observacoes_saude_adicionadas: saudeAfetada,
         responsaveis_afetados: responsaveisAfetados,
         alunos_inativados: inactivatedCount,
+        matriculas_encerradas_troca_turno: matriculasEncerradasTrocaTurno,
+        turmas_encerradas_troca_turno: turmasEncerradasTrocaTurno,
         conflitos_horario: conflitosHorario,
         conflitos_turno: conflitosTurno,
         turmas_sem_area: [...turmasSemArea]
@@ -1279,6 +1339,14 @@ router.put('/:id', validate('aluno'), asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
 
+    // Turno ANTES da troca — precisa saber se mudou de verdade pra decidir se
+    // vale a pena revisitar as matrículas dele (ver encerrarMatriculasForaDoTurno).
+    const [[alunoAntes]] = await connection.query(
+      'SELECT turno FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL',
+      [id, req.id_instituicao]
+    );
+    const turnoAntigo = alunoAntes?.turno || null;
+
     const [result] = await connection.query(
       `UPDATE alunos SET nome=?, data_nascimento=?, data_cadastro=?, sexo=?, telefone=?, turma=?, turno=?, transporte=?, Inf=?,
          acompanhamento=?, ponto=?, informacoes_gerais=?, escola_atual=?, status=?
@@ -1293,6 +1361,14 @@ router.put('/:id', validate('aluno'), asyncHandler(async (req, res) => {
     if (result.affectedRows === 0) {
       await connection.rollback();
       return res.status(404).json({ error: 'Aluno não encontrado.' });
+    }
+
+    // Turno mudou de verdade? Encerra as matrículas que ficaram incompatíveis
+    // com o turno novo (ensaios/turno "Noite" nunca são afetados — ver comentário
+    // em encerrarMatriculasForaDoTurno).
+    let resultadoTurno = { encerradas: 0, turmas: [] };
+    if ((turno || null) !== turnoAntigo) {
+      resultadoTurno = await encerrarMatriculasForaDoTurno(connection, id, turno, req.id_instituicao);
     }
 
     // Nível: compara com o que está aberto hoje antes de mexer, mesma lógica
@@ -1355,9 +1431,22 @@ router.put('/:id', validate('aluno'), asyncHandler(async (req, res) => {
       );
     }
 
+    if (resultadoTurno.encerradas > 0) {
+      await logAuditEvent(
+        'MATRICULAS_ENCERRADAS_TROCA_TURNO',
+        `Aluno ID: ${id}, turno ${turnoAntigo || '(vazio)'} -> ${turno || '(vazio)'}, ${resultadoTurno.encerradas} matrícula(s) encerrada(s): ${resultadoTurno.turmas.join(', ')}`,
+        req.id_instituicao,
+        connection
+      );
+    }
+
     await logAuditEvent('ATUALIZAR_ALUNO', `Aluno ID: ${id}, edição completa por usuário #${req.user.id}`, req.id_instituicao, connection);
     await connection.commit();
-    res.json({ message: 'Aluno atualizado com sucesso!' });
+    res.json({
+      message: 'Aluno atualizado com sucesso!',
+      matriculas_encerradas: resultadoTurno.encerradas,
+      turmas_encerradas: resultadoTurno.turmas
+    });
   } catch (err) {
     await connection.rollback();
     throw err;
@@ -1378,13 +1467,20 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   }
 
   // Pra "desistência" (ver notificação abaixo), precisa saber o status ANTES
-  // de trocar — só é um evento novo se ele não já estava inativo.
+  // de trocar — só é um evento novo se ele não já estava inativo. Pra troca de
+  // turno, precisa do turno ANTES pra decidir se mudou de verdade (ver
+  // encerrarMatriculasForaDoTurno abaixo).
   let statusAnterior = null;
   let nomeAluno = null;
+  let turnoAnterior = null;
   if (campo === 'status' && valor === 'inativo') {
     const [[atual]] = await pool.query('SELECT status, nome FROM alunos WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
     statusAnterior = atual?.status;
     nomeAluno = atual?.nome;
+  }
+  if (campo === 'turno') {
+    const [[atual]] = await pool.query('SELECT turno FROM alunos WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
+    turnoAnterior = atual?.turno || null;
   }
 
   const sql = 'UPDATE alunos SET ?? = ? WHERE id = ? AND id_instituicao = ?';
@@ -1410,7 +1506,19 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     });
   }
 
-  res.json({ message: 'Campo atualizado com sucesso.' });
+  let resultadoTurno = { encerradas: 0, turmas: [] };
+  if (campo === 'turno' && (valor || null) !== turnoAnterior) {
+    resultadoTurno = await encerrarMatriculasForaDoTurno(pool, id, valor, req.id_instituicao);
+    if (resultadoTurno.encerradas > 0) {
+      await logAuditEvent(
+        'MATRICULAS_ENCERRADAS_TROCA_TURNO',
+        `Aluno ID: ${id}, turno ${turnoAnterior || '(vazio)'} -> ${valor || '(vazio)'}, ${resultadoTurno.encerradas} matrícula(s) encerrada(s): ${resultadoTurno.turmas.join(', ')}`,
+        req.id_instituicao
+      );
+    }
+  }
+
+  res.json({ message: 'Campo atualizado com sucesso.', matriculas_encerradas: resultadoTurno.encerradas, turmas_encerradas: resultadoTurno.turmas });
 }));
 
 // Excluir Aluno — soft-delete: marca excluido_em/excluido_por em vez de
