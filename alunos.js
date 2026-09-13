@@ -1485,7 +1485,8 @@ router.delete('/:id/permanente', asyncHandler(async (req, res) => {
 // '/' e no resto do backend).
 router.get('/excluidos', asyncHandler(async (req, res) => {
   const [results] = await pool.query(
-    `SELECT a.id, a.nome, a.excluido_em, u.nome AS excluido_por_nome
+    `SELECT a.id, a.nome, a.excluido_em, u.nome AS excluido_por_nome,
+            ${getNivelAtualSubquery()}
      FROM alunos a
      LEFT JOIN usuarios u ON u.id = a.excluido_por
      WHERE a.id_instituicao = ? AND a.excluido_em IS NOT NULL

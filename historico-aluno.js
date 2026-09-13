@@ -26,7 +26,9 @@ router.get('/buscar', masterMiddleware, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Informe pelo menos 2 caracteres para buscar.' });
   }
 
-  let sql = `SELECT a.id, a.nome, a.data_nascimento, a.sexo, a.telefone, a.turma, a.turno, a.transporte, a.Inf, a.status, a.id_instituicao, i.nome AS nome_instituicao
+  let sql = `SELECT a.id, a.nome, a.data_nascimento, a.sexo, a.telefone, a.turma, a.turno, a.transporte, a.Inf, a.status, a.id_instituicao, i.nome AS nome_instituicao,
+       (SELECT an.nivel FROM aluno_niveis an WHERE an.id_aluno = a.id AND an.id_instituicao = a.id_instituicao AND an.data_fim IS NULL ORDER BY an.data_inicio DESC LIMIT 1) AS nivel,
+       (SELECT an.subnivel FROM aluno_niveis an WHERE an.id_aluno = a.id AND an.id_instituicao = a.id_instituicao AND an.data_fim IS NULL ORDER BY an.data_inicio DESC LIMIT 1) AS subnivel
      FROM alunos a
      JOIN instituicoes i ON a.id_instituicao = i.id
      WHERE a.nome LIKE ? AND a.excluido_em IS NULL`;
