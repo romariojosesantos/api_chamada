@@ -48,6 +48,32 @@ async function encerrarMatriculasForaDoTurno(connection, idAluno, novoTurno, idI
   return { encerradas: incompativeis.length, turmas: incompativeis.map(m => m.nome_turma) };
 }
 
+// Encerra TODAS as matrículas ativas do aluno quando o status dele deixa de
+// ser 'ativo' (ex.: "espera", "inativo") — matrícula só faz sentido pra aluno
+// ativo. Diferente de `encerrarMatriculasForaDoTurno`, aqui não há filtro por
+// turno: se o status não é ativo, toda matrícula corrente é encerrada.
+async function encerrarMatriculasSeNaoAtivo(connection, idAluno, novoStatus, idInstituicao) {
+  const statusNormalizado = String(novoStatus || '').trim().toLowerCase();
+  if (statusNormalizado === 'ativo') return { encerradas: 0, turmas: [] };
+
+  const [ativas] = await connection.query(
+    `SELECT m.idmatricula, atv.nome AS nome_turma
+     FROM matricula m
+     JOIN atividades atv ON atv.idatividades = m.idatividades
+     WHERE m.idaluno = ? AND m.id_instituicao = ? AND m.status = 'matriculado' AND m.data_fim IS NULL`,
+    [idAluno, idInstituicao]
+  );
+
+  if (ativas.length === 0) return { encerradas: 0, turmas: [] };
+
+  await connection.query(
+    `UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula IN (?)`,
+    [ativas.map(m => m.idmatricula)]
+  );
+
+  return { encerradas: ativas.length, turmas: ativas.map(m => m.nome_turma) };
+}
+
 // Recalcula e grava o status de cada aluno em `alunoIds` com base em suas
 // matrículas atuais. Roda dentro da mesma transação/conexão de quem chama, para
 // que a sincronização faça parte da mesma operação atômica.
@@ -115,5 +141,6 @@ async function syncAlunoStatusFromMatriculas(connection, alunoIds, idInstituicao
 module.exports = {
   resolveAlunoStatus,
   syncAlunoStatusFromMatriculas,
-  encerrarMatriculasForaDoTurno
+  encerrarMatriculasForaDoTurno,
+  encerrarMatriculasSeNaoAtivo
 };

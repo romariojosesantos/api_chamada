@@ -6,7 +6,7 @@ const router = express.Router();
 const pool = require('./db');
 const { validate } = require('./validation');
 const { logAuditEvent } = require('./audit');
-const { syncAlunoStatusFromMatriculas, encerrarMatriculasForaDoTurno } = require('./status-sync');
+const { syncAlunoStatusFromMatriculas, encerrarMatriculasForaDoTurno, encerrarMatriculasSeNaoAtivo } = require('./status-sync');
 const { criarNotificacao } = require('./notificacoes-service');
 const { podeMatricular } = require('./regras-matricula');
 const { AREAS_VALIDAS } = require('./areas');
@@ -146,6 +146,93 @@ const parseInteiro = (valor) => {
   const n = parseInt(String(valor).trim(), 10);
   return isNaN(n) ? null : n;
 };
+
+// --- Detecção de nome parecido (aluno, turma/atividade, professor) na
+// importação em massa — evita criar um cadastro duplicado só porque a
+// planilha escreveu o nome com um acento/maiúscula diferente, ou avisar
+// quando pode ser um erro de digitação (sem corrigir sozinho, porque duas
+// pessoas/turmas diferentes podem ter nomes parecidos de verdade).
+
+// Só acento/maiúscula/espaço — sem isso "Joao Silva" e "João Silva" contam
+// como pessoas diferentes pro UNIQUE do banco, e cria um cadastro duplicado.
+const normalizarTextoComparacao = (s) => String(s || '')
+  .normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .toLowerCase().trim().replace(/\s+/g, ' ');
+
+// Distância de Levenshtein (quantas inserções/remoções/trocas de letra
+// separam duas strings) — sem biblioteca externa, o volume de nomes por
+// import não justifica uma dependência só pra isso.
+function distanciaLevenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const linhaAnterior = Array.from({ length: n + 1 }, (_, j) => j);
+  let linhaAtual = new Array(n + 1);
+  for (let i = 1; i <= m; i++) {
+    linhaAtual[0] = i;
+    for (let j = 1; j <= n; j++) {
+      linhaAtual[j] = a[i - 1] === b[j - 1]
+        ? linhaAnterior[j - 1]
+        : 1 + Math.min(linhaAnterior[j], linhaAtual[j - 1], linhaAnterior[j - 1]);
+    }
+    for (let j = 0; j <= n; j++) linhaAnterior[j] = linhaAtual[j];
+  }
+  return linhaAnterior[n];
+}
+
+// Compara `nomeEnviado` (vindo da planilha) contra a lista de nomes que já
+// existem no banco (aluno, turma ou professor — mesma função pros três).
+// Devolve:
+//   { tipo: 'exato' }                       — já bate igual, nada a fazer.
+//   { tipo: 'corrigido', nome }              — só difere por acento/maiúscula/
+//                                              espaço: mesma pessoa/turma, troca
+//                                              pelo nome já cadastrado.
+//   { tipo: 'suspeita', nome, distancia }    — mesma quantidade de palavras,
+//                                              tamanho bem próximo (≤2
+//                                              caracteres de diferença) e só
+//                                              1-2 letras diferentes: PODE ser
+//                                              erro de digitação, mas não
+//                                              corrige sozinho (pode ser gente/
+//                                              turma diferente de verdade) —
+//                                              só avisa no resumo.
+//   { tipo: 'nenhum' }                       — sem relação nenhuma; segue como
+//                                              nome novo, sem aviso.
+// Um nome tipo "Romário José dos Santos" NUNCA é comparado com "Romário José
+// dos" (faltando uma palavra inteira) — quantidade de palavras diferente já
+// descarta a comparação antes de calcular distância, porque isso não é erro
+// de digitação, é um nome (ou cadastro) genuinamente diferente.
+const LIMITE_DIFERENCA_TAMANHO = 2;
+const LIMITE_DISTANCIA_SUSPEITA = 2;
+function resolverNomeParecido(nomeEnviado, nomesExistentes) {
+  const enviadoLimpo = String(nomeEnviado || '').trim();
+  if (!enviadoLimpo) return { tipo: 'nenhum' };
+  if (nomesExistentes.includes(enviadoLimpo)) return { tipo: 'exato' };
+
+  const normEnviado = normalizarTextoComparacao(enviadoLimpo);
+  const palavrasEnviado = normEnviado.split(' ').filter(Boolean);
+
+  let corrigido = null;
+  let melhorSuspeita = null;
+  for (const existente of nomesExistentes) {
+    const normExistente = normalizarTextoComparacao(existente);
+    if (normExistente === normEnviado) { corrigido = existente; break; }
+
+    const palavrasExistente = normExistente.split(' ').filter(Boolean);
+    if (palavrasExistente.length !== palavrasEnviado.length) continue;
+    if (Math.abs(normExistente.length - normEnviado.length) > LIMITE_DIFERENCA_TAMANHO) continue;
+
+    const distancia = distanciaLevenshtein(normEnviado, normExistente);
+    if (distancia > 0 && distancia <= LIMITE_DISTANCIA_SUSPEITA) {
+      if (!melhorSuspeita || distancia < melhorSuspeita.distancia) {
+        melhorSuspeita = { nome: existente, distancia };
+      }
+    }
+  }
+
+  if (corrigido) return { tipo: 'corrigido', nome: corrigido };
+  if (melhorSuspeita) return { tipo: 'suspeita', nome: melhorSuspeita.nome, distancia: melhorSuspeita.distancia };
+  return { tipo: 'nenhum' };
+}
 
 // Casos em que a letra final do nome NÃO é só sufixo de turma (que o corte
 // abaixo remove) e sim parte do nome real de uma turma distinta — ex.: "CUL -
@@ -401,7 +488,13 @@ router.get('/frequencia-plena', asyncHandler(async (req, res) => {
 // Importação em massa a partir do Excel da grade (aba de alunos + aba opcional de
 // atividades). Todo o processamento roda numa única transação: se qualquer etapa
 // falhar, nada é gravado. Passos:
-//   1. Upsert dos alunos (por nome) — cria quem não existe, atualiza quem já existe.
+//   0. Corrige nome de aluno/turma/professor que só difere por acento, maiúscula
+//      ou espaço de um já cadastrado (mesma pessoa/turma, grafia diferente —
+//      ver resolverNomeParecido), e reporta no resumo (`nomes_corrigidos`)
+//      qualquer nome parecido mas não idêntico o bastante pra corrigir sozinho
+//      (`possiveis_duplicados` — fica como a planilha escreveu, só avisa).
+//   1. Upsert dos alunos (por nome, já corrigido acima) — cria quem não existe,
+//      atualiza quem já existe.
 //   2. Recarrega os alunos pelo nome para obter os IDs reais (insertId não serve
 //      para lote com upsert, por isso o SELECT extra).
 //   3. Varre cada aluno procurando colunas de matrícula no formato "SEG HR 1" etc.
@@ -412,10 +505,11 @@ router.get('/frequencia-plena', asyncHandler(async (req, res) => {
 //      matrícula pra mesma atividade, não faz nada; se a atividade mudou nesse
 //      horário, encerra (soft-delete) a antiga e cria uma nova — preserva o
 //      histórico em vez de sobrescrever.
-//   6. Qualquer aluno ATIVO que não veio nesta planilha é marcado como INATIVO e
-//      suas matrículas são encerradas — a planilha é tratada como a fonte da
-//      verdade de "quem está matriculado agora". Um import parcial (faltando
-//      alguém que ainda está na escola) vai inativar essa pessoa por engano.
+//
+// Quem NÃO veio nesta planilha simplesmente não é tocado (nem status, nem
+// matrícula) — a planilha só atualiza/cria quem ela menciona; não existe mais
+// um "Passo 6" tratando a ausência como desistência (isso já causou
+// inativação em massa por engano quando a planilha vinha incompleta).
 router.post('/upsert-bulk', asyncHandler(async (req, res) => {
   let alunos = [];
   let atividadesExcel = [];
@@ -436,6 +530,50 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     await connection.beginTransaction();
 
     const today = new Date().toISOString().split('T')[0];
+
+    // Passo 0: corrige nome de aluno/professor que só difere por
+    // acento/maiúscula/espaço de um já cadastrado, e separa quem só ficou
+    // "parecido" (possível erro de digitação, mas não corrige sozinho — ver
+    // resolverNomeParecido). Mexe direto em `alunoRaw.nome` de cada linha,
+    // ANTES de qualquer outro passo, pra que toda referência mais abaixo
+    // (que sempre lê `alunoRaw.nome || alunoRaw.ALUNO || alunoRaw.Aluno`) já
+    // use o nome corrigido sem precisar mudar em 6 lugares diferentes.
+    // Nome de turma NÃO passa por essa comparação — nomes de turma variam
+    // de propósito (mesma atividade, dia/horário diferente) e a comparação
+    // gerava falsos positivos.
+    const [alunosExistentesNomes, professoresExistentesNomes] = await Promise.all([
+      connection.query('SELECT nome FROM alunos WHERE id_instituicao = ? AND excluido_em IS NULL', [req.id_instituicao]).then(([r]) => r.map(x => x.nome)),
+      connection.query('SELECT nome FROM professores WHERE id_instituicao = ?', [req.id_instituicao]).then(([r]) => r.map(x => x.nome)),
+    ]);
+
+    const nomesCorrigidos = { alunos: [], professores: [] };
+    const possiveisDuplicados = { alunos: [], professores: [] };
+    const jaReportado = new Set(); // evita reportar o mesmo nome mais de uma vez (professor repete entre linhas)
+
+    // Resolve um nome contra a lista de existentes da categoria (aluno/
+    // professor): corrige em silêncio se for só grafia (acento/maiúscula/
+    // espaço), registra como suspeita se for só parecido, e devolve o nome
+    // final a usar (corrigido, ou o original se não achou nada relacionado).
+    const resolverEAplicar = (categoria, destino, nomeOriginal, nomesExistentes) => {
+      const resultado = resolverNomeParecido(nomeOriginal, nomesExistentes);
+      if (resultado.tipo === 'corrigido') {
+        if (!jaReportado.has(`${categoria}:${nomeOriginal}`)) {
+          jaReportado.add(`${categoria}:${nomeOriginal}`);
+          destino.corrigidos.push({ enviado: nomeOriginal, corrigido_para: resultado.nome });
+        }
+        return resultado.nome;
+      }
+      if (resultado.tipo === 'suspeita' && !jaReportado.has(`${categoria}:${nomeOriginal}`)) {
+        jaReportado.add(`${categoria}:${nomeOriginal}`);
+        destino.suspeitos.push({ enviado: nomeOriginal, parecido_com: resultado.nome });
+      }
+      return nomeOriginal;
+    };
+
+    for (const alunoRaw of alunos) {
+      const nomeOriginal = String(alunoRaw.nome || alunoRaw.ALUNO || alunoRaw.Aluno || '').trim();
+      alunoRaw.nome = resolverEAplicar('aluno', { corrigidos: nomesCorrigidos.alunos, suspeitos: possiveisDuplicados.alunos }, nomeOriginal, alunosExistentesNomes);
+    }
 
     // Turno de cada aluno ANTES do upsert (Passo 1) — precisa pra decidir, no
     // Passo 5f mais abaixo, se o turno mudou de verdade e vale a pena revisitar
@@ -562,7 +700,10 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
     for (const atv of atividadesExcel) {
       const atvNomeBruto = String(atv.atividade || atv.nome || atv.atividades || '').trim();
       const atvNome = atvNomeBruto ? normalizarNomeAtividade(atvNomeBruto) : '';
-      const profNome = String(atv.professor || atv.professores || atv.prof || '').trim();
+      const profNomeBruto = String(atv.professor || atv.professores || atv.prof || '').trim();
+      const profNome = profNomeBruto
+        ? resolverEAplicar('professor', { corrigidos: nomesCorrigidos.professores, suspeitos: possiveisDuplicados.professores }, profNomeBruto, professoresExistentesNomes)
+        : '';
       const areaNormalizada = normalizarArea(atv.área ?? atv.area ?? atv.categoria);
       if (atvNome) {
         atividadeNomes.add(atvNome);
@@ -697,6 +838,10 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       // verdade num turno diferente do turno do aluno — sem essa checagem,
       // isso criaria uma segunda turma duplicada só pra "encaixar" o turno
       // errado, e um aluno da tarde acabaria numa atividade da manhã.
+      // EXCEÇÃO: se é o próprio aluno mudando de turno nesta importação (ver
+      // turnoAntigoPorNome), não é conflito — é exatamente o caso de "encerra
+      // a matrícula antiga e cria/usa a turma do turno novo" (mesmo nome,
+      // outra linha em `atividades`), então deixa passar.
       const turnosPorNomeDiaHorario = new Map(); // "nome|dia|horario" -> Set de turnos já cadastrados
       existingActivities.forEach(act => {
         if (!act.dia_semana || !act.horario || !act.turno) return;
@@ -712,9 +857,13 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         const turnosExistentes = turnosPorNomeDiaHorario.get(key);
         // podeMatricular (não só === ) pra não travar ensaio: uma turma de
         // turno "Noite" é sempre compatível com qualquer turno de aluno.
-        if (turnosExistentes && turnosExistentes.size > 0 && ![...turnosExistentes].some(t => podeMatricular(m.turno, t))) {
+        const incompativel = turnosExistentes && turnosExistentes.size > 0 && ![...turnosExistentes].some(t => podeMatricular(m.turno, t));
+        const nomeDoAluno = idalunoParaNome.get(m.idaluno);
+        const turnoAntigoDoAluno = turnoAntigoPorNome.get(nomeDoAluno);
+        const alunoMudouDeTurnoNestaImportacao = turnoAntigoDoAluno !== undefined && (turnoAntigoDoAluno || null) !== (m.turno || null);
+        if (incompativel && !alunoMudouDeTurnoNestaImportacao) {
           conflitosTurno.push({
-            aluno: idalunoParaNome.get(m.idaluno) || `aluno #${m.idaluno}`,
+            aluno: nomeDoAluno || `aluno #${m.idaluno}`,
             turma: m.nome_atividade,
             dia_semana: m.dia_semana,
             horario: m.horario,
@@ -1166,39 +1315,36 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       );
     }
 
-    // Passo 6: quem estava ativo mas não veio nesta planilha vira inativo, e suas
-    // matrículas correntes são encerradas — a planilha é a fonte da verdade de
-    // "quem está matriculado agora".
-    let activeStudentsNotInImport = [];
-    if (studentNames.length > 0) {
-      const placeholders = studentNames.map(() => '?').join(',');
-      const [result] = await connection.query(
-        `SELECT id FROM alunos WHERE id_instituicao = ? AND status = 'ativo' AND excluido_em IS NULL AND nome NOT IN (${placeholders})`,
-        [req.id_instituicao, ...studentNames]
-      );
-      activeStudentsNotInImport = result;
+    // Status explícito da planilha diferente de "ativo" (ex.: "espera") — só
+    // vale ter matrícula se o aluno estiver ativo, então encerra tudo que
+    // ficou aberto (mesma regra da troca de turno, ver encerrarMatriculasSeNaoAtivo
+    // em status-sync.js). Roda depois do Passo 5/5f pra pegar até matrículas
+    // criadas nesta mesma importação.
+    let matriculasEncerradasStatus = 0;
+    const turmasEncerradasStatus = [];
+    for (const [idaluno, statusLimpo] of statusExplicitos) {
+      const resultadoStatus = await encerrarMatriculasSeNaoAtivo(connection, idaluno, statusLimpo, req.id_instituicao);
+      matriculasEncerradasStatus += resultadoStatus.encerradas;
+      turmasEncerradasStatus.push(...resultadoStatus.turmas);
     }
-
-    const studentsToInactivate = activeStudentsNotInImport.map(s => s.id);
-    let inactivatedCount = 0;
-
-    if (studentsToInactivate.length > 0) {
-      const idPlaceholders = studentsToInactivate.map(() => '?').join(',');
-      const [updateResult] = await connection.query(
-        `UPDATE alunos SET status = 'inativo' WHERE id IN (${idPlaceholders}) AND id_instituicao = ?`,
-        [...studentsToInactivate, req.id_instituicao]
-      );
-      inactivatedCount = updateResult.affectedRows;
-
-      await connection.query(
-        `UPDATE matricula SET data_fim = ?, status = 'cancelada' WHERE idaluno IN (${idPlaceholders}) AND id_instituicao = ? AND data_fim IS NULL`,
-        [today, ...studentsToInactivate, req.id_instituicao]
+    if (matriculasEncerradasStatus > 0) {
+      await logAuditEvent(
+        'MATRICULAS_ENCERRADAS_STATUS',
+        `Import em massa: ${matriculasEncerradasStatus} matrícula(s) encerrada(s) por status diferente de ativo: ${turmasEncerradasStatus.join(', ')}`,
+        req.id_instituicao,
+        connection
       );
     }
 
     // Garante que alunos.status reflita a matrícula real de todo mundo que foi
-    // tocado nesta importação (não só os inativados acima).
-    const idsParaSincronizar = [...new Set(existingStudents.map(s => s.id))];
+    // tocado nesta importação — quem NÃO veio na planilha não é sincronizado
+    // aqui (nem em nenhum outro lugar deste endpoint): a ausência não é mais
+    // tratada como desistência (ver comentário no topo da rota).
+    // Alunos com status explícito não-ativo nesta planilha são excluídos daqui:
+    // já foram fixados acima e não devem ser "promovidos" de volta a ativo só
+    // porque ainda têm (ou ganharam) matrícula formalmente aberta antes do encerramento.
+    const idsComStatusExplicito = new Set(statusExplicitos.map(([id]) => id));
+    const idsParaSincronizar = [...new Set(existingStudents.map(s => s.id).filter(id => !idsComStatusExplicito.has(id)))];
     await syncAlunoStatusFromMatriculas(connection, idsParaSincronizar, req.id_instituicao);
 
     await connection.commit();
@@ -1215,9 +1361,12 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
         situacoes_anuais_afetadas: situacoesAfetadas,
         observacoes_saude_adicionadas: saudeAfetada,
         responsaveis_afetados: responsaveisAfetados,
-        alunos_inativados: inactivatedCount,
         matriculas_encerradas_troca_turno: matriculasEncerradasTrocaTurno,
         turmas_encerradas_troca_turno: turmasEncerradasTrocaTurno,
+        matriculas_encerradas_status: matriculasEncerradasStatus,
+        turmas_encerradas_status: turmasEncerradasStatus,
+        nomes_corrigidos: nomesCorrigidos,
+        possiveis_duplicados: possiveisDuplicados,
         conflitos_horario: conflitosHorario,
         conflitos_turno: conflitosTurno,
         turmas_sem_area: [...turmasSemArea]
@@ -1342,7 +1491,7 @@ router.put('/:id', validate('aluno'), asyncHandler(async (req, res) => {
     // Turno ANTES da troca — precisa saber se mudou de verdade pra decidir se
     // vale a pena revisitar as matrículas dele (ver encerrarMatriculasForaDoTurno).
     const [[alunoAntes]] = await connection.query(
-      'SELECT turno FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL',
+      'SELECT turno, status FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL',
       [id, req.id_instituicao]
     );
     const turnoAntigo = alunoAntes?.turno || null;
@@ -1440,12 +1589,28 @@ router.put('/:id', validate('aluno'), asyncHandler(async (req, res) => {
       );
     }
 
+    // Status virou algo diferente de "ativo" (ex.: "espera")? Matrícula só
+    // vale pra aluno ativo — encerra tudo que ficou aberto (mesma regra da
+    // troca de turno, ver encerrarMatriculasSeNaoAtivo em status-sync.js).
+    let resultadoStatus = { encerradas: 0, turmas: [] };
+    if ((status || 'ativo') !== (alunoAntes?.status || 'ativo')) {
+      resultadoStatus = await encerrarMatriculasSeNaoAtivo(connection, id, status, req.id_instituicao);
+    }
+    if (resultadoStatus.encerradas > 0) {
+      await logAuditEvent(
+        'MATRICULAS_ENCERRADAS_STATUS',
+        `Aluno ID: ${id}, status -> ${status}, ${resultadoStatus.encerradas} matrícula(s) encerrada(s): ${resultadoStatus.turmas.join(', ')}`,
+        req.id_instituicao,
+        connection
+      );
+    }
+
     await logAuditEvent('ATUALIZAR_ALUNO', `Aluno ID: ${id}, edição completa por usuário #${req.user.id}`, req.id_instituicao, connection);
     await connection.commit();
     res.json({
       message: 'Aluno atualizado com sucesso!',
-      matriculas_encerradas: resultadoTurno.encerradas,
-      turmas_encerradas: resultadoTurno.turmas
+      matriculas_encerradas: resultadoTurno.encerradas + resultadoStatus.encerradas,
+      turmas_encerradas: [...resultadoTurno.turmas, ...resultadoStatus.turmas]
     });
   } catch (err) {
     await connection.rollback();
@@ -1473,7 +1638,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   let statusAnterior = null;
   let nomeAluno = null;
   let turnoAnterior = null;
-  if (campo === 'status' && valor === 'inativo') {
+  if (campo === 'status') {
     const [[atual]] = await pool.query('SELECT status, nome FROM alunos WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
     statusAnterior = atual?.status;
     nomeAluno = atual?.nome;
@@ -1518,7 +1683,26 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     }
   }
 
-  res.json({ message: 'Campo atualizado com sucesso.', matriculas_encerradas: resultadoTurno.encerradas, turmas_encerradas: resultadoTurno.turmas });
+  // Status virou algo diferente de "ativo" (ex.: "espera")? Matrícula só vale
+  // pra aluno ativo — encerra tudo que ficou aberto (mesma regra da troca de
+  // turno, ver encerrarMatriculasSeNaoAtivo em status-sync.js).
+  let resultadoStatus = { encerradas: 0, turmas: [] };
+  if (campo === 'status' && valor !== statusAnterior) {
+    resultadoStatus = await encerrarMatriculasSeNaoAtivo(pool, id, valor, req.id_instituicao);
+    if (resultadoStatus.encerradas > 0) {
+      await logAuditEvent(
+        'MATRICULAS_ENCERRADAS_STATUS',
+        `Aluno ID: ${id}, status ${statusAnterior || '(vazio)'} -> ${valor}, ${resultadoStatus.encerradas} matrícula(s) encerrada(s): ${resultadoStatus.turmas.join(', ')}`,
+        req.id_instituicao
+      );
+    }
+  }
+
+  res.json({
+    message: 'Campo atualizado com sucesso.',
+    matriculas_encerradas: resultadoTurno.encerradas + resultadoStatus.encerradas,
+    turmas_encerradas: [...resultadoTurno.turmas, ...resultadoStatus.turmas]
+  });
 }));
 
 // Excluir Aluno — soft-delete: marca excluido_em/excluido_por em vez de
