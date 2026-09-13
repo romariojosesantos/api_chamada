@@ -51,6 +51,7 @@ const relatoriosRouter = require('./relatorios');
 const gradeRouter = require('./grade');
 const matriculasRouter = require('./matriculas');
 const atividadesRouter = require('./atividades');
+const professoresAdminRouter = require('./professores');
 const { router: authRouter, authMiddleware } = require('./auth');
 const { router: contatosEmergenciaRouter } = require('./contatos-emergencia');
 const diasSemAulaRouter = require('./dias-sem-aula');
@@ -210,12 +211,15 @@ app.get('/api/transportes', async (req, res) => {
 });
 
 // Rota para listar professores únicos da instituição (para o dropdown de filtros)
+// Só ativos: professor desativado (ver tela "Educadores") não deve poluir
+// autocomplete/filtro de telas que não sabem de status — continua aparecendo
+// nas turmas/relatórios onde já dava aula, só não entra em seleção nova.
 app.get('/api/professores', async (req, res) => {
   try {
     const sql = `
       SELECT DISTINCT TRIM(nome) AS nome
       FROM professores
-      WHERE id_instituicao = ? AND nome IS NOT NULL AND TRIM(nome) != ''
+      WHERE id_instituicao = ? AND nome IS NOT NULL AND TRIM(nome) != '' AND ativo = 1
       ORDER BY nome ASC
     `;
     const [results] = await pool.query(sql, [req.id_instituicao]);
@@ -235,6 +239,7 @@ app.use('/api/grade', gradeRouter);
 app.use('/api/matriculas', matriculasRouter);
 // CRUD de turmas (atividades) — GET/POST/PUT/DELETE, ver atividades.js.
 app.use('/api/atividades', atividadesRouter);
+app.use('/api/professores-admin', professoresAdminRouter);
 app.use('/api/contatos-emergencia', contatosEmergenciaRouter);
 app.use('/api/dias-sem-aula', diasSemAulaRouter);
 app.use('/api/notas', notasRouter);

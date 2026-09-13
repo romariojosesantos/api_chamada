@@ -107,6 +107,11 @@ router.get('/turmas', asyncHandler(async (req, res) => {
   const data = hojeBrasilia();
   const diaSemana = diaSemanaDaData(data);
 
+  // "É do professor" = principal (idprofessor) OU co-professor (ver
+  // atividade_professores, co-docência) — mesma regra repetida em todo lugar
+  // deste arquivo que decide o que um professor pode ver/bater.
+  const ehDoProfessor = 'atv.idprofessor = ? OR atv.idatividades IN (SELECT idatividades FROM atividade_professores WHERE idprofessor = ?)';
+
   const [turmas] = await pool.query(
     `SELECT atv.idatividades AS id_atividade, atv.nome, atv.horario, atv.turno,
             pt.id AS id_ponto,
@@ -114,9 +119,9 @@ router.get('/turmas', asyncHandler(async (req, res) => {
             DATE_FORMAT(pt.hora_saida, '%Y-%m-%dT%H:%i:%s') AS hora_saida
      FROM atividades atv
      LEFT JOIN pontos pt ON pt.id_atividade = atv.idatividades AND pt.id_professor = ? AND pt.data = ?
-     WHERE atv.id_instituicao = ? AND atv.idprofessor = ? AND atv.dia_semana = ? AND atv.data_fim IS NULL
+     WHERE atv.id_instituicao = ? AND (${ehDoProfessor}) AND atv.dia_semana = ? AND atv.data_fim IS NULL
      ORDER BY atv.horario ASC, atv.nome ASC`,
-    [idProfessor, data, req.id_instituicao, idProfessor, diaSemana]
+    [idProfessor, data, req.id_instituicao, idProfessor, idProfessor, diaSemana]
   );
 
   // Atividades internas (Planejamento, Reuniões, ...) — sem horário fixo, só
@@ -130,9 +135,9 @@ router.get('/turmas', asyncHandler(async (req, res) => {
      FROM tipos_ponto_interno t
      LEFT JOIN pontos pt ON pt.id_tipo_interno = t.id AND pt.id_professor = ? AND pt.data = ?
      WHERE t.id_instituicao = ? AND t.ativo = 1
-       AND t.area IN (SELECT DISTINCT area FROM atividades WHERE idprofessor = ? AND id_instituicao = ?)
+       AND t.area IN (SELECT DISTINCT area FROM atividades atv WHERE (${ehDoProfessor}) AND id_instituicao = ?)
      ORDER BY t.area ASC, t.nome ASC`,
-    [idProfessor, data, req.id_instituicao, idProfessor, req.id_instituicao]
+    [idProfessor, data, req.id_instituicao, idProfessor, idProfessor, req.id_instituicao]
   );
 
   res.json({ data, dia_semana: diaSemana, turmas, atividades_internas: tipos });
@@ -252,7 +257,13 @@ router.post('/bater', asyncHandler(async (req, res) => {
     [id_atividade, req.id_instituicao]
   );
   if (!turma) return res.status(404).json({ error: 'Turma não encontrada.' });
-  if (turma.idprofessor !== idProfessor) return res.status(403).json({ error: 'Essa turma não é sua.' });
+  if (turma.idprofessor !== idProfessor) {
+    const [[ehCoProfessor]] = await pool.query(
+      'SELECT 1 FROM atividade_professores WHERE idatividades = ? AND idprofessor = ?',
+      [id_atividade, idProfessor]
+    );
+    if (!ehCoProfessor) return res.status(403).json({ error: 'Essa turma não é sua.' });
+  }
   if (turma.dia_semana !== diaSemana) {
     return res.status(400).json({ error: `Essa turma acontece na(o) ${turma.dia_semana}, não hoje (${diaSemana}).` });
   }
@@ -314,8 +325,11 @@ router.post('/bater-interno', asyncHandler(async (req, res) => {
   const [[tipo]] = await pool.query(
     `SELECT t.id FROM tipos_ponto_interno t
      WHERE t.id = ? AND t.id_instituicao = ? AND t.ativo = 1
-       AND t.area IN (SELECT DISTINCT area FROM atividades WHERE idprofessor = ? AND id_instituicao = ?)`,
-    [id_tipo_interno, req.id_instituicao, idProfessor, req.id_instituicao]
+       AND t.area IN (
+         SELECT DISTINCT area FROM atividades atv
+         WHERE id_instituicao = ? AND (atv.idprofessor = ? OR atv.idatividades IN (SELECT idatividades FROM atividade_professores WHERE idprofessor = ?))
+       )`,
+    [id_tipo_interno, req.id_instituicao, req.id_instituicao, idProfessor, idProfessor]
   );
   if (!tipo) return res.status(403).json({ error: 'Você não tem acesso a esse tipo de atividade.' });
 

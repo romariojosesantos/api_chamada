@@ -73,9 +73,24 @@ async function setupDatabase() {
       CREATE TABLE IF NOT EXISTS professores (
         id INT PRIMARY KEY AUTO_INCREMENT,
         nome VARCHAR(100) NOT NULL,
+        ativo TINYINT(1) NOT NULL DEFAULT 1,
         id_instituicao INT NOT NULL,
         FOREIGN KEY (id_instituicao) REFERENCES instituicoes(id),
         UNIQUE KEY idx_prof_inst (nome, id_instituicao)
+      ) ENGINE=InnoDB;
+    `;
+
+    // Professores ADICIONAIS de uma turma (co-docência) — o principal continua
+    // em atividades.idprofessor, sem mudança nenhuma pra quem só lê/escreve
+    // essa coluna. Ver backend/migrate-add-professores-crud.js.
+    const createAtividadeProfessoresTable = `
+      CREATE TABLE IF NOT EXISTS atividade_professores (
+        idatividades INT NOT NULL,
+        idprofessor INT NOT NULL,
+        id_instituicao INT NOT NULL,
+        PRIMARY KEY (idatividades, idprofessor),
+        FOREIGN KEY (idatividades) REFERENCES atividades(idatividades) ON DELETE CASCADE,
+        FOREIGN KEY (idprofessor) REFERENCES professores(id) ON DELETE CASCADE
       ) ENGINE=InnoDB;
     `;
 
@@ -186,6 +201,9 @@ async function setupDatabase() {
 
     await db.query(createAtividadesTable);
     console.log('Tabela "atividades" pronta.');
+
+    await db.query(createAtividadeProfessoresTable);
+    console.log('Tabela "atividade_professores" pronta.');
 
     await db.query(createPresencaTable);
     console.log('Tabela "presenca" pronta.');

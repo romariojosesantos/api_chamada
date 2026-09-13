@@ -17,10 +17,30 @@ const DIAS_VALIDOS = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 // regras-matricula.js (podeMatricular).
 const TURNOS_VALIDOS = ['Manhã', 'Tarde', 'Noite'];
 
-// Valida os campos comuns a criar/editar turma e resolve o professor: se vier
-// `idprofessor`, usa direto; se vier só `professor_nome`, acha o professor
-// existente com esse nome ou cria um novo — evita o usuário precisar ir numa
-// tela separada só pra cadastrar o professor antes de criar a turma.
+// Se vier `idprofessor`, usa direto; se vier só `professor_nome`, acha o
+// professor existente com esse nome ou cria um novo — evita o usuário
+// precisar ir numa tela separada só pra cadastrar o professor antes de criar
+// a turma. Reaproveitado tanto pelo professor principal (validarECresolverProfessor
+// abaixo) quanto pelos co-professores (POST /:id/professores).
+async function resolverProfessor(req, idprofessor, professor_nome) {
+  let idProfessorFinal = idprofessor ? Number(idprofessor) : null;
+  if (idProfessorFinal || !professor_nome || !String(professor_nome).trim()) return idProfessorFinal;
+
+  const nomeProf = String(professor_nome).trim();
+  const [existente] = await pool.query(
+    'SELECT id FROM professores WHERE nome = ? AND id_instituicao = ?',
+    [nomeProf, req.id_instituicao]
+  );
+  if (existente.length > 0) return existente[0].id;
+
+  const [criado] = await pool.query(
+    'INSERT INTO professores (nome, ativo, id_instituicao) VALUES (?, 1, ?)',
+    [nomeProf, req.id_instituicao]
+  );
+  return criado.insertId;
+}
+
+// Valida os campos comuns a criar/editar turma e resolve o professor principal.
 async function validarECresolverProfessor(req, res, body) {
   const { nome, dia_semana, horario, turno, idprofessor, professor_nome } = body;
 
@@ -47,24 +67,7 @@ async function validarECresolverProfessor(req, res, body) {
     return null;
   }
 
-  let idProfessorFinal = idprofessor ? Number(idprofessor) : null;
-
-  if (!idProfessorFinal && professor_nome && String(professor_nome).trim()) {
-    const nomeProf = String(professor_nome).trim();
-    const [existente] = await pool.query(
-      'SELECT id FROM professores WHERE nome = ? AND id_instituicao = ?',
-      [nomeProf, req.id_instituicao]
-    );
-    if (existente.length > 0) {
-      idProfessorFinal = existente[0].id;
-    } else {
-      const [criado] = await pool.query(
-        'INSERT INTO professores (nome, id_instituicao) VALUES (?, ?)',
-        [nomeProf, req.id_instituicao]
-      );
-      idProfessorFinal = criado.insertId;
-    }
-  }
+  const idProfessorFinal = await resolverProfessor(req, idprofessor, professor_nome);
 
   return { nomeLimpo, dia_semana, horario: String(horario).trim(), turno, area, idProfessorFinal };
 }
@@ -87,6 +90,24 @@ router.get('/', asyncHandler(async (req, res) => {
     ORDER BY atv.nome ASC, atv.dia_semana ASC, atv.turno ASC, atv.horario ASC
   `;
   const [results] = await pool.query(sql, [req.id_instituicao]);
+
+  // Professores ADICIONAIS (co-docência) — consulta separada + Map em JS
+  // (mesmo padrão de "duas queries + Map" já usado em alunos.js), em vez de
+  // agregar em SQL, pra não complicar a query principal.
+  const [coProfessores] = await pool.query(
+    `SELECT ap.idatividades, p.id, p.nome
+     FROM atividade_professores ap
+     JOIN professores p ON p.id = ap.idprofessor
+     WHERE ap.id_instituicao = ?`,
+    [req.id_instituicao]
+  );
+  const adicionaisPorTurma = new Map();
+  for (const row of coProfessores) {
+    if (!adicionaisPorTurma.has(row.idatividades)) adicionaisPorTurma.set(row.idatividades, []);
+    adicionaisPorTurma.get(row.idatividades).push({ id: row.id, nome: row.nome });
+  }
+  results.forEach(t => { t.professores_adicionais = adicionaisPorTurma.get(t.id) || []; });
+
   res.json(results);
 }));
 
@@ -158,6 +179,61 @@ router.put('/:id', asyncHandler(async (req, res) => {
   );
 
   await logAuditEvent('TURMA_EDITADA', `Turma #${id} -> "${dados.nomeLimpo}" (${dados.dia_semana} ${dados.horario} ${dados.turno})`, req.id_instituicao);
+
+  res.json({ success: true });
+}));
+
+// Adiciona um co-professor (professor ADICIONAL, além do principal) numa
+// turma — co-docência: os dois passam a poder bater ponto e lançar nota dela
+// (ver backend/pontos.js e backend/notas.js). Não afeta o principal, que só
+// troca editando a turma (PUT acima).
+router.post('/:id/professores', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { idprofessor, professor_nome } = req.body;
+
+  const [[turma]] = await pool.query(
+    'SELECT idatividades, idprofessor FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
+    [id, req.id_instituicao]
+  );
+  if (!turma) return res.status(404).json({ error: 'Turma não encontrada.' });
+
+  const idProfessorFinal = await resolverProfessor(req, idprofessor, professor_nome);
+  if (!idProfessorFinal) return res.status(400).json({ error: 'Informe idprofessor ou professor_nome.' });
+
+  if (idProfessorFinal === turma.idprofessor) {
+    return res.status(409).json({ error: 'Esse professor já é o principal dessa turma.' });
+  }
+
+  const [[jaAdicional]] = await pool.query(
+    'SELECT 1 FROM atividade_professores WHERE idatividades = ? AND idprofessor = ?',
+    [id, idProfessorFinal]
+  );
+  if (jaAdicional) return res.status(409).json({ error: 'Esse professor já está nessa turma.' });
+
+  await pool.query(
+    'INSERT INTO atividade_professores (idatividades, idprofessor, id_instituicao) VALUES (?, ?, ?)',
+    [id, idProfessorFinal, req.id_instituicao]
+  );
+
+  const [[professor]] = await pool.query('SELECT id, nome FROM professores WHERE id = ?', [idProfessorFinal]);
+
+  await logAuditEvent('TURMA_CO_PROFESSOR_ADICIONADO', `Turma #${id}: adicionado "${professor.nome}" (#${idProfessorFinal})`, req.id_instituicao);
+
+  res.status(201).json(professor);
+}));
+
+// Remove um co-professor da turma (o principal não é afetado — pra trocar o
+// principal, edite a turma).
+router.delete('/:id/professores/:idprofessor', asyncHandler(async (req, res) => {
+  const { id, idprofessor } = req.params;
+
+  const [result] = await pool.query(
+    'DELETE FROM atividade_professores WHERE idatividades = ? AND idprofessor = ? AND id_instituicao = ?',
+    [id, idprofessor, req.id_instituicao]
+  );
+  if (result.affectedRows === 0) return res.status(404).json({ error: 'Esse professor não está nessa turma como adicional.' });
+
+  await logAuditEvent('TURMA_CO_PROFESSOR_REMOVIDO', `Turma #${id}: removido professor #${idprofessor}`, req.id_instituicao);
 
   res.json({ success: true });
 }));

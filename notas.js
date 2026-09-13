@@ -86,13 +86,25 @@ router.delete('/periodos/:id', asyncHandler(async (req, res) => {
 // porque categoriaDaTurma depende do nome da turma, não é algo que dê pra
 // fazer só em SQL sem duplicar a lógica de detecção em dois lugares.
 async function montarParticipacaoPorAluno(inst) {
+  // UNION com atividade_professores (co-docência): mesma forma/colunas, só
+  // troca `atv.idprofessor` por `ap.idprofessor` — o loop abaixo que monta
+  // o Set<idprofessor> por categoria nem precisa saber que existe um segundo
+  // professor, só recebe mais uma linha com outro idprofessor pra mesma
+  // combinação aluno+turma.
   const [rows] = await pool.query(
     `SELECT m.idaluno AS aluno_id, a.nome AS aluno_nome, atv.nome AS turma_nome, atv.area, atv.idprofessor
      FROM matricula m
      JOIN alunos a ON a.id = m.idaluno AND a.status = 'ativo' AND a.excluido_em IS NULL
      JOIN atividades atv ON atv.idatividades = m.idatividades
+     WHERE m.id_instituicao = ? AND m.status = 'matriculado' AND m.data_fim IS NULL
+     UNION
+     SELECT m.idaluno AS aluno_id, a.nome AS aluno_nome, atv.nome AS turma_nome, atv.area, ap.idprofessor
+     FROM matricula m
+     JOIN alunos a ON a.id = m.idaluno AND a.status = 'ativo' AND a.excluido_em IS NULL
+     JOIN atividades atv ON atv.idatividades = m.idatividades
+     JOIN atividade_professores ap ON ap.idatividades = atv.idatividades
      WHERE m.id_instituicao = ? AND m.status = 'matriculado' AND m.data_fim IS NULL`,
-    [inst]
+    [inst, inst]
   );
 
   const porAluno = new Map(); // aluno_id -> { nome, categorias: Map<categoria, Set<idprofessor>> }
@@ -124,8 +136,8 @@ router.get('/turmas', asyncHandler(async (req, res) => {
   const params = [req.id_instituicao];
   if (req.user.perfil === 'professor') {
     if (!req.user.id_professor) return res.json([]);
-    sql += ' AND atv.idprofessor = ?';
-    params.push(req.user.id_professor);
+    sql += ' AND (atv.idprofessor = ? OR atv.idatividades IN (SELECT idatividades FROM atividade_professores WHERE idprofessor = ?))';
+    params.push(req.user.id_professor, req.user.id_professor);
   }
   sql += ' ORDER BY atv.nome ASC, atv.dia_semana ASC, atv.horario ASC';
   const [rows] = await pool.query(sql, params);
@@ -163,8 +175,10 @@ router.get('/alunos', asyncHandler(async (req, res) => {
   if (id_atividade) {
     if (ehProfessor) {
       const [check] = await pool.query(
-        'SELECT idatividades FROM atividades WHERE idatividades = ? AND id_instituicao = ? AND idprofessor = ?',
-        [id_atividade, req.id_instituicao, req.user.id_professor]
+        `SELECT idatividades FROM atividades
+         WHERE idatividades = ? AND id_instituicao = ?
+           AND (idprofessor = ? OR idatividades IN (SELECT idatividades FROM atividade_professores WHERE idprofessor = ?))`,
+        [id_atividade, req.id_instituicao, req.user.id_professor, req.user.id_professor]
       );
       if (check.length === 0) return res.status(403).json({ error: 'Essa turma não é sua.' });
     }
