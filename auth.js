@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const pool = require('./db');
 const { Resend } = require('resend');
 const { AREAS_VALIDAS } = require('./areas');
+const { TELAS_VALIDAS, PERFIS_EDITAVEIS } = require('./telas');
 
 const router = express.Router();
 const TOKEN_SECRET = process.env.AUTH_SECRET;
@@ -85,8 +86,20 @@ const loadUserInstitutions = async (userId, perfil) => {
 // aquela área (ex.: ponto — ver backend/pontos.js). Como fica dentro do
 // token, mudar a área de um coordenador só reflete no próximo login dele
 // (mesma limitação que id_professor já tem).
+// Quais telas esse perfil pode acessar (ver PerfilRoute/menuItemsBase no
+// front, e a tela "Permissões", master-only, que edita isso). `master` nunca
+// passa pela tabela — acesso total sempre, fixo aqui, pra não haver risco de
+// o próprio master se trancar fora do sistema mudando isso pela tela.
+const carregarTelasPermitidas = async (perfil) => {
+  if (perfil === 'master') return TELAS_VALIDAS;
+  if (!PERFIS_EDITAVEIS.includes(perfil)) return []; // perfil 'aluno' ou outro sem telas de staff
+  const [rows] = await pool.query('SELECT tela FROM permissoes_perfil WHERE perfil = ?', [perfil]);
+  return rows.map(r => r.tela);
+};
+
 const buildUserSession = async (userRow) => {
   const instituicoes = await loadUserInstitutions(userRow.id, userRow.perfil);
+  const telas_permitidas = await carregarTelasPermitidas(userRow.perfil);
   return {
     id: userRow.id,
     nome: userRow.nome,
@@ -94,7 +107,8 @@ const buildUserSession = async (userRow) => {
     perfil: userRow.perfil,
     id_professor: userRow.id_professor || null,
     area_coordenacao: userRow.area_coordenacao || null,
-    instituicoes
+    instituicoes,
+    telas_permitidas
   };
 };
 

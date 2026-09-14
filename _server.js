@@ -57,6 +57,7 @@ const { router: contatosEmergenciaRouter } = require('./contatos-emergencia');
 const diasSemAulaRouter = require('./dias-sem-aula');
 const notificacoesRouter = require('./notificacoes');
 const historicoAlunoRouter = require('./historico-aluno');
+const permissoesRouter = require('./permissoes');
 const notasRouter = require('./notas');
 const pontosRouter = require('./pontos');
 const tiposPontoInternoRouter = require('./tiposPontoInterno');
@@ -102,6 +103,10 @@ app.use('/api/auth', authRouter);
 // próprio historico-aluno.js) porque também precisa de authMiddleware, mas NÃO
 // do middleware de x-institution-id logo abaixo (master vê alunos de qualquer instituição).
 app.use('/api/historico-aluno', authMiddleware, historicoAlunoRouter);
+// Permissões por perfil: mesmo motivo do historico-aluno acima (master, ação
+// global, não é de uma instituição específica) — authMiddleware já vem
+// aplicado dentro do próprio permissoes.js, junto do masterMiddleware.
+app.use('/api/permissoes', permissoesRouter);
 // Tela de perfil/gamificação do aluno: mesmo motivo do historico-aluno acima
 // (authMiddleware direto, sem x-institution-id — o token de aluno já traz
 // id_instituicao embutido, ver POST /api/auth/aluno-login).
