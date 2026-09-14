@@ -52,6 +52,7 @@ const gradeRouter = require('./grade');
 const matriculasRouter = require('./matriculas');
 const atividadesRouter = require('./atividades');
 const professoresAdminRouter = require('./professores');
+const listasRouter = require('./listas');
 const { router: authRouter, authMiddleware } = require('./auth');
 const { router: contatosEmergenciaRouter } = require('./contatos-emergencia');
 const diasSemAulaRouter = require('./dias-sem-aula');
@@ -245,6 +246,7 @@ app.use('/api/matriculas', matriculasRouter);
 // CRUD de turmas (atividades) — GET/POST/PUT/DELETE, ver atividades.js.
 app.use('/api/atividades', atividadesRouter);
 app.use('/api/professores-admin', professoresAdminRouter);
+app.use('/api/listas', listasRouter);
 app.use('/api/contatos-emergencia', contatosEmergenciaRouter);
 app.use('/api/dias-sem-aula', diasSemAulaRouter);
 app.use('/api/notas', notasRouter);

@@ -25,6 +25,7 @@ const TELAS = [
   { tela: '/notas', label: 'Notas' },
   { tela: '/pontos', label: 'Ponto' },
   { tela: '/vincular-professor', label: 'Vincular Educador' },
+  { tela: '/listas', label: 'Listas' },
 ];
 
 const TELAS_VALIDAS = TELAS.map(t => t.tela);
