@@ -8,6 +8,7 @@ const router = express.Router();
 const pool = require('./db');
 const { masterMiddleware } = require('./auth');
 const { logAuditEvent } = require('./audit');
+const { syncAlunoStatusFromMatriculas } = require('./status-sync');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -295,6 +296,51 @@ router.delete('/matricula/:id', masterMiddleware, asyncHandler(async (req, res) 
   );
   await logAuditEvent('MATRICULA_ENCERRADA_MASTER', `Matrícula ID ${matriculaId} encerrada pelo master`, matricula.id_instituicao);
   res.json({ message: 'Matrícula encerrada com sucesso.', permanente: false });
+}));
+
+// Reabrir uma matrícula histórica (apenas master) — contraparte do soft-close
+// acima: limpa data_fim e devolve o status pra 'matriculado'. Duas checagens
+// pra não deixar o histórico incoerente:
+//   1. A turma (atividades) dessa matrícula precisa existir e estar ativa —
+//      reabrir apontando pra uma turma encerrada colocaria o aluno numa turma
+//      que oficialmente não existe mais.
+//   2. O aluno não pode já ter outra matrícula ativa na MESMA posição da
+//      grade (dia_semana + horario) — mesmo conceito de "posição" usado em
+//      matriculas.js '/duplicidades'. Sem essa checagem, reabrir criaria uma
+//      duplicidade ativa no mesmo slot.
+router.post('/matricula/:id/reabrir', masterMiddleware, asyncHandler(async (req, res) => {
+  const matriculaId = parseInt(req.params.id);
+  if (isNaN(matriculaId)) return res.status(400).json({ error: 'ID da matrícula inválido.' });
+
+  const [[matricula]] = await pool.query(
+    'SELECT idmatricula, idaluno, idatividades, dia_semana, horario, data_fim, id_instituicao FROM matricula WHERE idmatricula = ?',
+    [matriculaId]
+  );
+  if (!matricula) return res.status(404).json({ error: 'Matrícula não encontrada.' });
+  if (!matricula.data_fim) return res.status(409).json({ error: 'Essa matrícula já está ativa.' });
+
+  const [[turma]] = await pool.query(
+    'SELECT idatividades, nome, data_fim FROM atividades WHERE idatividades = ?',
+    [matricula.idatividades]
+  );
+  if (!turma) return res.status(404).json({ error: 'A turma dessa matrícula não existe mais.' });
+  if (turma.data_fim) return res.status(409).json({ error: `A turma "${turma.nome}" está encerrada — reabra a turma primeiro para depois reabrir esta matrícula.` });
+
+  const [conflitos] = await pool.query(
+    `SELECT idmatricula FROM matricula
+     WHERE idaluno = ? AND dia_semana = ? AND horario = ? AND status = 'matriculado' AND data_fim IS NULL AND idmatricula != ?`,
+    [matricula.idaluno, matricula.dia_semana, matricula.horario, matriculaId]
+  );
+  if (conflitos.length > 0) {
+    return res.status(409).json({ error: 'Esse aluno já tem uma matrícula ativa nesse mesmo dia/horário — encerre-a antes de reabrir esta.' });
+  }
+
+  await pool.query(`UPDATE matricula SET data_fim = NULL, status = 'matriculado' WHERE idmatricula = ?`, [matriculaId]);
+
+  await syncAlunoStatusFromMatriculas(pool, [matricula.idaluno], matricula.id_instituicao);
+
+  await logAuditEvent('MATRICULA_REABERTA_MASTER', `Matrícula ID ${matriculaId} ("${turma.nome}") reaberta pelo master`, matricula.id_instituicao);
+  res.json({ message: 'Matrícula reaberta com sucesso.' });
 }));
 
 // --- Contatos de emergência (versão master — ver também contatos-emergencia.js,
