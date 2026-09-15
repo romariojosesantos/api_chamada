@@ -891,18 +891,55 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
 
     // Passo 5: compara com as matrículas atuais (por aluno+turno+horario+dia_semana,
     // a "posição" na grade) para decidir upsert vs. encerrar-e-recriar.
-    const studentIds = [...new Set(matriculasToUpsert.map(m => m.idaluno))];
-    // `idaluno IN ()` é SQL inválido — acontece quando nenhuma linha da
-    // planilha trouxe coluna de matrícula (ex.: upload só pra atualizar
-    // cadastro/nível, sem mexer em turma).
-    const [currentMatriculas] = studentIds.length > 0
+    // Escopo é TODO aluno tocado pela planilha (existingStudents), não só quem
+    // tem coluna de matrícula preenchida nesta linha — a autocorreção de
+    // duplicidade logo abaixo precisa ver as matrículas de qualquer aluno do
+    // upload, mesmo numa linha que só atualiza cadastro/nível sem mexer em turma.
+    const studentIdsTocados = existingStudents.map(s => s.id);
+    // `idaluno IN ()` é SQL inválido — acontece quando a planilha não bateu
+    // com nenhum aluno já cadastrado (studentIdMap vazio).
+    let [currentMatriculas] = studentIdsTocados.length > 0
       ? await connection.query(
           `SELECT idmatricula, idaluno, idatividades, turno, horario, dia_semana
            FROM matricula
            WHERE idaluno IN (?) AND id_instituicao = ? AND status = 'matriculado' AND data_fim IS NULL`,
-          [studentIds, req.id_instituicao]
+          [studentIdsTocados, req.id_instituicao]
         )
       : [[]];
+
+    // Mesma autocorreção já aplicada em matriculas.js (POST '/', ver comentário
+    // lá) — se por algum motivo já existirem DUAS matrículas ativas na mesma
+    // posição (aluno+turno+horario+dia_semana), o Map abaixo só consegue guardar
+    // uma; sem isso a outra ficava órfã pra sempre, sem nenhum código nunca mais
+    // enxergar ela. Fica com a MAIS RECENTE (maior idmatricula) e encerra as
+    // outras automaticamente, nesta mesma transação.
+    const porPosicao = new Map(); // "idaluno_turno_horario_dia" -> [idmatricula, ...]
+    currentMatriculas.forEach(m => {
+      const chave = `${m.idaluno}_${m.turno}_${m.horario}_${m.dia_semana}`;
+      if (!porPosicao.has(chave)) porPosicao.set(chave, []);
+      porPosicao.get(chave).push(m.idmatricula);
+    });
+    const duplicatasParaEncerrar = [];
+    porPosicao.forEach(ids => {
+      if (ids.length <= 1) return;
+      const maisRecente = Math.max(...ids);
+      ids.filter(id => id !== maisRecente).forEach(id => duplicatasParaEncerrar.push(id));
+    });
+    if (duplicatasParaEncerrar.length > 0) {
+      await connection.query(
+        `UPDATE matricula SET data_fim = ?, status = 'cancelada' WHERE idmatricula IN (?)`,
+        [today, duplicatasParaEncerrar]
+      );
+      await logAuditEvent(
+        'MATRICULA_DUPLICIDADE_AUTOCORRIGIDA',
+        `Import em massa: ${duplicatasParaEncerrar.length} matrícula(s) duplicada(s) (mesma posição, já existiam antes deste import) encerrada(s) automaticamente: ${duplicatasParaEncerrar.join(', ')}`,
+        req.id_instituicao,
+        connection
+      );
+      // Remove as encerradas de `currentMatriculas` antes de montar o Map abaixo,
+      // pra não reabrir a mesma confusão ali.
+      currentMatriculas = currentMatriculas.filter(m => !duplicatasParaEncerrar.includes(m.idmatricula));
+    }
 
     // Mapa de matrículas atuais por aluno + posição na grade (turno, horario, dia_semana)
     const currentMatriculaMap = new Map();
