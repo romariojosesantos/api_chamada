@@ -21,7 +21,7 @@ const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next
 const getDiasMatriculadosSubquery = () => `
   IFNULL((SELECT GROUP_CONCAT(DISTINCT TRIM(m2.dia_semana) SEPARATOR ',')
    FROM matricula m2
-   WHERE m2.idaluno = a.id AND m2.status = 'matriculado' AND m2.id_instituicao = a.id_instituicao), '') as dias_matriculados
+   WHERE m2.idaluno = a.id AND m2.status = 'matriculado' AND m2.data_fim IS NULL AND m2.id_instituicao = a.id_instituicao), '') as dias_matriculados
 `;
 
 // Helper para subqueries de nível/subnível atual (o registro em `aluno_niveis`

@@ -291,7 +291,7 @@ router.post('/', asyncHandler(async (req, res) => {
     // `idExistente`/mais recente usada no restante da função).
     const idsParaEncerrar = [...new Set([...paraEncerrar, ...duplicatasParaEncerrar])];
     if (idsParaEncerrar.length > 0) {
-      await connection.query('UPDATE matricula SET data_fim = CURDATE() WHERE idmatricula IN (?)', [idsParaEncerrar]);
+      await connection.query(`UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula IN (?)`, [idsParaEncerrar]);
     }
 
     if (paraAtualizar.length > 0) {
@@ -424,7 +424,7 @@ router.post('/duplicidades/resolver', asyncHandler(async (req, res) => {
   if (outras.length === 0) return res.json({ success: true, encerradas: 0 });
 
   const idsEncerrar = outras.map(o => o.idmatricula);
-  await pool.query('UPDATE matricula SET data_fim = CURDATE() WHERE idmatricula IN (?)', [idsEncerrar]);
+  await pool.query(`UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula IN (?)`, [idsEncerrar]);
   // `pool` serve aqui igual a uma `connection` (mysql2/promise expõe `.query`
   // nos dois) — NUNCA usar `pool.getConnection()` sem depois dar `.release()`;
   // em produção o connectionLimit é 1, então uma conexão esquecida aberta
@@ -629,7 +629,7 @@ router.post('/mover', asyncHandler(async (req, res) => {
     );
     if (duplicataNoDestino.length > 0) {
       await connection.query(
-        'UPDATE matricula SET data_fim = CURDATE() WHERE idmatricula IN (?)',
+        `UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula IN (?)`,
         [duplicataNoDestino.map(d => d.idmatricula)]
       );
     }
