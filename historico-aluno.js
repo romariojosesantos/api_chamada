@@ -136,8 +136,10 @@ router.put('/:id', masterMiddleware, asyncHandler(async (req, res) => {
 
   if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome é obrigatório.' });
 
-  const [[aluno]] = await pool.query('SELECT id_instituicao FROM alunos WHERE id = ?', [alunoId]);
+  const [[aluno]] = await pool.query('SELECT id_instituicao, status FROM alunos WHERE id = ?', [alunoId]);
   if (!aluno) return res.status(404).json({ error: 'Aluno não encontrado.' });
+
+  const statusNovo = status || 'ativo';
 
   const [result] = await pool.query(
     `UPDATE alunos
@@ -152,10 +154,21 @@ router.put('/:id', masterMiddleware, asyncHandler(async (req, res) => {
       turno || null,
       transporte || null,
       Inf || null,
-      status || 'ativo',
+      statusNovo,
       alunoId
     ]
   );
+
+  // Mesma regra de backend/alunos.js (PATCH /:id): mantém `inativado_em`
+  // coerente mesmo quando o status é trocado por aqui (ficha do master),
+  // não só pela tela de Gerenciar Matrículas.
+  if (statusNovo !== aluno.status) {
+    if (statusNovo === 'inativo') {
+      await pool.query('UPDATE alunos SET inativado_em = CURDATE() WHERE id = ?', [alunoId]);
+    } else if (aluno.status === 'inativo') {
+      await pool.query('UPDATE alunos SET inativado_em = NULL WHERE id = ?', [alunoId]);
+    }
+  }
 
   await logAuditEvent('ALUNO_ATUALIZADO_MASTER', `Aluno ID ${alunoId} atualizado pelo master`, aluno.id_instituicao);
   res.json({ message: 'Dados do aluno atualizados com sucesso.' });

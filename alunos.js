@@ -220,7 +220,7 @@ router.get('/', asyncHandler(async (req, res) => {
 
   let sql = `
     SELECT a.id, a.nome, a.data_nascimento, a.data_cadastro, a.sexo, a.telefone,
-           a.turma, a.turno, a.transporte, a.status, a.Inf,
+           a.turma, a.turno, a.transporte, a.status, a.inativado_em, a.Inf,
            a.acompanhamento, a.ponto, a.informacoes_gerais, a.escola_atual,
            ${getDiasMatriculadosSubquery()},
            ${getNivelAtualSubquery()},
@@ -1582,10 +1582,17 @@ router.put('/:id', validate('aluno'), asyncHandler(async (req, res) => {
 router.patch('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { campo, valor } = req.body;
-  const colunasPermitidas = ['data_nascimento', 'data_cadastro', 'sexo', 'telefone', 'turma', 'turno', 'transporte', 'Inf', 'acompanhamento', 'ponto', 'informacoes_gerais', 'escola_atual', 'status'];
+  const colunasPermitidas = ['data_nascimento', 'data_cadastro', 'sexo', 'telefone', 'turma', 'turno', 'transporte', 'Inf', 'acompanhamento', 'ponto', 'informacoes_gerais', 'escola_atual', 'status', 'inativado_em'];
 
   if (!colunasPermitidas.includes(campo)) {
     return res.status(400).json({ error: 'Campo não permitido para atualização.' });
+  }
+
+  // `inativado_em` normalmente é preenchido sozinho (ver bloco logo abaixo do
+  // UPDATE principal), mas a tela de Gerenciar Matrículas também deixa
+  // corrigir manualmente por aqui, caso a data automática esteja errada.
+  if (campo === 'inativado_em' && valor && !/^\d{4}-\d{2}-\d{2}$/.test(valor)) {
+    return res.status(400).json({ error: 'Data inválida. Use o formato AAAA-MM-DD.' });
   }
 
   // Pra "desistência" (ver notificação abaixo), precisa saber o status ANTES
@@ -1605,8 +1612,12 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     turnoAnterior = atual?.turno || null;
   }
 
+  // Coluna DATE não aceita string vazia sob sql_mode estrito (NO_ZERO_DATE) —
+  // precisa virar NULL de verdade pra "limpar" a data.
+  const valorParaGravar = campo === 'inativado_em' && !valor ? null : valor;
+
   const sql = 'UPDATE alunos SET ?? = ? WHERE id = ? AND id_instituicao = ?';
-  const [result] = await pool.query(sql, [campo, valor, id, req.id_instituicao]);
+  const [result] = await pool.query(sql, [campo, valorParaGravar, id, req.id_instituicao]);
 
   if (result.affectedRows === 0) return res.status(404).json({ error: 'Aluno não encontrado.' });
 
@@ -1626,6 +1637,18 @@ router.patch('/:id', asyncHandler(async (req, res) => {
         para: { status: 'inativo' }
       }]
     });
+  }
+
+  // Marca (ou limpa) a data de inativação junto da troca de status — feito à
+  // parte do UPDATE principal porque esse só grava UM campo por vez. Só entra
+  // aqui numa mudança de status de verdade (valor !== statusAnterior), pra não
+  // resetar a data toda vez que a tela reenvia o mesmo status sem mudar nada.
+  if (campo === 'status' && valor !== statusAnterior) {
+    if (valor === 'inativo') {
+      await pool.query('UPDATE alunos SET inativado_em = CURDATE() WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
+    } else if (statusAnterior === 'inativo') {
+      await pool.query('UPDATE alunos SET inativado_em = NULL WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
+    }
   }
 
   let resultadoTurno = { encerradas: 0, turmas: [] };
