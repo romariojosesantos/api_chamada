@@ -77,11 +77,18 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
       [diaDaSemana, data, inst]
     ),
 
-    // 3. Por transporte: esperados e presentes no dia (agrupado no banco)
+    // 3. Por transporte: esperados e presentes no dia (agrupado no banco).
+    // `transporte`/`turno` normalizados (TRIM + fallback 'Não Definido') do
+    // MESMO jeito que a query 8 (presencaRealRes) — as duas alimentam o
+    // mesmo agrupamento em `porTransporte` abaixo, cruzando por
+    // "transporte|turno"; sem essa normalização igual dos dois lados, um
+    // `a.transporte` com espaço a mais (comum em dado importado de planilha)
+    // batia como chave diferente e a presença real nunca era encontrada —
+    // parecia que "não tinha dado" mesmo com presença lançada.
     pool.query(
       `SELECT
-         a.transporte,
-         a.turno,
+         COALESCE(NULLIF(TRIM(a.transporte), ''), 'Não Definido') AS transporte,
+         COALESCE(NULLIF(TRIM(a.turno), ''), 'Não Definido') AS turno,
          COUNT(DISTINCT a.id) AS esperados,
          COUNT(DISTINCT CASE WHEN p.status = 'presente' THEN a.id END) AS presentes
        FROM alunos a
@@ -89,7 +96,7 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
          AND m.data_fim IS NULL
        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
        WHERE a.id_instituicao = ? AND a.status = 'ativo'
-       GROUP BY a.transporte, a.turno`,
+       GROUP BY transporte, turno`,
       [diaDaSemana, data, inst]
     ),
 
@@ -195,12 +202,15 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
   };
   const presencaRealPorChave = new Map(); // "transporte|turno" -> presentes_reais
   presencaRealRes.forEach(r => {
-    presencaRealPorChave.set(`${r.transporte}|${r.turno}`, r.presentes_reais);
+    // `r.turno` aqui só passou por TRIM no SQL (ver query 8) — precisa do
+    // mesmo normTurno() usado do outro lado (abaixo) pra "MANHÃ"/"manha"/
+    // "Manhã" caírem todos na mesma chave 'Manhã'.
+    presencaRealPorChave.set(`${r.transporte}|${normTurno(r.turno)}`, r.presentes_reais);
   });
 
   const porTransporte = {};
   for (const row of transporteStatsRes) {
-    const transp = row.transporte || 'Não Definido';
+    const transp = row.transporte;
     const turno = normTurno(row.turno);
     const presReal = presencaRealPorChave.get(`${transp}|${turno}`) || 0;
     if (!porTransporte[transp]) porTransporte[transp] = { total: 0, pres: 0, turnos: {} };
