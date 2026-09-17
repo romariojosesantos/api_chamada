@@ -10,12 +10,27 @@ const { criarNotificacao } = require('./notificacoes-service');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+// Cláusula SQL pra "presença desse período" — um registro SEM período (de
+// antes da coluna `periodo` existir, ver migrate-add-periodo-presenca.js)
+// conta como fallback só quando o período consultado NÃO é 'noite'. Motivo:
+// antes dessa coluna existir, a tela de Chamada nem tinha como fazer a
+// chamada da noite separadamente (a opção "Noite" no seletor de turno é
+// nova) — um registro antigo sem período, por definição, NUNCA pode ter sido
+// da noite, só podia ter vindo de uma chamada de manhã ou tarde. Sem essa
+// restrição, um aluno com presença antiga de outro turno aparecia "presente"
+// na noite mesmo sem a chamada da noite ter sido feita ainda.
+function condicaoPeriodo(periodo) {
+  return periodo === 'noite'
+    ? { sql: 'periodo = ?', params: [periodo] }
+    : { sql: '(periodo = ? OR periodo IS NULL)', params: [periodo] };
+}
+
 // Buscar histórico de presença (todos os registros da instituição). Exclui datas
 // que foram marcadas como "sem aula" DEPOIS de já terem presença lançada — evita
 // que um feriado cadastrado retroativamente continue aparecendo no histórico.
 router.get('/', asyncHandler(async (req, res) => {
   const sql = `
-    SELECT p.aluno_id, a.nome, p.data, p.status, p.observacao
+    SELECT p.aluno_id, a.nome, p.data, p.status, p.periodo, p.observacao
     FROM presenca p
     JOIN alunos a ON p.aluno_id = a.id
     WHERE p.id_instituicao = ?
@@ -40,6 +55,10 @@ router.get('/', asyncHandler(async (req, res) => {
 // pedido para APAGAR o registro de presença existente daquele aluno na data.
 router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
   const { data, chamadas } = req.body;
+  // Sem `periodo` (chamada antiga/turno não mapeado): grava NULL, mesmo
+  // comportamento de antes da coluna existir — nunca bloqueia o salvamento
+  // por causa disso.
+  const periodo = req.body.periodo || null;
   const connection = await pool.getConnection();
 
   try {
@@ -65,29 +84,35 @@ router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
     const chamadasParaDeletar = chamadas.filter(c => c.status === null);
     const chamadasParaInserir = chamadas.filter(c => c.status !== null);
 
-    // Deletar registros onde status é null (desmarcar presença)
+    // Deletar registros onde status é null (desmarcar presença). Ver
+    // condicaoPeriodo() no topo do arquivo.
     if (chamadasParaDeletar.length > 0) {
+      const { sql: condPeriodo, params: paramsPeriodo } = condicaoPeriodo(periodo);
       const deleteSql = `
         DELETE FROM presenca
         WHERE aluno_id IN (${chamadasParaDeletar.map(() => '?').join(',')})
         AND data = ?
         AND id_instituicao = ?
+        AND ${condPeriodo}
       `;
       const alunoIds = chamadasParaDeletar.map(c => c.aluno_id);
-      await connection.query(deleteSql, [...alunoIds, data, req.id_instituicao]);
+      await connection.query(deleteSql, [...alunoIds, data, req.id_instituicao, ...paramsPeriodo]);
     }
 
-    // Inserir/atualizar registros onde status não é null
+    // Inserir/atualizar registros onde status não é null. A chave única agora
+    // inclui `periodo` (ver migrate-add-periodo-presenca.js) — o mesmo aluno
+    // pode ter uma linha pro turno do dia e outra pro ensaio da noite, sem
+    // uma sobrescrever a outra.
     let afetados = chamadasParaDeletar.length;
     if (chamadasParaInserir.length > 0) {
       const sql = `
-        INSERT INTO presenca (aluno_id, data, status, id_instituicao, observacao)
+        INSERT INTO presenca (aluno_id, data, status, id_instituicao, observacao, periodo)
         VALUES ?
         ON DUPLICATE KEY UPDATE
           status = VALUES(status),
           observacao = VALUES(observacao)
       `;
-      const values = chamadasParaInserir.map(c => [c.aluno_id, data, c.status, req.id_instituicao, c.observacao || null]);
+      const values = chamadasParaInserir.map(c => [c.aluno_id, data, c.status, req.id_instituicao, c.observacao || null, periodo]);
 
       const [result] = await connection.query(sql, [values]);
       afetados += result.affectedRows;
@@ -152,9 +177,13 @@ router.post('/adicao-manual', asyncHandler(async (req, res) => {
 // registros existentes (presente/ausente/justificado) — só preenche quem ficou
 // sem marcação nenhuma. Recusa se a data estiver marcada como "sem aula".
 //
-// Filtra por `a.turno` (não `m.turno`) para ficar consistente com o resto do
-// sistema (relatorios.js agrupa por a.turno) — o turno é tratado como um
-// atributo do aluno, não da matrícula individual.
+// Filtra por `m.turno` (turno DA MATRÍCULA, não o atributo fixo do aluno) —
+// mesmo raciocínio de GET /api/alunos/por-dia e relatorios.js: um aluno com
+// matrícula dupla (turma do dia + ensaio à noite) só deve ser marcado ausente
+// no turno que ele de fato tem matrícula, nunca no outro. Usar `a.turno`
+// aqui causava o inverso do esperado: um aluno cujo turno cadastrado é
+// "Manhã" mas que só tinha matrícula de "Tarde" (dado legado/edge case)
+// podia ser marcado ausente no turno errado ao finalizar a chamada errada.
 router.post('/finalizar', asyncHandler(async (req, res) => {
   const { data, turno } = req.body;
   const inst = req.id_instituicao;
@@ -194,20 +223,35 @@ router.post('/finalizar', asyncHandler(async (req, res) => {
        AND m.data_fim IS NULL
        AND a.id_instituicao = ?
        AND a.status = 'ativo'
-       AND TRIM(a.turno) = TRIM(?)`,
+       AND LOWER(TRIM(m.turno)) = LOWER(TRIM(?))`,
     [diaDaSemana, inst, turno]
   );
 
-  // Buscar alunos que já têm registro na data
+  // Período correspondente ao turno desta chamada (ver migrate-add-periodo-
+  // presenca.js) — "finalizar" só deve considerar "já tem registro" o
+  // registro DESSE período; um aluno já presente de manhã não pode contar
+  // como "já registrado" pra fins de finalizar a chamada da noite.
+  const periodo = String(turno || '').toLowerCase().includes('manh') ? 'manha'
+    : String(turno || '').toLowerCase().includes('tard') ? 'tarde'
+    : String(turno || '').toLowerCase().includes('noit') ? 'noite'
+    : null;
+
+  // Buscar alunos que já têm registro na data, NESSE período. Ver
+  // condicaoPeriodo() no topo do arquivo — pra "manha"/"tarde" também conta
+  // um registro antigo sem período (ex.: já marcado presente antes desta
+  // atualização) como "já registrado"; pra "noite" NUNCA conta um registro
+  // sem período, senão "Finalizar Chamada" da noite nem preenchia ausente
+  // pra quem só tinha presença antiga de outro turno.
+  const { sql: condPeriodo, params: paramsPeriodo } = condicaoPeriodo(periodo);
   const [comRegistro] = await pool.query(
-    `SELECT DISTINCT aluno_id FROM presenca WHERE data = ? AND id_instituicao = ?`,
-    [data, inst]
+    `SELECT DISTINCT aluno_id FROM presenca WHERE data = ? AND id_instituicao = ? AND ${condPeriodo}`,
+    [data, inst, ...paramsPeriodo]
   );
 
   const idsComRegistro = new Set(comRegistro.map(r => r.aluno_id));
   const ausentesParaInserir = esperados
     .filter(a => !idsComRegistro.has(a.id))
-    .map(a => [a.id, data, 'ausente', null, inst]);
+    .map(a => [a.id, data, 'ausente', null, inst, periodo]);
 
   // Inserir ausências. IGNORE é proposital: se duas pessoas clicarem em
   // "Finalizar Chamada" quase ao mesmo tempo, as duas leem o mesmo retrato de
@@ -221,7 +265,7 @@ router.post('/finalizar', asyncHandler(async (req, res) => {
   let ausentesRegistrados = 0;
   if (ausentesParaInserir.length > 0) {
     const [result] = await pool.query(
-      `INSERT IGNORE INTO presenca (aluno_id, data, status, observacao, id_instituicao) VALUES ?`,
+      `INSERT IGNORE INTO presenca (aluno_id, data, status, observacao, id_instituicao, periodo) VALUES ?`,
       [ausentesParaInserir]
     );
     ausentesRegistrados = result.affectedRows;

@@ -20,6 +20,11 @@ const schemas = {
 
   presenca: Joi.object({
     data: Joi.date().iso().required(),
+    // Uma chamada inteira (todos os `chamadas` do lote) é sempre de UM único
+    // período — a tela de Chamada já é filtrada por turno antes de carregar a
+    // lista (ver AttendanceList.jsx). Opcional só por compatibilidade: quando
+    // ausente, presenca.js mantém o comportamento antigo (sem período).
+    periodo: Joi.string().valid('manha', 'tarde', 'noite').allow(null),
     chamadas: Joi.array().items(
       Joi.object({
         aluno_id: Joi.number().required(),

@@ -261,7 +261,7 @@ router.get('/', asyncHandler(async (req, res) => {
 // Em ambos os modos, `professor` (opcional) restringe aos alunos matriculados em
 // atividades daquele professor.
 router.get('/por-dia', asyncHandler(async (req, res) => {
-  const { data, ignoreFilters, professor } = req.query; // Espera formato YYYY-MM-DD
+  const { data, ignoreFilters, professor, turno } = req.query; // Espera formato YYYY-MM-DD
   if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
 
   const dateObj = new Date(`${data}T00:00:00`);
@@ -327,7 +327,50 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
       params = [data, req.id_instituicao];
     }
   } else {
-    // Modo Chamada: filtra apenas os alunos matriculados no dia da semana informado
+    // Modo Chamada: filtra apenas os alunos matriculados no dia da semana
+    // informado. `m.turno` (não `a.turno`) quando `turno` vem preenchido —
+    // um aluno pode ter o turno cadastrado como "Manhã" mas também ter uma
+    // matrícula de ensaio à noite; filtrar pelo turno DA MATRÍCULA (em vez do
+    // atributo fixo do aluno) é o que faz esse aluno aparecer certinho tanto
+    // na chamada da manhã quanto na da noite, cada uma com sua própria lista
+    // (ver migrate-add-periodo-presenca.js pro mesmo raciocínio do lado da
+    // presença em si).
+    const filtroTurno = turno ? 'AND LOWER(m.turno) = LOWER(?)' : '';
+    // Período correspondente (ver migrate-add-periodo-presenca.js) — junta só
+    // a presença DESSE período; sem isso, um aluno com matrícula dupla
+    // (turma do dia + ensaio à noite) que já tem presença nos dois períodos
+    // apareceria DUAS VEZES na lista (uma por registro de presença
+    // encontrado), já que o SELECT é DISTINCT e presenca_status divergiria.
+    const periodo = turno
+      ? (String(turno).toLowerCase().includes('manh') ? 'manha'
+        : String(turno).toLowerCase().includes('tard') ? 'tarde'
+        : String(turno).toLowerCase().includes('noit') ? 'noite'
+        : null)
+      : null;
+    // Junta com uma SUBQUERY (não direto na tabela) que resolve pra NO MÁXIMO
+    // uma linha de presença por aluno — nunca mais de uma, mesmo se o aluno
+    // tiver tanto um registro ANTIGO sem período (de antes dessa coluna
+    // existir, ver migrate-add-periodo-presenca.js) quanto um registro NOVO
+    // já com o período certo pra esta chamada: o `ORDER BY (periodo IS NOT
+    // NULL) DESC` prioriza o registro com período definido (o mais preciso),
+    // só caindo pro sem-período se não existir nenhum com período batendo.
+    // Sem essa priorização (ou juntando direto com `presenca`), um aluno
+    // nessa situação apareceria DUAS VEZES na lista (SELECT é DISTINCT, e
+    // `presenca_status` divergiria entre as duas linhas de presença).
+    // Um registro sem período (legado, de antes dessa coluna existir) só
+    // conta como fallback pro turno do DIA (manhã/tarde) — nunca pra noite,
+    // já que a chamada da noite nem existia como opção separada antes disso
+    // (qualquer registro antigo só pode ter vindo de manhã/tarde).
+    const condicaoPeriodo = !turno ? '' : (periodo === 'noite' ? 'AND periodo = ?' : 'AND (periodo IS NULL OR periodo = ?)');
+    const subqueryPresenca = `
+      (SELECT aluno_id,
+         SUBSTRING_INDEX(GROUP_CONCAT(status ORDER BY (periodo IS NOT NULL) DESC SEPARATOR ''), '', 1) AS status,
+         SUBSTRING_INDEX(GROUP_CONCAT(COALESCE(observacao, '') ORDER BY (periodo IS NOT NULL) DESC SEPARATOR ''), '', 1) AS observacao
+       FROM presenca
+       WHERE DATE(data) = ? AND id_instituicao = ? ${condicaoPeriodo}
+       GROUP BY aluno_id)
+    `;
+    const paramsPresenca = [data, req.id_instituicao, ...(turno ? [periodo] : [])];
     if (professor) {
       sql = `
         SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status, a.telefone,
@@ -338,16 +381,22 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         JOIN matricula m ON a.id = m.idaluno
         JOIN atividades atv ON m.idatividades = atv.idatividades
         JOIN professores prof ON atv.idprofessor = prof.id
-        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
+        LEFT JOIN ${subqueryPresenca} p ON p.aluno_id = a.id
         WHERE TRIM(m.dia_semana) = ?
         AND a.status = 'ativo'
         AND TRIM(LOWER(m.status)) = 'matriculado'
         AND m.data_fim IS NULL
+        -- data_inicio <= data da chamada: sem isso, matricular um aluno HOJE
+        -- numa turma fazia ele aparecer na chamada de dias PASSADOS também,
+        -- antes de ele sequer existir naquela turma (mesmo ajuste feito em
+        -- relatorios.js, ver comentário no topo daquele arquivo).
+        AND m.data_inicio <= ?
         AND TRIM(prof.nome) = ?
         AND a.id_instituicao = ?
+        ${filtroTurno}
         ORDER BY a.nome ASC
       `;
-      params = [data, diaDaSemana, professor, req.id_instituicao];
+      params = [...paramsPresenca, diaDaSemana, data, professor, req.id_instituicao, ...(turno ? [turno] : [])];
     } else {
       sql = `
         SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status, a.telefone,
@@ -356,15 +405,17 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
                p.status AS presenca_status, p.observacao AS presenca_obs
         FROM alunos a
         JOIN matricula m ON a.id = m.idaluno
-        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
+        LEFT JOIN ${subqueryPresenca} p ON p.aluno_id = a.id
         WHERE TRIM(m.dia_semana) = ?
         AND a.status = 'ativo'
         AND TRIM(LOWER(m.status)) = 'matriculado'
         AND m.data_fim IS NULL
+        AND m.data_inicio <= ?
         AND a.id_instituicao = ?
+        ${filtroTurno}
         ORDER BY a.nome ASC
       `;
-      params = [data, diaDaSemana, req.id_instituicao];
+      params = [...paramsPresenca, diaDaSemana, data, req.id_instituicao, ...(turno ? [turno] : [])];
     }
   }
 

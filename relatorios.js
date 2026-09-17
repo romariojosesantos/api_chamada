@@ -3,11 +3,51 @@
 // `m.data_fim IS NULL` — não encerrada) para o dia da semana em questão, E a
 // data não estiver marcada em `dias_sem_aula` (feriado/recesso — nesse caso
 // ninguém é esperado, independente de matrícula).
+//
+// `/estatisticas-diarias` (snapshot de UM dia) também exige `m.data_inicio <=
+// data` — sem isso, matricular um aluno HOJE numa turma fazia ele aparecer
+// como "esperado" (e por consequência "ausente", já que não tinha presença
+// lançada) em relatórios de dias PASSADOS, antes de ele sequer existir
+// naquela turma. `/estatisticas-periodo` (mensal) já fazia essa checagem
+// desde sempre (ver `calcularEstatisticasPeriodo` mais abaixo, `d.data >=
+// m.data_inicio`) — só faltava replicar aqui.
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+// Mapeia o turno de uma matrícula pro `periodo` gravado em `presenca` (ver
+// migrate-add-periodo-presenca.js) — usada em todo JOIN presenca ↔ matricula
+// deste arquivo, pra cruzar a presença do PERÍODO CERTO. Sem isso, um aluno
+// com matrícula dupla (turma do dia + ensaio à noite) casaria com QUALQUER
+// presença dele no dia, inflando "presentes"/"ausentes" pros dois turnos ao
+// mesmo tempo (efeito prático: aluno marcado presente de manhã aparecia
+// "presente" também na contagem da noite, mesmo sem ter ido ao ensaio).
+//
+// Todo JOIN que usa isso faz `p.periodo = ${...} OR (p.periodo IS NULL AND
+// ${...} <> 'noite')` (ver CONDICAO_PERIODO_SQL abaixo), nunca só
+// `p.periodo <=> ${...}` — os ~807 registros de presença de antes dessa
+// coluna existir (matrícula dupla dia+noite, ambígua, deixada sem período de
+// propósito na migração) têm `periodo` NULL; exigir igualdade estrita fazia
+// esses registros nunca casarem com NENHUM turno, sumindo da contagem de
+// "presentes" e inflando "ausentes" por engano pra datas antigas.
+//
+// O fallback pra registro sem período só vale pro turno do DIA (manhã/tarde)
+// — NUNCA pra noite. Motivo: antes dessa coluna existir, a tela de Chamada
+// nem tinha como fazer a chamada da noite separadamente (a opção "Noite" no
+// seletor de turno é nova) — então um registro antigo sem período, por
+// definição, NUNCA pode ter sido da noite; só podia ter vindo de uma chamada
+// de manhã ou tarde. Sem essa restrição, um aluno com presença antiga
+// (sem período) aparecia "presente" na noite mesmo sem a chamada da noite
+// ter sido feita ainda — o mesmo bug de vazamento entre turnos que essa
+// coluna inteira existe pra resolver, só que voltando pela porta do fallback.
+const PERIODO_DA_MATRICULA_SQL = `CASE
+  WHEN LOWER(m.turno) LIKE '%manh%' THEN 'manha'
+  WHEN LOWER(m.turno) LIKE '%tard%' THEN 'tarde'
+  WHEN LOWER(m.turno) LIKE '%noit%' THEN 'noite'
+END`;
+const CONDICAO_PERIODO_SQL = `(p.periodo = ${PERIODO_DA_MATRICULA_SQL} OR (p.periodo IS NULL AND ${PERIODO_DA_MATRICULA_SQL} <> 'noite'))`;
 
 // Snapshot de um único dia: alunos ativos, esperados x presentes (geral, por
 // turno e por transporte), frequência e a lista de quem foi marcado presente.
@@ -62,69 +102,77 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
       [inst]
     ),
 
-    // 2. Por turno: esperados e presentes no dia (agrupado no banco)
+    // 2. Por turno: esperados e presentes no dia (agrupado no banco).
+    // Agrupa por `m.turno` (turno DA MATRÍCULA), não `a.turno` (atributo fixo
+    // do aluno) — um aluno com matrícula dupla (turma do dia + ensaio à
+    // noite) precisa contar como esperado NOS DOIS turnos, não só no turno
+    // cadastrado dele. Nenhuma diferença pra quem só tem um turno (a imensa
+    // maioria) — só passa a contar corretamente quem tem mais de um.
     pool.query(
       `SELECT
-         a.turno,
+         m.turno,
          COUNT(DISTINCT a.id) AS esperados,
          COUNT(DISTINCT CASE WHEN p.status = 'presente' THEN a.id END) AS presentes
        FROM alunos a
        JOIN matricula m ON a.id = m.idaluno AND TRIM(m.dia_semana) = ? AND m.status = 'matriculado'
-         AND m.data_fim IS NULL
+         AND m.data_fim IS NULL AND m.data_inicio <= ?
        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
+         AND ${CONDICAO_PERIODO_SQL}
        WHERE a.id_instituicao = ? AND a.status = 'ativo'
-       GROUP BY a.turno`,
-      [diaDaSemana, data, inst]
+       GROUP BY m.turno`,
+      [diaDaSemana, data, data, inst]
     ),
 
     // 3. Por transporte: esperados e presentes no dia (agrupado no banco).
-    // `transporte`/`turno` normalizados (TRIM + fallback 'Não Definido') do
-    // MESMO jeito que a query 8 (presencaRealRes) — as duas alimentam o
-    // mesmo agrupamento em `porTransporte` abaixo, cruzando por
-    // "transporte|turno"; sem essa normalização igual dos dois lados, um
-    // `a.transporte` com espaço a mais (comum em dado importado de planilha)
-    // batia como chave diferente e a presença real nunca era encontrada —
-    // parecia que "não tinha dado" mesmo com presença lançada.
+    // `transporte` continua vindo do aluno (não muda por matrícula — é o
+    // mesmo ônibus pra qualquer turma que ele frequente); `turno` agora vem
+    // de `m.turno`, mesmo raciocínio da query 2 acima.
     pool.query(
       `SELECT
          COALESCE(NULLIF(TRIM(a.transporte), ''), 'Não Definido') AS transporte,
-         COALESCE(NULLIF(TRIM(a.turno), ''), 'Não Definido') AS turno,
+         COALESCE(NULLIF(TRIM(m.turno), ''), 'Não Definido') AS turno,
          COUNT(DISTINCT a.id) AS esperados,
          COUNT(DISTINCT CASE WHEN p.status = 'presente' THEN a.id END) AS presentes
        FROM alunos a
        JOIN matricula m ON a.id = m.idaluno AND TRIM(m.dia_semana) = ? AND m.status = 'matriculado'
-         AND m.data_fim IS NULL
+         AND m.data_fim IS NULL AND m.data_inicio <= ?
        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
+         AND ${CONDICAO_PERIODO_SQL}
        WHERE a.id_instituicao = ? AND a.status = 'ativo'
        GROUP BY transporte, turno`,
-      [diaDaSemana, data, inst]
+      [diaDaSemana, data, data, inst]
     ),
 
-    // 4. Total de ausentes (esperados mas sem presença) — só o número
+    // 4. Total de ausentes (esperados mas sem presença NAQUELE período) — só
+    // o número. Mesma junção período-a-período da query 2; sem isso, um
+    // aluno presente de manhã contava como "não ausente" mesmo faltando ao
+    // ensaio da noite.
     pool.query(
-      `SELECT COUNT(DISTINCT a.id) AS total
+      `SELECT COUNT(DISTINCT CONCAT(a.id, '|', m.turno)) AS total
        FROM alunos a
        JOIN matricula m ON a.id = m.idaluno AND TRIM(m.dia_semana) = ? AND m.status = 'matriculado'
-         AND m.data_fim IS NULL
+         AND m.data_fim IS NULL AND m.data_inicio <= ?
        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
+         AND ${CONDICAO_PERIODO_SQL}
        WHERE a.id_instituicao = ? AND a.status = 'ativo'
          AND (p.status IS NULL OR p.status != 'presente')`,
-      [diaDaSemana, data, inst]
+      [diaDaSemana, data, data, inst]
     ),
 
-    // 5. Contagem de justificativas por tipo
+    // 5. Contagem de justificativas por tipo (mesma junção por período)
     pool.query(
-      `SELECT 
+      `SELECT
          COALESCE(p.observacao, 'Sem justificativa') AS justificativa,
-         COUNT(DISTINCT a.id) AS quantidade
+         COUNT(DISTINCT CONCAT(a.id, '|', m.turno)) AS quantidade
        FROM alunos a
        JOIN matricula m ON a.id = m.idaluno AND TRIM(m.dia_semana) = ? AND m.status = 'matriculado'
-         AND m.data_fim IS NULL
+         AND m.data_fim IS NULL AND m.data_inicio <= ?
        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
+         AND ${CONDICAO_PERIODO_SQL}
        WHERE a.id_instituicao = ? AND a.status = 'ativo'
          AND (p.status IS NULL OR p.status != 'presente')
        GROUP BY p.observacao`,
-      [diaDaSemana, data, inst]
+      [diaDaSemana, data, data, inst]
     ),
 
     // 6. Total de presenças registradas no dia (apenas status = presente), independente de matrícula
@@ -153,15 +201,33 @@ router.get('/estatisticas-diarias', asyncHandler(async (req, res) => {
     // (subestimando quem veio mas não tinha matrícula casada pra hoje — ver
     // "Ativos sem Matrícula"). "Esperados" continua vindo só da matrícula:
     // é uma expectativa, não faz sentido contar matrícula "de verdade".
+    // Turno vem de `p.periodo` (o período de fato daquele registro de
+    // presença) quando disponível — mais preciso que `a.turno` pra quem tem
+    // matrícula dupla, já que agora a própria presença sabe pra qual período
+    // ela é. Só cai pra `a.turno` nos registros antigos sem período definido
+    // (ver migrate-add-periodo-presenca.js — os 807 casos ambíguos de antes
+    // da migração), mantendo o mesmo comportamento de antes só pra esses.
     pool.query(
       `SELECT
-         COALESCE(NULLIF(TRIM(a.turno), ''), 'Não Definido') AS turno,
+         CASE p.periodo
+           WHEN 'manha' THEN 'Manhã'
+           WHEN 'tarde' THEN 'Tarde'
+           WHEN 'noite' THEN 'Noite'
+           ELSE COALESCE(NULLIF(TRIM(a.turno), ''), 'Não Definido')
+         END AS turno,
          COALESCE(NULLIF(TRIM(a.transporte), ''), 'Não Definido') AS transporte,
          COUNT(DISTINCT p.aluno_id) AS presentes_reais
        FROM presenca p
        JOIN alunos a ON p.aluno_id = a.id
        WHERE p.id_instituicao = ? AND DATE(p.data) = ? AND p.status = 'presente'
-       GROUP BY turno, transporte`,
+       GROUP BY
+         CASE p.periodo
+           WHEN 'manha' THEN 'Manhã'
+           WHEN 'tarde' THEN 'Tarde'
+           WHEN 'noite' THEN 'Noite'
+           ELSE COALESCE(NULLIF(TRIM(a.turno), ''), 'Não Definido')
+         END,
+         transporte`,
       [inst, data]
     ),
 
