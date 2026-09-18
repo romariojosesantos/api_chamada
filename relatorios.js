@@ -949,50 +949,98 @@ router.get('/estatisticas-mensais', asyncHandler(async (req, res) => {
 // Regra: frequencia = presentes / (soma de alunos_esperados por cada dia letivo)
 // Usa DAYOFWEEK do MySQL para cruzar datas com dia_semana sem depender de mapeamento JS
 // Exclui dias marcados como dia sem aula (feriados, fins de semana, etc.)
+//
+// `m.data_inicio <= d.dia` é essencial: sem isso, um aluno matriculado hoje
+// conta como "esperado" em QUALQUER dia letivo do histórico inteiro que bata
+// o dia da semana, mesmo antes dele existir no sistema — inflava
+// total_oportunidades (denominador) e fazia a Frequência Geral parecer pior
+// do que era de verdade. Mesmo raciocínio já aplicado em calcularEstatisticasPeriodo
+// e nas queries diárias.
+//
+// Só essa checagem sozinha, porém, ainda não bastava: em instituições onde as
+// matrículas foram recriadas/reiniciadas em algum momento (ex.: troca de
+// ciclo/período letivo), NENHUMA matrícula tem `data_inicio` cobrindo dias de
+// presença bem antigos — sem ninguém "esperado" naquele dia, ele simplesmente
+// some do denominador (total_oportunidades), mas as presenças reais desse
+// mesmo dia continuavam entrando no numerador (total_presencas), e a conta
+// passava de 100%. Por isso o cálculo inteiro (numerador E denominador) fica
+// limitado a partir de `dataMinimaConfiavel` — a matrícula mais antiga que
+// existe pra essa instituição, seja ela ativa ou já encerrada: antes disso,
+// não tem como saber quem era esperado, então nem entra na conta (em vez de
+// entrar só de um lado e distorcer o resultado).
 router.get('/historico-geral', asyncHandler(async (req, res) => {
   const inst = req.id_instituicao;
 
-  // 1. Total de presenças confirmadas no período (excluindo dias sem aula)
+  const [[{ dataMinimaConfiavel }]] = await pool.query(
+    `SELECT MIN(data_inicio) AS dataMinimaConfiavel FROM matricula WHERE id_instituicao = ?`,
+    [inst]
+  );
+  // Sem nenhuma matrícula cadastrada: não tem como calcular esperados nenhum dia.
+  if (!dataMinimaConfiavel) {
+    return res.json({ total_presencas: 0, total_oportunidades: 0, dias_letivos: 0, media_frequencia: 0 });
+  }
+
+  // 1. Total de presenças confirmadas no período (excluindo dias sem aula e
+  //    dias anteriores à matrícula mais antiga que existe no sistema).
   const [[totPres]] = await pool.query(
-    `SELECT COUNT(*) AS total 
+    `SELECT COUNT(*) AS total
      FROM presenca p
-     WHERE p.id_instituicao = ? 
+     WHERE p.id_instituicao = ?
        AND p.status = 'presente'
+       AND DATE(p.data) >= ?
        AND NOT EXISTS (
-         SELECT 1 FROM dias_sem_aula d 
+         SELECT 1 FROM dias_sem_aula d
          WHERE d.data = DATE(p.data) AND d.id_instituicao = ?
        )`,
-    [inst, inst]
+    [inst, dataMinimaConfiavel, inst]
   );
 
   // 2. Para cada dia letivo (data com pelo menos 1 registro), conta quantos alunos
   //    eram esperados naquele dia da semana — tudo em SQL, sem mapeamento JS.
   //    Exclui dias marcados como dia sem aula.
   //    DAYOFWEEK: 1=Dom, 2=Seg, 3=Ter, 4=Qua, 5=Qui, 6=Sex, 7=Sab
+  //
+  // UNION com "quem de fato esteve presente naquele dia" (mesmo raciocínio de
+  // calcularFrequenciaPorAluno, ver comentário grande lá): a Chamada permite
+  // marcar presença fora do dia_semana normal da matrícula (busca manual, fora
+  // do turno/transporte de propósito). Sem essa união, esse dia contava só no
+  // numerador (total_presencas) e não no denominador, e a frequência geral
+  // passava de 100%.
   const [[oportunidadesRes]] = await pool.query(
     `SELECT SUM(esperados_dia) AS total_oportunidades, COUNT(*) AS dias_letivos
      FROM (
-       SELECT
-         d.dia,
-         COUNT(DISTINCT a.id) AS esperados_dia
+       SELECT dia, COUNT(DISTINCT aluno_id) AS esperados_dia
        FROM (
-         SELECT DISTINCT DATE(p.data) AS dia
+         SELECT d.dia, a.id AS aluno_id
+         FROM (
+           SELECT DISTINCT DATE(p.data) AS dia
+           FROM presenca p
+           WHERE p.id_instituicao = ?
+             AND DATE(p.data) >= ?
+             AND NOT EXISTS (
+               SELECT 1 FROM dias_sem_aula ds
+               WHERE ds.data = DATE(p.data) AND ds.id_instituicao = ?
+             )
+         ) d
+         JOIN matricula m ON TRIM(m.dia_semana) = ELT(
+           DAYOFWEEK(d.dia),
+           'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
+         ) AND m.status = 'matriculado'
+           AND m.data_fim IS NULL
+           AND m.data_inicio <= d.dia
+         JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo'
+         UNION
+         SELECT DATE(p.data) AS dia, p.aluno_id
          FROM presenca p
-         WHERE p.id_instituicao = ?
+         WHERE p.id_instituicao = ? AND p.status = 'presente' AND DATE(p.data) >= ?
            AND NOT EXISTS (
-             SELECT 1 FROM dias_sem_aula ds 
+             SELECT 1 FROM dias_sem_aula ds
              WHERE ds.data = DATE(p.data) AND ds.id_instituicao = ?
            )
-       ) d
-       JOIN matricula m ON TRIM(m.dia_semana) = ELT(
-         DAYOFWEEK(d.dia),
-         'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
-       ) AND m.status = 'matriculado'
-         AND m.data_fim IS NULL
-       JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo'
-       GROUP BY d.dia
+       ) pares
+       GROUP BY dia
      ) sub`,
-    [inst, inst, inst]
+    [inst, dataMinimaConfiavel, inst, inst, inst, dataMinimaConfiavel, inst]
   );
 
   const totalPresencas = totPres.total || 0;

@@ -282,7 +282,13 @@ async function finalizarChamadaTurno(inst, data, turno) {
   const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
   const diaDaSemana = dias[new Date(`${data}T12:00:00`).getDay()];
 
-  // Buscar alunos esperados (matricula ativa para o dia da semana, do turno pedido)
+  // Buscar alunos esperados (matricula ativa para o dia da semana, do turno
+  // pedido) — `m.data_inicio <= data` é essencial aqui: sem isso, um aluno
+  // matriculado DEPOIS da data sendo finalizada (ex.: finalizando um dia
+  // atrasado de semanas atrás, depois que turmas novas já entraram) vira
+  // "esperado" pra um dia em que nem tinha matrícula ainda, e leva um
+  // 'ausente' incorreto. Mesmo raciocínio já aplicado em relatorios.js,
+  // alunos.js (/por-dia) e GET /pendencias-mes — só faltava aqui.
   const [esperados] = await pool.query(
     `SELECT DISTINCT a.id
      FROM alunos a
@@ -290,10 +296,11 @@ async function finalizarChamadaTurno(inst, data, turno) {
      WHERE TRIM(m.dia_semana) = ?
        AND TRIM(LOWER(m.status)) = 'matriculado'
        AND m.data_fim IS NULL
+       AND m.data_inicio <= ?
        AND a.id_instituicao = ?
        AND a.status = 'ativo'
        AND LOWER(TRIM(m.turno)) = LOWER(TRIM(?))`,
-    [diaDaSemana, inst, turno]
+    [diaDaSemana, data, inst, turno]
   );
 
   // Período correspondente ao turno desta chamada (ver migrate-add-periodo-
