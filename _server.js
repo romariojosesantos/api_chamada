@@ -66,6 +66,8 @@ const permissoesRouter = require('./permissoes');
 const notasRouter = require('./notas');
 const estatisticasComparativasRouter = require('./estatisticas-comparativas');
 const cronLembreteChamadaRouter = require('./cron-lembrete-chamada');
+const { router: dbHealthRouter } = require('./db-health');
+const cronSaudeBancoRouter = require('./cron-saude-banco');
 const pontosRouter = require('./pontos');
 const tiposPontoInternoRouter = require('./tiposPontoInterno');
 
@@ -118,10 +120,17 @@ app.use('/api/permissoes', permissoesRouter);
 // vez, por isso também fica fora do bloco de x-institution-id abaixo — ver
 // comentário no topo de estatisticas-comparativas.js.
 app.use('/api/estatisticas-comparativas', authMiddleware, estatisticasComparativasRouter);
+// Saúde do pool de conexões MySQL (ver db-health.js): infraestrutura, não
+// dado de uma instituição — mesmo motivo/posição de estatisticas-comparativas
+// acima.
+app.use('/api/db-health', authMiddleware, dbHealthRouter);
 // Lembrete de fim de expediente (ver cron-lembrete-chamada.js): chamado pelo
 // cron da Vercel, sem token de usuário — NUNCA passa por authMiddleware, se
 // protege sozinha checando CRON_SECRET.
 app.use('/api/cron/lembrete-chamada', cronLembreteChamadaRouter);
+// Checagem diária da saúde do pool de conexões (ver cron-saude-banco.js):
+// mesmo motivo/proteção do cron acima.
+app.use('/api/cron/saude-banco', cronSaudeBancoRouter);
 // Tela de perfil/gamificação do aluno: mesmo motivo do historico-aluno acima
 // (authMiddleware direto, sem x-institution-id — o token de aluno já traz
 // id_instituicao embutido, ver POST /api/auth/aluno-login).
