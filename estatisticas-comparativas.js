@@ -15,6 +15,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { calcularFrequenciaPorAluno } = require('./relatorios');
+const { hojeBrasil } = require('./data-brasil');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -173,7 +174,7 @@ router.get('/', asyncHandler(async (req, res) => {
   // Frequência média do mês corrente (dia 1 até hoje), por instituição —
   // reaproveita calcularFrequenciaPorAluno (mesma função usada em Notas e no
   // dashboard de relatórios), fazendo a média simples sobre os alunos ativos.
-  const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+  const hoje = hojeBrasil();
   const primeiroDiaMes = `${hoje.slice(0, 7)}-01`;
   const frequencias = await Promise.all(
     ids.map(id => calcularFrequenciaPorAluno(id, primeiroDiaMes, hoje))

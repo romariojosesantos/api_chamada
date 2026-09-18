@@ -7,6 +7,7 @@ const pool = require('./db');
 const { validate } = require('./validation');
 const { logAuditEvent } = require('./audit');
 const { criarNotificacao } = require('./notificacoes-service');
+const { hojeBrasil } = require('./data-brasil');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -414,7 +415,7 @@ router.post('/finalizar-dia', asyncHandler(async (req, res) => {
 router.get('/pendencias-mes', asyncHandler(async (req, res) => {
   const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '') ? req.query.mes : new Date().toISOString().slice(0, 7);
   const inst = req.id_instituicao;
-  const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+  const hoje = hojeBrasil();
   const primeiroDiaMes = `${mes}-01`;
   if (primeiroDiaMes > hoje) return res.json({ mes, dias: [] });
   const [ano, mesNum] = mes.split('-').map(Number);

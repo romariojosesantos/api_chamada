@@ -9,6 +9,7 @@ const pool = require('./db');
 const { logAuditEvent } = require('./audit');
 const { syncAlunoStatusFromMatriculas } = require('./status-sync');
 const { AREAS_VALIDAS } = require('./areas');
+const { hojeBrasil } = require('./data-brasil');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -129,7 +130,7 @@ router.post('/', asyncHandler(async (req, res) => {
     return res.status(409).json({ error: 'Já existe uma turma ativa com esse nome, professor, dia e horário.' });
   }
 
-  const dataInicio = req.body.data_inicio || new Date().toISOString().split('T')[0];
+  const dataInicio = req.body.data_inicio || hojeBrasil();
 
   const [result] = await pool.query(
     'INSERT INTO atividades (nome, idprofessor, id_instituicao, dia_semana, horario, turno, area, data_inicio) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -257,7 +258,7 @@ router.post('/:id/encerrar', asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    const hoje = new Date().toISOString().split('T')[0];
+    const hoje = hojeBrasil();
 
     await connection.query('UPDATE atividades SET data_fim = ? WHERE idatividades = ?', [hoje, id]);
 

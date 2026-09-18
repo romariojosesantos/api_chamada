@@ -9,6 +9,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { logAuditEvent } = require('./audit');
+const { hojeBrasil } = require('./data-brasil');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -106,7 +107,7 @@ router.post('/:id/registros', asyncHandler(async (req, res) => {
   );
   if (!aluno) return res.status(404).json({ error: 'Aluno não encontrado ou não está inativo.' });
 
-  const devolvidoEm = req.body.devolvido_em || new Date().toISOString().split('T')[0];
+  const devolvidoEm = req.body.devolvido_em || hojeBrasil();
 
   await pool.query(
     'INSERT INTO itens_devolucao_registros (id_item, id_aluno, devolvido_em) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE devolvido_em = VALUES(devolvido_em)',

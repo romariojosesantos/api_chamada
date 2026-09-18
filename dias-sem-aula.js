@@ -2,6 +2,16 @@
 // instituição. Consultado por presenca.js (bloqueia lançar/finalizar chamada
 // nesses dias) e por relatorios.js (exclui essas datas do cálculo de esperados/
 // faltas). Granularidade é por instituição+dia inteiro (não por turno/turma).
+//
+// Convenção deste arquivo: toda construção/leitura de `Date` abaixo usa os
+// métodos UTC explícitos (`Date.UTC(...)`, `.getUTCDay()`, `.setUTCDate()`/
+// `.getUTCDate()`), nunca os locais (`new Date(y,m,d)`, `.getDay()`,
+// `.setDate()`/`.getDate()`). Hoje isso dá no mesmo na Vercel (roda em UTC) —
+// mas locais dependem do fuso do PROCESSO rodando o código, não do fuso do
+// Brasil; alguém rodando isso localmente com o relógio em horário de Brasília
+// (ou uma mudança futura no runtime da Vercel) faria essas datas deslizarem
+// um dia sem ninguém perceber. UTC explícito remove essa dependência: sempre
+// dá o mesmo resultado, em qualquer fuso do processo.
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
@@ -176,18 +186,18 @@ router.post('/marcar-fins-de-semana', async (req, res) => {
     const { ano } = req.body;
     const year = ano || new Date().getFullYear();
 
-    const startDate = new Date(year, 0, 1);
-    const endDate = new Date(year, 11, 31);
+    const startDate = new Date(Date.UTC(year, 0, 1));
+    const endDate = new Date(Date.UTC(year, 11, 31));
 
     const finsDeSemana = [];
     const currentDate = new Date(startDate);
 
     while (currentDate <= endDate) {
-      const dayOfWeek = currentDate.getDay();
+      const dayOfWeek = currentDate.getUTCDay();
       if (dayOfWeek === 0 || dayOfWeek === 6) { // 0 = Domingo, 6 = Sábado
         finsDeSemana.push(currentDate.toISOString().split('T')[0]);
       }
-      currentDate.setDate(currentDate.getDate() + 1);
+      currentDate.setUTCDate(currentDate.getUTCDate() + 1);
     }
 
     const values = finsDeSemana.map(data => [data, 'Fim de semana', req.id_instituicao, req.user?.id]);
@@ -248,22 +258,22 @@ router.post('/adicionar-feriados-nacionais', async (req, res) => {
       const m = Math.floor((a + 11 * h + 22 * l) / 451);
       const mes = Math.floor((h + l - 7 * m + 114) / 31);
       const dia = ((h + l - 7 * m + 114) % 31) + 1;
-      return new Date(ano, mes - 1, dia);
+      return new Date(Date.UTC(ano, mes - 1, dia));
     };
 
     const pascoa = calcularPascoa(year);
 
     // Carnaval (47 dias antes da Páscoa)
     const carnaval = new Date(pascoa);
-    carnaval.setDate(pascoa.getDate() - 47);
+    carnaval.setUTCDate(pascoa.getUTCDate() - 47);
 
     // Sexta-feira Santa (2 dias antes da Páscoa)
     const sextaSanta = new Date(pascoa);
-    sextaSanta.setDate(pascoa.getDate() - 2);
+    sextaSanta.setUTCDate(pascoa.getUTCDate() - 2);
 
     // Corpus Christi (60 dias depois da Páscoa)
     const corpusChristi = new Date(pascoa);
-    corpusChristi.setDate(pascoa.getDate() + 60);
+    corpusChristi.setUTCDate(pascoa.getUTCDate() + 60);
 
     const feriadosMoveis = [
       { data: carnaval, nome: 'Carnaval' },
@@ -275,7 +285,7 @@ router.post('/adicionar-feriados-nacionais', async (req, res) => {
     const feriados = [];
 
     feriadosFixos.forEach(feriado => {
-      const data = new Date(year, feriado.mes, feriado.dia);
+      const data = new Date(Date.UTC(year, feriado.mes, feriado.dia));
       feriados.push({
         data: data.toISOString().split('T')[0],
         motivo: feriado.nome
@@ -320,8 +330,8 @@ router.post('/marcar-periodo', async (req, res) => {
       return res.status(400).json({ error: 'data_inicio e data_fim são obrigatórias' });
     }
 
-    const startDate = new Date(data_inicio);
-    const endDate = new Date(data_fim);
+    const startDate = new Date(`${data_inicio}T00:00:00.000Z`);
+    const endDate = new Date(`${data_fim}T00:00:00.000Z`);
 
     if (startDate > endDate) {
       return res.status(400).json({ error: 'data_inicio deve ser anterior ou igual a data_fim' });
@@ -332,7 +342,7 @@ router.post('/marcar-periodo', async (req, res) => {
 
     while (currentDate <= endDate) {
       diasSemAula.push(currentDate.toISOString().split('T')[0]);
-      currentDate.setDate(currentDate.getDate() + 1);
+      currentDate.setUTCDate(currentDate.getUTCDate() + 1);
     }
 
     const values = diasSemAula.map(data => [data, motivo || 'Período sem aula', req.id_instituicao, req.user?.id]);

@@ -11,6 +11,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { PRINCIPIOS_CARATER, PRINCIPIO_IDS } = require('./carater-principios');
+const { hojeBrasil } = require('./data-brasil');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -32,7 +33,7 @@ router.use(exigirAluno);
 router.get('/carater', asyncHandler(async (req, res) => {
   const alunoId = req.user.aluno_id;
   const idInstituicao = req.user.id_instituicao;
-  const hoje = new Date().toISOString().split('T')[0];
+  const hoje = hojeBrasil();
 
   const [
     [contagemPorPrincipioRows],
@@ -157,7 +158,7 @@ router.post('/diario', asyncHandler(async (req, res) => {
 
 router.get('/colegas', asyncHandler(async (req, res) => {
   const alunoId = req.user.aluno_id;
-  const hoje = new Date().toISOString().split('T')[0];
+  const hoje = hojeBrasil();
 
   const [rows] = await pool.query(
     `SELECT DISTINCT a2.id, a2.nome

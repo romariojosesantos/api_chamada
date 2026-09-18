@@ -7,6 +7,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { logAuditEvent } = require('./audit');
+const { hojeBrasil } = require('./data-brasil');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -100,7 +101,7 @@ router.post('/:id/assinaturas', asyncHandler(async (req, res) => {
   const [[aluno]] = await pool.query('SELECT id, nome, turno, turma FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL', [alunoId, req.id_instituicao]);
   if (!aluno) return res.status(404).json({ error: 'Aluno não encontrado.' });
 
-  const assinadoEm = req.body.assinado_em || new Date().toISOString().split('T')[0];
+  const assinadoEm = req.body.assinado_em || hojeBrasil();
 
   await pool.query(
     'INSERT INTO termo_assinaturas (id_termo, id_aluno, assinado_em) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE assinado_em = VALUES(assinado_em)',

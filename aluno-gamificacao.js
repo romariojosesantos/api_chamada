@@ -15,6 +15,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
+const { hojeBrasil } = require('./data-brasil');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -28,7 +29,7 @@ router.get('/gamificacao', asyncHandler(async (req, res) => {
   }
   const alunoId = req.user.aluno_id;
   const idInstituicao = req.user.id_instituicao;
-  const hoje = new Date().toISOString().split('T')[0];
+  const hoje = hojeBrasil();
   const inicioMesAtual = `${hoje.slice(0, 7)}-01`;
 
   // Semana atual (Domingo a Sábado) pra desenhar a fileira de chamas no

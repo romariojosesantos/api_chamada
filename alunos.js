@@ -8,6 +8,7 @@ const { validate } = require('./validation');
 const { logAuditEvent } = require('./audit');
 const { syncAlunoStatusFromMatriculas, encerrarMatriculasForaDoTurno, encerrarMatriculasSeNaoAtivo } = require('./status-sync');
 const { criarNotificacao } = require('./notificacoes-service');
+const { hojeBrasil } = require('./data-brasil');
 const { podeMatricular } = require('./regras-matricula');
 const { AREAS_VALIDAS } = require('./areas');
 const { resolverNomeParecido } = require('./nome-similar');
@@ -500,7 +501,7 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = hojeBrasil();
 
     // Passo 0: corrige nome de aluno/professor que só difere por
     // acento/maiúscula/espaço de um já cadastrado, e separa quem só ficou
@@ -1409,7 +1410,7 @@ router.post('/', validate('aluno'), asyncHandler(async (req, res) => {
       `INSERT INTO alunos (nome, data_nascimento, data_cadastro, sexo, telefone, turma, turno, transporte, Inf, acompanhamento, ponto, informacoes_gerais, escola_atual, status, id_instituicao)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        nome, data_nascimento || null, data_cadastro || new Date().toISOString().split('T')[0], sexo || null, telefone || null,
+        nome, data_nascimento || null, data_cadastro || hojeBrasil(), sexo || null, telefone || null,
         turma || null, turno || null, transporte || null, Inf || null,
         acompanhamento || null, ponto || null, informacoes_gerais || null, escola_atual || null,
         status || 'ativo', req.id_instituicao

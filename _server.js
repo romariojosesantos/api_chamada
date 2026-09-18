@@ -15,6 +15,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const pool = require('./db');
+const { hojeBrasil } = require('./data-brasil');
 
 // Cache simples em memória para endpoints estáticos. Só é útil localmente ou
 // dentro da mesma invocação serverless — na Vercel cada invocação é isolada, então
@@ -163,12 +164,10 @@ app.get('/api/instituicoes/todas', authMiddleware, async (req, res) => {
 // aparelho do usuário. Existe porque a tela de Chamada usava só o relógio do
 // navegador pra decidir a data padrão ao abrir; se o aparelho estiver com a
 // data errada (relógio desconfigurado, fuso trocado etc.), a chamada podia
-// ser lançada no dia errado sem ninguém perceber. Usa Intl com timeZone fixo
-// em vez de `new Date()` puro porque o servidor roda em UTC — sem isso, entre
-// 21h e meia-noite (Brasília) a resposta já seria do dia seguinte.
+// ser lançada no dia errado sem ninguém perceber. Ver data-brasil.js pro
+// motivo de usar Intl com timeZone fixo em vez de `new Date()` puro.
 app.get('/api/hoje', authMiddleware, (req, res) => {
-  const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
-  res.json({ hoje });
+  res.json({ hoje: hojeBrasil() });
 });
 
 app.use('/api', authMiddleware);

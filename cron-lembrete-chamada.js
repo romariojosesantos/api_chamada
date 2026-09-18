@@ -13,6 +13,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { criarNotificacao } = require('./notificacoes-service');
+const { hojeBrasil } = require('./data-brasil');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -40,7 +41,7 @@ router.get('/', asyncHandler(async (req, res) => {
     }
   }
 
-  const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+  const hoje = hojeBrasil();
   const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
   const diaDaSemana = dias[new Date(`${hoje}T12:00:00`).getDay()];
 

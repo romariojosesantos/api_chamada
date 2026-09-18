@@ -14,6 +14,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
+const { hojeBrasil } = require('./data-brasil');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -774,7 +775,7 @@ router.get('/estatisticas-mensais', asyncHandler(async (req, res) => {
   const mesNum = Number(mesStr);
   const dataInicio = `${mes}-01`;
   const ultimoDiaDoMes = new Date(ano, mesNum, 0).getDate(); // dia 0 do mês seguinte = último dia deste mês
-  const hoje = new Date().toISOString().split('T')[0];
+  const hoje = hojeBrasil();
   const dataFimCalendario = `${mes}-${String(ultimoDiaDoMes).padStart(2, '0')}`;
   const dataFim = dataFimCalendario > hoje ? hoje : dataFimCalendario;
 
