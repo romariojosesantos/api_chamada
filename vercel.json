@@ -19,5 +19,11 @@
     "api/index.js": {
       "maxDuration": 30
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/lembrete-chamada",
+      "schedule": "0 1 * * *"
+    }
+  ]
 }

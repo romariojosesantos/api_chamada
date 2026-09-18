@@ -25,11 +25,20 @@ function condicaoPeriodo(periodo) {
     : { sql: '(periodo = ? OR periodo IS NULL)', params: [periodo] };
 }
 
-// Buscar histórico de presença (todos os registros da instituição). Exclui datas
-// que foram marcadas como "sem aula" DEPOIS de já terem presença lançada — evita
-// que um feriado cadastrado retroativamente continue aparecendo no histórico.
+// Buscar histórico de presença. Exclui datas marcadas como "sem aula" DEPOIS
+// de já terem presença lançada — evita que um feriado cadastrado
+// retroativamente continue aparecendo no histórico.
+//
+// Filtro por data OPCIONAL (`data` exata, ou `data_inicio`+`data_fim`) — sem
+// nenhum dos dois, mantém o comportamento de sempre (histórico inteiro da
+// instituição). Adicionado porque a tela de Chamada só usa o dia atual (`data`)
+// e o export por período só usa o intervalo escolhido (`data_inicio`/
+// `data_fim`), mas os dois chamavam essa rota sem filtro nenhum — cada poll de
+// 15s da Chamada baixando TODO o histórico da instituição (17 mil+ linhas já
+// na instituição 1), pra usar só o dia de hoje.
 router.get('/', asyncHandler(async (req, res) => {
-  const sql = `
+  const { data, data_inicio, data_fim } = req.query;
+  let sql = `
     SELECT p.aluno_id, a.nome, p.data, p.status, p.periodo, p.observacao
     FROM presenca p
     JOIN alunos a ON p.aluno_id = a.id
@@ -38,9 +47,17 @@ router.get('/', asyncHandler(async (req, res) => {
         SELECT 1 FROM dias_sem_aula d
         WHERE d.data = DATE(p.data) AND d.id_instituicao = ?
       )
-    ORDER BY a.nome ASC, p.data DESC
   `;
-  const [results] = await pool.query(sql, [req.id_instituicao, req.id_instituicao]);
+  const params = [req.id_instituicao, req.id_instituicao];
+  if (data) {
+    sql += ' AND DATE(p.data) = ?';
+    params.push(data);
+  } else if (data_inicio && data_fim) {
+    sql += ' AND DATE(p.data) BETWEEN ? AND ?';
+    params.push(data_inicio, data_fim);
+  }
+  sql += ' ORDER BY a.nome ASC, p.data DESC';
+  const [results] = await pool.query(sql, params);
   res.json(results);
 }));
 
@@ -137,38 +154,101 @@ router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
 
 // Registra quando um aluno precisou ser adicionado manualmente (via busca) na
 // chamada, por não ter aparecido na lista automática (/api/alunos/por-dia) do
-// turno/dia. Isso indica um provável problema de matrícula/turno cadastrado
-// errado — gera auditoria + notificação pra instituição investigar. Chamado
-// pelo frontend assim que o professor seleciona o aluno na busca (ver
-// addManualStudent em AttendanceList.jsx), independente de ele marcar presença.
+// turno/transporte/dia. Isso indica um provável problema de CADASTRO — mas
+// pode ser o turno (matrícula) OU o transporte (a lista já filtra por
+// transporte também, ver jaVisivel em AttendanceList.jsx), então checamos os
+// dois aqui pra apontar exatamente qual, em vez de sempre culpar "turno" (bug
+// de mensagem: várias adições manuais eram na real por transporte errado).
+// Grava em `adicoes_manuais_chamada` (estruturado, pro relatório mensal),
+// além do log de auditoria + notificação de sempre. Chamado pelo frontend
+// assim que o professor seleciona o aluno na busca (ver addManualStudent em
+// AttendanceList.jsx), independente de ele marcar presença.
 router.post('/adicao-manual', asyncHandler(async (req, res) => {
-  const { aluno_id, data, turno } = req.body;
+  const { aluno_id, data, turno, transporte } = req.body;
 
   if (!aluno_id || !data || !turno) {
     return res.status(400).json({ error: 'aluno_id, data e turno são obrigatórios.' });
   }
 
   const [[aluno]] = await pool.query(
-    'SELECT nome FROM alunos WHERE id = ? AND id_instituicao = ?',
+    'SELECT nome, transporte FROM alunos WHERE id = ? AND id_instituicao = ?',
     [aluno_id, req.id_instituicao]
   );
   if (!aluno) return res.status(404).json({ error: 'Aluno não encontrado.' });
 
+  const norm = (s) => String(s || '').toLowerCase().trim();
+  const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  const diaDaSemana = dias[new Date(`${data}T12:00:00`).getDay()];
+
+  // Turno: existe ALGUMA matrícula ativa dele pra esse dia da semana com
+  // turno igual ao selecionado na Chamada? (turno vem da MATRÍCULA, não do
+  // atributo fixo `alunos.turno` — um aluno pode ter mais de uma).
+  const [matriculasDoDia] = await pool.query(
+    `SELECT turno FROM matricula
+     WHERE idaluno = ? AND id_instituicao = ? AND status = 'matriculado' AND data_fim IS NULL
+       AND TRIM(dia_semana) = ? AND data_inicio <= ?`,
+    [aluno_id, req.id_instituicao, diaDaSemana, data]
+  );
+  const turnoOk = matriculasDoDia.some(m => norm(m.turno) === norm(turno));
+
+  // Transporte: só é um problema se havia de fato um filtro de transporte
+  // selecionado na tela (mesmo fallback "Sem transporte definido" usado em
+  // AttendanceList.jsx pra aluno sem transporte cadastrado).
+  const alunoTransporte = (aluno.transporte && aluno.transporte.trim()) ? aluno.transporte : 'Sem transporte definido';
+  const transporteOk = !transporte || !transporte.trim() || norm(alunoTransporte) === norm(transporte);
+
+  const motivoProvavel = !turnoOk && !transporteOk ? 'ambos'
+    : !turnoOk ? 'turno'
+    : !transporteOk ? 'transporte'
+    : 'indefinido';
+
+  const motivoTexto = {
+    turno: `o turno cadastrado na matrícula não bate com "${turno}"`,
+    transporte: `o transporte cadastrado ("${alunoTransporte}") não bate com o filtro selecionado ("${transporte}")`,
+    ambos: `nem o turno da matrícula nem o transporte cadastrado batem com o que estava selecionado (turno "${turno}", transporte "${transporte}")`,
+    indefinido: 'turno e transporte batem — motivo não identificado, vale conferir o cadastro mesmo assim'
+  }[motivoProvavel];
+
+  await pool.query(
+    `INSERT INTO adicoes_manuais_chamada
+       (id_instituicao, aluno_id, data, turno_selecionado, transporte_selecionado, aluno_transporte, motivo_provavel)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [req.id_instituicao, aluno_id, data, turno, transporte || null, alunoTransporte, motivoProvavel]
+  );
+
   await logAuditEvent(
     'ALUNO_ADICIONADO_MANUALMENTE_CHAMADA',
-    `Aluno ID: ${aluno_id} (${aluno.nome}) adicionado manualmente na chamada de ${data} (turno: ${turno}) — não apareceu na lista automática.`,
+    `Aluno ID: ${aluno_id} (${aluno.nome}) adicionado manualmente na chamada de ${data} (turno: ${turno}, transporte: ${transporte || '-'}) — não apareceu na lista automática. Motivo provável: ${motivoTexto}.`,
     req.id_instituicao
   );
 
   await criarNotificacao({
     tipo: 'sistema',
     titulo: 'Aluno adicionado manualmente à chamada',
-    mensagem: `${aluno.nome} não apareceu automaticamente na lista de chamada do turno ${turno} em ${data} e precisou ser adicionado via busca. Verifique a matrícula/turno desse aluno.`,
+    mensagem: `${aluno.nome} não apareceu automaticamente na lista de chamada de ${data} e precisou ser adicionado via busca — ${motivoTexto}.`,
     id_instituicao: req.id_instituicao,
     id_aluno: aluno_id
   });
 
   res.status(201).json({ success: true });
+}));
+
+// Relatório "Alunos adicionados manualmente" — lista pra um mês (?mes=YYYY-MM,
+// padrão o mês atual), com o motivo provável (turno/transporte/ambos/
+// indefinido) de cada caso. Serve pra limpar cadastro errado em lote em vez
+// de depender de alguém lembrar de cada notificação avulsa.
+router.get('/adicoes-manuais', asyncHandler(async (req, res) => {
+  const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '') ? req.query.mes : new Date().toISOString().slice(0, 7);
+  const [rows] = await pool.query(
+    `SELECT am.id, am.aluno_id, a.nome AS aluno_nome, am.data, am.turno_selecionado,
+       am.transporte_selecionado, am.aluno_transporte, am.motivo_provavel, am.criado_em
+     FROM adicoes_manuais_chamada am
+     JOIN alunos a ON a.id = am.aluno_id
+     WHERE am.id_instituicao = ? AND DATE_FORMAT(am.data, '%Y-%m') = ?
+     ORDER BY am.data DESC, a.nome ASC`,
+    [req.id_instituicao, mes]
+  );
+  res.json({ mes, adicoes: rows });
 }));
 
 // Finalizar chamada: para a data+turno informados, registra 'ausente' para todo
@@ -184,32 +264,21 @@ router.post('/adicao-manual', asyncHandler(async (req, res) => {
 // aqui causava o inverso do esperado: um aluno cujo turno cadastrado é
 // "Manhã" mas que só tinha matrícula de "Tarde" (dado legado/edge case)
 // podia ser marcado ausente no turno errado ao finalizar a chamada errada.
-router.post('/finalizar', asyncHandler(async (req, res) => {
-  const { data, turno } = req.body;
-  const inst = req.id_instituicao;
-
-  if (!data) {
-    return res.status(400).json({ error: 'Data é obrigatória.' });
-  }
-  if (!turno) {
-    return res.status(400).json({ error: 'Turno é obrigatório.' });
-  }
-
-  // Verificar se a data é um dia sem aula
+// Núcleo de "Finalizar Chamada" pra UM turno — extraído em função própria pra
+// dar pra reaproveitar tanto em POST /finalizar (um turno de cada vez, como
+// sempre foi) quanto em POST /finalizar-dia (todos os turnos do dia de uma
+// vez, ver mais abaixo). Retorna `{ diaSemAula, motivo }` se a data estiver
+// bloqueada, ou `{ ausentesRegistrados }` no sucesso — nunca lança erro por
+// "turno sem ninguém esperado" (só não insere nada, ausentesRegistrados fica 0).
+async function finalizarChamadaTurno(inst, data, turno) {
   const [diaSemAula] = await pool.query(
     `SELECT id, motivo FROM dias_sem_aula WHERE data = ? AND id_instituicao = ?`,
     [data, inst]
   );
-
   if (diaSemAula.length > 0) {
-    return res.status(400).json({
-      error: 'Não é possível finalizar chamada neste dia',
-      motivo: diaSemAula[0].motivo || 'Dia sem aula',
-      isDiaSemAula: true
-    });
+    return { diaSemAula: true, motivo: diaSemAula[0].motivo || 'Dia sem aula' };
   }
 
-  // Determinar dia da semana
   const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
   const diaDaSemana = dias[new Date(`${data}T12:00:00`).getDay()];
 
@@ -271,10 +340,135 @@ router.post('/finalizar', asyncHandler(async (req, res) => {
     ausentesRegistrados = result.affectedRows;
   }
 
+  return { ausentesRegistrados };
+}
+
+router.post('/finalizar', asyncHandler(async (req, res) => {
+  const { data, turno } = req.body;
+  if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
+  if (!turno) return res.status(400).json({ error: 'Turno é obrigatório.' });
+
+  const resultado = await finalizarChamadaTurno(req.id_instituicao, data, turno);
+  if (resultado.diaSemAula) {
+    return res.status(400).json({
+      error: 'Não é possível finalizar chamada neste dia',
+      motivo: resultado.motivo,
+      isDiaSemAula: true
+    });
+  }
+
   res.json({
-    message: ausentesRegistrados > 0 ? 'Chamada finalizada com sucesso' : 'Chamada já estava finalizada',
-    ausentes_registrados: ausentesRegistrados
+    message: resultado.ausentesRegistrados > 0 ? 'Chamada finalizada com sucesso' : 'Chamada já estava finalizada',
+    ausentes_registrados: resultado.ausentesRegistrados
   });
+}));
+
+// Finalizar TODOS os turnos pendentes de um dia, de uma vez (botão "Finalizar"
+// da lista de pendências do Painel do Gestor — ver GET /pendencias-mes) — em
+// vez de precisar entrar na Chamada e finalizar turno por turno. Tenta os 3
+// turnos canônicos (Manhã/Tarde/Noite, os únicos usados no seletor de turno
+// da Chamada); um turno sem ninguém esperado naquele dia simplesmente não
+// insere nada (ver finalizarChamadaTurno), não é erro.
+const TURNOS_CANONICOS = ['Manhã', 'Tarde', 'Noite'];
+router.post('/finalizar-dia', asyncHandler(async (req, res) => {
+  const { data } = req.body;
+  if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
+
+  const porTurno = [];
+  let totalAusentesRegistrados = 0;
+  for (const turno of TURNOS_CANONICOS) {
+    const resultado = await finalizarChamadaTurno(req.id_instituicao, data, turno);
+    if (resultado.diaSemAula) {
+      return res.status(400).json({
+        error: 'Não é possível finalizar chamada neste dia',
+        motivo: resultado.motivo,
+        isDiaSemAula: true
+      });
+    }
+    if (resultado.ausentesRegistrados > 0) {
+      totalAusentesRegistrados += resultado.ausentesRegistrados;
+      porTurno.push({ turno, ausentes_registrados: resultado.ausentesRegistrados });
+    }
+  }
+
+  res.json({
+    message: totalAusentesRegistrados > 0 ? 'Chamada do dia finalizada com sucesso' : 'Chamada já estava finalizada',
+    ausentes_registrados: totalAusentesRegistrados,
+    por_turno: porTurno
+  });
+}));
+
+// Lista, pra um mês (?mes=YYYY-MM, padrão o mês atual), quais DIAS já
+// passaram e ainda têm turno com aluno esperado sem nenhum registro de
+// presença — pra mostrar no Painel do Gestor sem precisar navegar dia a dia
+// na Chamada. Só considera até hoje (dia futuro não tem "pendência", só
+// ainda não aconteceu) e ignora dias marcados como "sem aula". Mesma condição
+// de período (NULL só cobre manhã/tarde) do resto do sistema.
+router.get('/pendencias-mes', asyncHandler(async (req, res) => {
+  const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '') ? req.query.mes : new Date().toISOString().slice(0, 7);
+  const inst = req.id_instituicao;
+  const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+  const primeiroDiaMes = `${mes}-01`;
+  if (primeiroDiaMes > hoje) return res.json({ mes, dias: [] });
+  const [ano, mesNum] = mes.split('-').map(Number);
+  const ultimoDiaCalendario = `${mes}-${String(new Date(ano, mesNum, 0).getDate()).padStart(2, '0')}`;
+  const dataFim = ultimoDiaCalendario > hoje ? hoje : ultimoDiaCalendario;
+
+  const PERIODO_LABEL_SQL = `CASE
+    WHEN LOWER(m.turno) LIKE '%manh%' THEN 'Manhã'
+    WHEN LOWER(m.turno) LIKE '%tard%' THEN 'Tarde'
+    WHEN LOWER(m.turno) LIKE '%noit%' THEN 'Noite'
+  END`;
+  const PERIODO_SQL = `CASE
+    WHEN LOWER(m.turno) LIKE '%manh%' THEN 'manha'
+    WHEN LOWER(m.turno) LIKE '%tard%' THEN 'tarde'
+    WHEN LOWER(m.turno) LIKE '%noit%' THEN 'noite'
+  END`;
+
+  const [rows] = await pool.query(
+    `WITH RECURSIVE datas AS (
+       SELECT ? as data
+       UNION ALL
+       SELECT DATE_ADD(data, INTERVAL 1 DAY) FROM datas WHERE data < ?
+     ),
+     dias_letivos AS (
+       SELECT data FROM datas
+       WHERE NOT EXISTS (SELECT 1 FROM dias_sem_aula WHERE data = datas.data AND id_instituicao = ?)
+     ),
+     esperados AS (
+       SELECT dl.data, a.id AS aluno_id, ${PERIODO_LABEL_SQL} AS turno, ${PERIODO_SQL} AS periodo
+       FROM dias_letivos dl
+       JOIN matricula m ON TRIM(m.dia_semana) = ELT(
+           DAYOFWEEK(dl.data), 'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
+         )
+         AND dl.data >= m.data_inicio AND (m.data_fim IS NULL OR dl.data <= m.data_fim)
+       JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo' AND a.excluido_em IS NULL
+       WHERE m.status = 'matriculado'
+     )
+     SELECT e.data, e.turno, COUNT(DISTINCT e.aluno_id) AS pendentes
+     FROM esperados e
+     WHERE e.turno IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM presenca p
+         WHERE p.aluno_id = e.aluno_id AND p.id_instituicao = ? AND DATE(p.data) = e.data
+           AND (p.periodo = e.periodo OR (p.periodo IS NULL AND e.periodo <> 'noite'))
+       )
+     GROUP BY e.data, e.turno
+     ORDER BY e.data DESC, e.turno`,
+    [primeiroDiaMes, dataFim, inst, inst, inst]
+  );
+
+  const porDia = new Map();
+  rows.forEach(r => {
+    const dataStr = r.data instanceof Date ? r.data.toISOString().split('T')[0] : r.data;
+    if (!porDia.has(dataStr)) porDia.set(dataStr, []);
+    porDia.get(dataStr).push({ turno: r.turno, pendentes: r.pendentes });
+  });
+  const dias = [...porDia.entries()]
+    .map(([data, turnos]) => ({ data, turnos }))
+    .sort((a, b) => b.data.localeCompare(a.data));
+
+  res.json({ mes, dias });
 }));
 
 module.exports = router;

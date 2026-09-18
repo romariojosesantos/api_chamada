@@ -9,7 +9,7 @@ const pool = require('./db');
 
 /**
  * @param {object} dados
- * @param {string} dados.tipo - 'sistema' | 'matricula' | 'movimentacao' | 'desistencia'
+ * @param {string} dados.tipo - 'sistema' | 'matricula' | 'movimentacao' | 'desistencia' | 'chamada_pendente'
  * @param {string} dados.titulo
  * @param {string|null} [dados.mensagem]
  * @param {number|null} [dados.id_instituicao] - null = visível pra todo mundo (aviso de sistema global)

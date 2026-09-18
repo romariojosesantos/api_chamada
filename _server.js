@@ -64,6 +64,7 @@ const historicoAlunoRouter = require('./historico-aluno');
 const permissoesRouter = require('./permissoes');
 const notasRouter = require('./notas');
 const estatisticasComparativasRouter = require('./estatisticas-comparativas');
+const cronLembreteChamadaRouter = require('./cron-lembrete-chamada');
 const pontosRouter = require('./pontos');
 const tiposPontoInternoRouter = require('./tiposPontoInterno');
 
@@ -116,6 +117,10 @@ app.use('/api/permissoes', permissoesRouter);
 // vez, por isso também fica fora do bloco de x-institution-id abaixo — ver
 // comentário no topo de estatisticas-comparativas.js.
 app.use('/api/estatisticas-comparativas', authMiddleware, estatisticasComparativasRouter);
+// Lembrete de fim de expediente (ver cron-lembrete-chamada.js): chamado pelo
+// cron da Vercel, sem token de usuário — NUNCA passa por authMiddleware, se
+// protege sozinha checando CRON_SECRET.
+app.use('/api/cron/lembrete-chamada', cronLembreteChamadaRouter);
 // Tela de perfil/gamificação do aluno: mesmo motivo do historico-aluno acima
 // (authMiddleware direto, sem x-institution-id — o token de aluno já traz
 // id_instituicao embutido, ver POST /api/auth/aluno-login).
