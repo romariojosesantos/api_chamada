@@ -12,7 +12,7 @@
 const TELAS = [
   { tela: '/', label: 'Chamada' },
   { tela: '/notificacoes', label: 'Notificações' },
-  { tela: '/relatorio-diario', label: 'Relatórios' },
+  { tela: '/relatorio-diario', label: 'Painel do Gestor' },
   { tela: '/grade', label: 'Grade' },
   { tela: '/ajuste-grade', label: 'Ajuste Grade' },
   { tela: '/grade-turmas', label: 'Grade por Turma' },

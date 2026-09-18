@@ -63,6 +63,7 @@ const notificacoesRouter = require('./notificacoes');
 const historicoAlunoRouter = require('./historico-aluno');
 const permissoesRouter = require('./permissoes');
 const notasRouter = require('./notas');
+const estatisticasComparativasRouter = require('./estatisticas-comparativas');
 const pontosRouter = require('./pontos');
 const tiposPontoInternoRouter = require('./tiposPontoInterno');
 
@@ -111,6 +112,10 @@ app.use('/api/historico-aluno', authMiddleware, historicoAlunoRouter);
 // global, não é de uma instituição específica) — authMiddleware já vem
 // aplicado dentro do próprio permissoes.js, junto do masterMiddleware.
 app.use('/api/permissoes', permissoesRouter);
+// Tela "Comparativo" (master/coordenador): compara VÁRIAS instituições de uma
+// vez, por isso também fica fora do bloco de x-institution-id abaixo — ver
+// comentário no topo de estatisticas-comparativas.js.
+app.use('/api/estatisticas-comparativas', authMiddleware, estatisticasComparativasRouter);
 // Tela de perfil/gamificação do aluno: mesmo motivo do historico-aluno acima
 // (authMiddleware direto, sem x-institution-id — o token de aluno já traz
 // id_instituicao embutido, ver POST /api/auth/aluno-login).

@@ -469,7 +469,13 @@ async function calcularFrequenciaPorAluno(inst, dataInicio, dataFim) {
 //   - "..._alunos"/"total_justificados"/"total_nao_justificados": ALUNOS ÚNICOS
 //     (um aluno que faltou 5 dias conta 1 vez).
 //   - "..._registros": REGISTROS de presença (uma linha por aluno por dia).
-async function calcularEstatisticasPeriodo(inst, data_inicio, data_fim) {
+// `incluirTendencia`: também monta a série dia a dia (esperados/presentes por
+// dia letivo, mesma base do gráfico "Frequência ao Longo do Mês"). Opcional
+// porque é uma query a mais — só vale a pena rodar pra quem realmente vai
+// desenhar o gráfico (a tela de período em si, e o mês atual em
+// /estatisticas-mensais), não pro "mês anterior" que essa mesma função também
+// calcula só pra pegar totais de comparação (ver GET /estatisticas-mensais).
+async function calcularEstatisticasPeriodo(inst, data_inicio, data_fim, incluirTendencia = false) {
   // Gerar lista de dias letivos no período (excluindo dias_sem_aula)
   const [diasLetivos] = await pool.query(
     `WITH RECURSIVE datas AS (
@@ -503,7 +509,8 @@ async function calcularEstatisticasPeriodo(inst, data_inicio, data_fim) {
       total_justificativas_registros: 0,
       justificativas: [],
       total_dias_letivos: 0,
-      media_alunos_dia: 0
+      media_alunos_dia: 0,
+      tendencia_diaria: []
     };
   }
 
@@ -668,6 +675,54 @@ async function calcularEstatisticasPeriodo(inst, data_inicio, data_fim) {
   // Média de alunos esperados por dia letivo
   const mediaAlunosDia = diasLetivos.length > 0 ? Math.round(totalOportunidadesRegistros / diasLetivos.length) : 0;
 
+  // Série dia a dia (esperados/presentes por dia letivo) — mesma query usada
+  // antes só dentro de GET /estatisticas-mensais, extraída pra cá pra também
+  // alimentar o gráfico "Frequência ao Longo do Período" em qualquer intervalo
+  // escolhido manualmente, não só no mês.
+  let tendenciaDiaria = [];
+  if (incluirTendencia) {
+    const [tendenciaRows] = await pool.query(
+      `WITH RECURSIVE datas AS (
+         SELECT ? as data
+         UNION ALL
+         SELECT DATE_ADD(data, INTERVAL 1 DAY) FROM datas WHERE data < ?
+       ),
+       dias_letivos AS (
+         SELECT data FROM datas
+         WHERE NOT EXISTS (SELECT 1 FROM dias_sem_aula WHERE data = datas.data AND id_instituicao = ?)
+       ),
+       esperados_por_dia AS (
+         SELECT d.data, COUNT(DISTINCT a.id) as esperados
+         FROM dias_letivos d
+         JOIN matricula m ON TRIM(m.dia_semana) = ELT(
+             DAYOFWEEK(d.data), 'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
+           )
+           AND d.data >= m.data_inicio
+           AND (m.data_fim IS NULL OR d.data <= m.data_fim)
+         JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo' AND a.excluido_em IS NULL
+         GROUP BY d.data
+       ),
+       presentes_por_dia AS (
+         SELECT DATE(p.data) as data, COUNT(DISTINCT p.aluno_id) as presentes
+         FROM presenca p
+         WHERE p.id_instituicao = ? AND p.status = 'presente' AND DATE(p.data) BETWEEN ? AND ?
+         GROUP BY DATE(p.data)
+       )
+       SELECT dl.data, COALESCE(ep.esperados, 0) as esperados, COALESCE(pp.presentes, 0) as presentes
+       FROM dias_letivos dl
+       LEFT JOIN esperados_por_dia ep ON ep.data = dl.data
+       LEFT JOIN presentes_por_dia pp ON pp.data = dl.data
+       ORDER BY dl.data`,
+      [data_inicio, data_fim, inst, inst, inst, data_inicio, data_fim]
+    );
+    tendenciaDiaria = tendenciaRows.map(row => ({
+      data: row.data instanceof Date ? row.data.toISOString().split('T')[0] : row.data,
+      esperados: row.esperados,
+      presentes: row.presentes,
+      frequencia_pct: row.esperados > 0 ? Math.round((row.presentes / row.esperados) * 100) : 0
+    }));
+  }
+
   return {
     data_inicio,
     data_fim,
@@ -688,7 +743,8 @@ async function calcularEstatisticasPeriodo(inst, data_inicio, data_fim) {
     })),
     // Info adicional para transparência do cálculo
     total_dias_letivos: diasLetivos.length,
-    media_alunos_dia: mediaAlunosDia
+    media_alunos_dia: mediaAlunosDia,
+    tendencia_diaria: tendenciaDiaria
   };
 }
 
@@ -697,7 +753,7 @@ router.get('/estatisticas-periodo', asyncHandler(async (req, res) => {
   if (!data_inicio || !data_fim) {
     return res.status(400).json({ error: 'data_inicio e data_fim são obrigatórios' });
   }
-  res.json(await calcularEstatisticasPeriodo(req.id_instituicao, data_inicio, data_fim));
+  res.json(await calcularEstatisticasPeriodo(req.id_instituicao, data_inicio, data_fim, true));
 }));
 
 // Visão mensal do dashboard (alternador Diário/Mensal): mesmo cálculo de
@@ -743,51 +799,13 @@ router.get('/estatisticas-mensais', asyncHandler(async (req, res) => {
   const ultimoDiaMesAnterior = new Date(anoAnterior, mesAnteriorNum, 0).getDate();
   const dataFimAnterior = `${anoAnterior}-${String(mesAnteriorNum).padStart(2, '0')}-${String(ultimoDiaMesAnterior).padStart(2, '0')}`;
 
-  const [periodo, periodoAnterior, [tendenciaDiariaRes], frequenciaPorAlunoFormatada, [comFaltaRes], [diaADiaPorAlunoRes]] = await Promise.all([
-    calcularEstatisticasPeriodo(inst, dataInicio, dataFim),
+  const [periodo, periodoAnterior, frequenciaPorAlunoFormatada, [comFaltaRes], [diaADiaPorAlunoRes]] = await Promise.all([
+    // `true` = também monta a série dia a dia (tendencia_diaria) — vira
+    // `periodo.tendencia_diaria` abaixo, alimenta o gráfico de frequência do
+    // mês. periodoAnterior não precisa disso (só usamos totais dele pra
+    // comparação), por isso fica com o padrão (sem tendência).
+    calcularEstatisticasPeriodo(inst, dataInicio, dataFim, true),
     calcularEstatisticasPeriodo(inst, dataInicioAnterior, dataFimAnterior),
-
-    // Série dia a dia (esperados/presentes por dia letivo) — alimenta o
-    // gráfico de tendência de frequência do mês.
-    pool.query(
-      `WITH RECURSIVE datas AS (
-         SELECT ? as data
-         UNION ALL
-         SELECT DATE_ADD(data, INTERVAL 1 DAY) FROM datas WHERE data < ?
-       ),
-       dias_letivos AS (
-         SELECT data FROM datas
-         WHERE NOT EXISTS (SELECT 1 FROM dias_sem_aula WHERE data = datas.data AND id_instituicao = ?)
-       ),
-       esperados_por_dia AS (
-         -- Usa QUALQUER matrícula que cobria aquele dia (m.data_inicio <= dia <=
-         -- data_fim, ou ainda ativa se data_fim for NULL) — não só a matrícula
-         -- ATUAL do aluno. Turma trocada/movida/reorganizada depois não pode
-         -- apagar retroativamente quem estava matriculado naquele dia (ver nota
-         -- grande abaixo, em esperados_por_aluno).
-         SELECT d.data, COUNT(DISTINCT a.id) as esperados
-         FROM dias_letivos d
-         JOIN matricula m ON TRIM(m.dia_semana) = ELT(
-             DAYOFWEEK(d.data), 'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
-           )
-           AND d.data >= m.data_inicio
-           AND (m.data_fim IS NULL OR d.data <= m.data_fim)
-         JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo' AND a.excluido_em IS NULL
-         GROUP BY d.data
-       ),
-       presentes_por_dia AS (
-         SELECT DATE(p.data) as data, COUNT(DISTINCT p.aluno_id) as presentes
-         FROM presenca p
-         WHERE p.id_instituicao = ? AND p.status = 'presente' AND DATE(p.data) BETWEEN ? AND ?
-         GROUP BY DATE(p.data)
-       )
-       SELECT dl.data, COALESCE(ep.esperados, 0) as esperados, COALESCE(pp.presentes, 0) as presentes
-       FROM dias_letivos dl
-       LEFT JOIN esperados_por_dia ep ON ep.data = dl.data
-       LEFT JOIN presentes_por_dia pp ON pp.data = dl.data
-       ORDER BY dl.data`,
-      [dataInicio, dataFim, inst, inst, inst, dataInicio, dataFim]
-    ),
 
     // Frequência REAL por aluno no mês — extraída pra calcularFrequenciaPorAluno
     // (ver definição acima, perto de calcularEstatisticasPeriodo) porque
@@ -879,12 +897,6 @@ router.get('/estatisticas-mensais', asyncHandler(async (req, res) => {
     finalizarAluno();
   }
 
-  const tendenciaDiaria = tendenciaDiariaRes.map(row => ({
-    data: row.data instanceof Date ? row.data.toISOString().split('T')[0] : row.data,
-    esperados: row.esperados,
-    presentes: row.presentes,
-    frequencia_pct: row.esperados > 0 ? Math.round((row.presentes / row.esperados) * 100) : 0
-  }));
 
   const frequenciaPorAluno = frequenciaPorAlunoFormatada.map(row => ({
     aluno_id: row.aluno_id,
@@ -918,7 +930,6 @@ router.get('/estatisticas-mensais', asyncHandler(async (req, res) => {
 
   res.json({
     mes, ...periodo,
-    tendencia_diaria: tendenciaDiaria,
     frequencia_por_aluno: frequenciaPorAluno,
     media_frequencia_individual: mediaFrequenciaIndividual,
     total_alunos_com_falta: totalComFalta,

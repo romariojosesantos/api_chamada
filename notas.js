@@ -124,9 +124,13 @@ async function montarParticipacaoPorAluno(inst) {
 // Turmas disponíveis pra escolher antes de lançar nota — pro professor, só
 // as DELE (o pedido é que ele veja/lance por turma, não uma lista solta de
 // todo aluno que ele dá aula em qualquer lugar); master/coordenador não usa
-// esse seletor na tela (vê todo mundo direto), mas a rota não restringe caso
-// sirva pra outra coisa depois. Só turmas cuja categoria é avaliável aqui
-// (TEC/CAP não têm nota nessa tela — ver categoriaDaTurma).
+// esse seletor por padrão (vê todo mundo direto), mas pode passar
+// `professor_id` (pedido: "poder selecionar por professores e turmas de cada
+// professor") pra ver só as turmas DAQUELE professor escolhido — mesma
+// condição de dono-ou-coprofessor usada pro professor logado, só que
+// aplicada a um id arbitrário em vez de req.user.id_professor. Só turmas
+// cuja categoria é avaliável aqui (TEC/CAP não têm nota nessa tela — ver
+// categoriaDaTurma).
 router.get('/turmas', asyncHandler(async (req, res) => {
   let sql = `
     SELECT atv.idatividades AS id, atv.nome, atv.area, atv.dia_semana, atv.horario, atv.turno
@@ -134,10 +138,14 @@ router.get('/turmas', asyncHandler(async (req, res) => {
     WHERE atv.id_instituicao = ? AND atv.data_fim IS NULL
   `;
   const params = [req.id_instituicao];
-  if (req.user.perfil === 'professor') {
-    if (!req.user.id_professor) return res.json([]);
+  const ehProfessor = req.user.perfil === 'professor';
+  const idProfessorFiltro = ehProfessor
+    ? req.user.id_professor
+    : (['master', 'coordenador'].includes(req.user.perfil) ? req.query.professor_id : null);
+  if (ehProfessor && !req.user.id_professor) return res.json([]);
+  if (idProfessorFiltro) {
     sql += ' AND (atv.idprofessor = ? OR atv.idatividades IN (SELECT idatividades FROM atividade_professores WHERE idprofessor = ?))';
-    params.push(req.user.id_professor, req.user.id_professor);
+    params.push(idProfessorFiltro, idProfessorFiltro);
   }
   sql += ' ORDER BY atv.nome ASC, atv.dia_semana ASC, atv.horario ASC';
   const [rows] = await pool.query(sql, params);
@@ -145,6 +153,19 @@ router.get('/turmas', asyncHandler(async (req, res) => {
     .map(t => ({ ...t, categoria: categoriaDaTurma(t) }))
     .filter(t => t.categoria !== null);
   res.json(turmas);
+}));
+
+// Lista de professores ativos da instituição, pra master/coordenador
+// escolher "de qual professor" quer ver as turmas (ver GET /turmas acima).
+router.get('/professores', asyncHandler(async (req, res) => {
+  if (!['master', 'coordenador'].includes(req.user.perfil)) {
+    return res.status(403).json({ error: 'Só master/coordenador podem listar professores.' });
+  }
+  const [rows] = await pool.query(
+    'SELECT id, nome FROM professores WHERE id_instituicao = ? AND ativo = 1 ORDER BY nome ASC',
+    [req.id_instituicao]
+  );
+  res.json(rows);
 }));
 
 // Roster de alunos + notas pra lançar/revisar num período — a unidade é o
