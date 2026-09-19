@@ -13,6 +13,8 @@ const { podeMatricular } = require('./regras-matricula');
 const { AREAS_VALIDAS } = require('./areas');
 const { resolverNomeParecido } = require('./nome-similar');
 
+
+
 // Helper para envolver rotas assíncronas e capturar erros
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
