@@ -38,7 +38,7 @@ function condicaoPeriodo(periodo) {
 // 15s da Chamada baixando TODO o histórico da instituição (17 mil+ linhas já
 // na instituição 1), pra usar só o dia de hoje.
 router.get('/', asyncHandler(async (req, res) => {
-  const { data, data_inicio, data_fim } = req.query;
+  const { data, data_inicio, data_fim, aluno_id } = req.query;
   let sql = `
     SELECT p.aluno_id, a.nome, p.data, p.status, p.periodo, p.observacao
     FROM presenca p
@@ -56,6 +56,12 @@ router.get('/', asyncHandler(async (req, res) => {
   } else if (data_inicio && data_fim) {
     sql += ' AND DATE(p.data) BETWEEN ? AND ?';
     params.push(data_inicio, data_fim);
+  }
+  // Opcional — usado pela escala semanal de um aluno específico (Grade.js),
+  // pra não baixar a instituição inteira só pra mostrar a presença de um.
+  if (aluno_id) {
+    sql += ' AND p.aluno_id = ?';
+    params.push(aluno_id);
   }
   sql += ' ORDER BY a.nome ASC, p.data DESC';
   const [results] = await pool.query(sql, params);

@@ -8,7 +8,7 @@ const { validate } = require('./validation');
 const { logAuditEvent } = require('./audit');
 const { syncAlunoStatusFromMatriculas, encerrarMatriculasForaDoTurno, encerrarMatriculasSeNaoAtivo } = require('./status-sync');
 const { criarNotificacao } = require('./notificacoes-service');
-const { hojeBrasil } = require('./data-brasil');
+const { hojeBrasil, agoraBrasil } = require('./data-brasil');
 const { podeMatricular } = require('./regras-matricula');
 const { AREAS_VALIDAS } = require('./areas');
 const { resolverNomeParecido } = require('./nome-similar');
@@ -222,7 +222,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const { nome, turno, transporte, status } = req.query;
 
   let sql = `
-    SELECT a.id, a.nome, a.data_nascimento, a.data_cadastro, a.sexo, a.telefone,
+    SELECT a.id, a.nome, a.data_nascimento, a.data_cadastro, a.criado_em, a.sexo, a.telefone,
            a.turma, a.turno, a.transporte, a.status, a.inativado_em, a.Inf,
            a.acompanhamento, a.ponto, a.informacoes_gerais, a.escola_atual,
            ${getDiasMatriculadosSubquery()},
@@ -583,17 +583,18 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
       truncar(a.informacoes_gerais, 255),
       truncar(a.escola_atual, 150),
       'ativo',
-      req.id_instituicao
+      req.id_instituicao,
+      agoraBrasil()
     ]);
 
-    // `data_cadastro` fica de fora do ON DUPLICATE KEY UPDATE de propósito: é a
-    // data do PRIMEIRO cadastro do aluno na instituição — uma vez gravada, uma
-    // reimportação da planilha (mesmo sem essa coluna preenchida) nunca deve
-    // sobrescrever esse valor histórico. `informacoes_gerais` e `escola_atual`
-    // são o oposto por pedido explícito: sobrescritos a cada reimportação, sem
+    // `data_cadastro` e `criado_em` ficam de fora do ON DUPLICATE KEY UPDATE de
+    // propósito: são a data/hora do PRIMEIRO cadastro do aluno na instituição —
+    // uma vez gravadas, uma reimportação da planilha nunca deve sobrescrever
+    // esses valores históricos. `informacoes_gerais` e `escola_atual` são o
+    // oposto por pedido explícito: sobrescritos a cada reimportação, sem
     // guardar histórico (se o aluno mudar de escola, só troca o valor).
     const sql = `
-      INSERT INTO alunos (nome, data_nascimento, data_cadastro, sexo, telefone, turma, turno, transporte, Inf, acompanhamento, ponto, informacoes_gerais, escola_atual, status, id_instituicao)
+      INSERT INTO alunos (nome, data_nascimento, data_cadastro, sexo, telefone, turma, turno, transporte, Inf, acompanhamento, ponto, informacoes_gerais, escola_atual, status, id_instituicao, criado_em)
       VALUES ?
       ON DUPLICATE KEY UPDATE
         data_nascimento = VALUES(data_nascimento),
@@ -1409,13 +1410,13 @@ router.post('/', validate('aluno'), asyncHandler(async (req, res) => {
     await connection.beginTransaction();
 
     const [result] = await connection.query(
-      `INSERT INTO alunos (nome, data_nascimento, data_cadastro, sexo, telefone, turma, turno, transporte, Inf, acompanhamento, ponto, informacoes_gerais, escola_atual, status, id_instituicao)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO alunos (nome, data_nascimento, data_cadastro, sexo, telefone, turma, turno, transporte, Inf, acompanhamento, ponto, informacoes_gerais, escola_atual, status, id_instituicao, criado_em)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         nome, data_nascimento || null, data_cadastro || hojeBrasil(), sexo || null, telefone || null,
         turma || null, turno || null, transporte || null, Inf || null,
         acompanhamento || null, ponto || null, informacoes_gerais || null, escola_atual || null,
-        status || 'ativo', req.id_instituicao
+        status || 'ativo', req.id_instituicao, agoraBrasil()
       ]
     );
     const idaluno = result.insertId;
@@ -1882,7 +1883,7 @@ router.post('/:id/gerar-codigo', asyncHandler(async (req, res) => {
 router.get('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params;
   const [results] = await pool.query(
-    `SELECT id, nome, data_nascimento, data_cadastro, sexo, telefone, turma, turno, transporte, status, Inf,
+    `SELECT id, nome, data_nascimento, data_cadastro, criado_em, sexo, telefone, turma, turno, transporte, status, Inf,
             acompanhamento, ponto, informacoes_gerais, escola_atual
      FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL`,
     [id, req.id_instituicao]
