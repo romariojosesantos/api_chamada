@@ -10,8 +10,10 @@ const { logAuditEvent } = require('./audit');
 const { syncAlunoStatusFromMatriculas } = require('./status-sync');
 const { AREAS_VALIDAS } = require('./areas');
 const { hojeBrasil } = require('./data-brasil');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const exigir = (recurso) => exigirRecurso('/turmas', recurso);
 
 const DIAS_VALIDOS = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 // "Noite" é o turno dos ensaios — aceita aluno de qualquer turno, ver
@@ -114,7 +116,7 @@ router.get('/', asyncHandler(async (req, res) => {
 
 // Criar turma nova. data_inicio começa hoje por padrão (pode vir informada
 // explicitamente no corpo, ex.: pra registrar uma turma que já existia antes).
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', exigir('criar'), asyncHandler(async (req, res) => {
   const dados = await validarECresolverProfessor(req, res, req.body);
   if (!dados) return; // validarECresolverProfessor já respondeu o erro
 
@@ -153,7 +155,7 @@ router.post('/', asyncHandler(async (req, res) => {
 }));
 
 // Editar turma (nome, professor, dia/horário/turno).
-router.put('/:id', asyncHandler(async (req, res) => {
+router.put('/:id', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const [existentes] = await pool.query(
@@ -188,7 +190,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
 // turma — co-docência: os dois passam a poder bater ponto e lançar nota dela
 // (ver backend/pontos.js e backend/notas.js). Não afeta o principal, que só
 // troca editando a turma (PUT acima).
-router.post('/:id/professores', asyncHandler(async (req, res) => {
+router.post('/:id/professores', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { idprofessor, professor_nome } = req.body;
 
@@ -225,7 +227,7 @@ router.post('/:id/professores', asyncHandler(async (req, res) => {
 
 // Remove um co-professor da turma (o principal não é afetado — pra trocar o
 // principal, edite a turma).
-router.delete('/:id/professores/:idprofessor', asyncHandler(async (req, res) => {
+router.delete('/:id/professores/:idprofessor', exigir('editar'), asyncHandler(async (req, res) => {
   const { id, idprofessor } = req.params;
 
   const [result] = await pool.query(
@@ -244,7 +246,7 @@ router.delete('/:id/professores/:idprofessor', asyncHandler(async (req, res) => 
 // ativas dela. Diferente de apagar: a turma continua existindo, só marcada
 // como encerrada — o histórico de quem passou por ela fica intacto e
 // consultável (ver GET '/:id/alunos-historico' abaixo).
-router.post('/:id/encerrar', asyncHandler(async (req, res) => {
+router.post('/:id/encerrar', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const [turmas] = await pool.query(
@@ -299,7 +301,7 @@ router.post('/:id/encerrar', asyncHandler(async (req, res) => {
 // Reabrir turma encerrada: só limpa data_fim da turma — NÃO rematricula
 // automaticamente quem foi desmatriculado no encerramento (isso teria que ser
 // uma decisão manual, matricular de novo quem for o caso).
-router.post('/:id/reabrir', asyncHandler(async (req, res) => {
+router.post('/:id/reabrir', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const [turmas] = await pool.query(
@@ -346,7 +348,7 @@ router.get('/:id/alunos-historico', asyncHandler(async (req, res) => {
 // tem histórico de matrícula deixaria esse histórico com uma atividade
 // "fantasma" (sem nome, sem professor) nos relatórios — por isso o bloqueio é
 // mais rígido que só "matrícula ativa".
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete('/:id', exigir('excluir'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const [existentes] = await pool.query(

@@ -9,6 +9,8 @@
 // componente React (AdminUsuarios.js, HistoricoAlunoMaster.js) — marcar pra
 // outro perfil aqui não teria efeito real, só confundiria. /trocar-senha
 // também fica de fora (sempre liberada pra qualquer perfil logado).
+const pool = require('./db');
+
 const TELAS = [
   { tela: '/', label: 'Chamada' },
   { tela: '/notificacoes', label: 'Notificações' },
@@ -31,6 +33,40 @@ const TELAS = [
 ];
 
 const TELAS_VALIDAS = TELAS.map(t => t.tela);
-const PERFIS_EDITAVEIS = ['monitor', 'professor', 'coordenador'];
 
-module.exports = { TELAS, TELAS_VALIDAS, PERFIS_EDITAVEIS };
+// Perfis fixos no código, sempre editáveis pela tela de Permissões. Além
+// desses, o master pode criar perfis novos "genéricos" direto pela tela (ver
+// perfis-customizados.js) — carregarPerfisEditaveis() abaixo é quem junta os
+// dois. Um perfil customizado nunca herda o vínculo com professor (bater
+// ponto, lançar nota por turma) nem o escopo por área de coordenador: essas
+// duas coisas checam o texto exato "professor"/"coordenador" em vários
+// lugares (ver resolverIdProfessor/resolverAreaCoordenacao em auth.js), não
+// esta lista — um perfil novo só tem o que o master marcar em tela/recurso.
+const PERFIS_EDITAVEIS_BASE = ['monitor', 'professor', 'coordenador'];
+
+// Lista completa de perfis editáveis AGORA (fixos + customizados) — sempre
+// consulta o banco na hora (mesmo espírito de exigirRecurso em
+// permissoes-middleware.js: perfil customizado pode ser criado/apagado a
+// qualquer momento, uma lista estática ficaria desatualizada).
+// Customizados são POR INSTITUIÇÃO (cada instituição cria os seus, ver
+// perfis-customizados.js) — os fixos continuam valendo em qualquer uma.
+async function carregarPerfisEditaveis(idInstituicao) {
+  const [rows] = await pool.query('SELECT chave FROM perfis_customizados WHERE id_instituicao = ? ORDER BY chave', [idInstituicao]);
+  return [...PERFIS_EDITAVEIS_BASE, ...rows.map(r => r.chave)];
+}
+
+// Ações genéricas dentro de uma tela (ver permissoes_perfil_recurso em
+// backend/permissoes.js) — mesmo conjunto pra todas as telas, por
+// simplicidade. Bloqueio de verdade em backend/permissoes-middleware.js,
+// aplicado nas rotas de criar/editar/excluir de cada tela.
+const RECURSOS = [
+  { recurso: 'visualizar', label: 'Visualizar' },
+  { recurso: 'criar', label: 'Criar' },
+  { recurso: 'editar', label: 'Editar' },
+  { recurso: 'excluir', label: 'Excluir' },
+  { recurso: 'exportar', label: 'Exportar' },
+];
+
+const RECURSOS_VALIDOS = RECURSOS.map(r => r.recurso);
+
+module.exports = { TELAS, TELAS_VALIDAS, PERFIS_EDITAVEIS_BASE, carregarPerfisEditaveis, RECURSOS, RECURSOS_VALIDOS };

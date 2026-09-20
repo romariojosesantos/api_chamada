@@ -63,6 +63,8 @@ const diasSemAulaRouter = require('./dias-sem-aula');
 const notificacoesRouter = require('./notificacoes');
 const historicoAlunoRouter = require('./historico-aluno');
 const permissoesRouter = require('./permissoes');
+const perfisCustomizadosRouter = require('./perfis-customizados');
+const areasConfigRouter = require('./areas-config');
 const notasRouter = require('./notas');
 const estatisticasComparativasRouter = require('./estatisticas-comparativas');
 const cronLembreteChamadaRouter = require('./cron-lembrete-chamada');
@@ -116,6 +118,15 @@ app.use('/api/historico-aluno', authMiddleware, historicoAlunoRouter);
 // global, não é de uma instituição específica) — authMiddleware já vem
 // aplicado dentro do próprio permissoes.js, junto do masterMiddleware.
 app.use('/api/permissoes', permissoesRouter);
+// Perfis customizados: mesmo motivo/posição de permissoes acima (master,
+// ação global) — authMiddleware+masterMiddleware já vêm aplicados dentro do
+// próprio perfis-customizados.js.
+app.use('/api/perfis-customizados', perfisCustomizadosRouter);
+// Nomes de exibição das áreas: não é dado de uma instituição específica (é
+// nomenclatura única do sistema inteiro), por isso também fica de fora do
+// bloco de x-institution-id abaixo — authMiddleware (e masterMiddleware no
+// PUT) já vêm aplicados dentro do próprio areas-config.js.
+app.use('/api/areas', areasConfigRouter);
 // Tela "Comparativo" (master/coordenador): compara VÁRIAS instituições de uma
 // vez, por isso também fica fora do bloco de x-institution-id abaixo — ver
 // comentário no topo de estatisticas-comparativas.js.

@@ -21,6 +21,7 @@ const { syncAlunoStatusFromMatriculas } = require('./status-sync');
 const { podeMatricular } = require('./regras-matricula');
 const { logAuditEvent } = require('./audit');
 const { criarNotificacao } = require('./notificacoes-service');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -156,7 +157,7 @@ router.get('/historico-periodo', asyncHandler(async (req, res) => {
 // tela existe pra editar várias células de uma vez) e estourava o timeout da
 // função serverless — a transação já tinha sido commitada no banco quando o
 // timeout estourava, por isso salvava mesmo aparecendo erro pro usuário.
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', exigirRecurso('/ajuste-grade', 'editar'), asyncHandler(async (req, res) => {
   const { alteracoes } = req.body;
 
   if (!alteracoes || !Array.isArray(alteracoes) || alteracoes.length === 0) {
@@ -440,7 +441,11 @@ router.post('/duplicidades/resolver', asyncHandler(async (req, res) => {
 // célula-a-célula. O dia/horário/turno vêm da PRÓPRIA turma (não do corpo da
 // requisição), então não tem como criar uma matrícula com posição
 // inconsistente com a atividade.
-router.post('/matricular', asyncHandler(async (req, res) => {
+// Compartilhada por Turmas.js ("Matricular"), GerenciarMatriculas.js ("Nova
+// Matrícula") e GradeTurmas.js (busca+adicionar) — usa a permissão de
+// "/turmas" como dona (ver comentário em permissoes-middleware.js sobre
+// endpoint compartilhado entre telas).
+router.post('/matricular', exigirRecurso('/turmas', 'editar'), asyncHandler(async (req, res) => {
   const { aluno_id, id_atividade } = req.body;
 
   if (!aluno_id || !id_atividade) {
@@ -563,7 +568,7 @@ router.post('/matricular', asyncHandler(async (req, res) => {
 // a nova numa transação só (evita o aluno ficar sem matrícula nenhuma se a
 // segunda metade falhar, que era o risco de fazer isso como dois requests
 // separados do cliente).
-router.post('/mover', asyncHandler(async (req, res) => {
+router.post('/mover', exigirRecurso('/grade-turmas', 'editar'), asyncHandler(async (req, res) => {
   const { matricula_id, id_atividade_destino } = req.body;
 
   if (!matricula_id || !id_atividade_destino) {
@@ -678,7 +683,9 @@ router.post('/mover', asyncHandler(async (req, res) => {
 // Cancelar (encerrar) uma matrícula específica — usado pra remover um aluno
 // de uma turma na tela de Turmas. Soft-delete via data_fim, igual ao resto do
 // sistema (nunca apaga a linha, pra manter histórico).
-router.delete('/:id', asyncHandler(async (req, res) => {
+// Compartilhada por Turmas.js (remover aluno da turma) e GerenciarMatriculas.js
+// (cancelar matrícula) — mesma ressalva de endpoint compartilhado, dono "/turmas".
+router.delete('/:id', exigirRecurso('/turmas', 'editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const [matriculas] = await pool.query(

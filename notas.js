@@ -15,8 +15,10 @@ const router = express.Router();
 const pool = require('./db');
 const { calcularFrequenciaPorAluno } = require('./relatorios');
 const { CATEGORIAS_VALIDAS, CATEGORIA_LABEL, categoriaDaTurma } = require('./categorias-avaliativas');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const exigir = (recurso) => exigirRecurso('/notas', recurso);
 
 // Listar períodos avaliativos da instituição (qualquer perfil com acesso à
 // tela pode ver a lista, pra escolher qual lançar nota — só master/coordenador
@@ -29,7 +31,7 @@ router.get('/periodos', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
-router.post('/periodos', asyncHandler(async (req, res) => {
+router.post('/periodos', exigir('criar'), asyncHandler(async (req, res) => {
   if (!['master', 'coordenador'].includes(req.user.perfil)) {
     return res.status(403).json({ error: 'Só master/coordenador podem criar períodos avaliativos.' });
   }
@@ -45,7 +47,7 @@ router.post('/periodos', asyncHandler(async (req, res) => {
   res.status(201).json({ id: result.insertId, nome: String(nome).trim(), data_inicio, data_fim });
 }));
 
-router.put('/periodos/:id', asyncHandler(async (req, res) => {
+router.put('/periodos/:id', exigir('editar'), asyncHandler(async (req, res) => {
   if (!['master', 'coordenador'].includes(req.user.perfil)) {
     return res.status(403).json({ error: 'Só master/coordenador podem editar períodos avaliativos.' });
   }
@@ -63,7 +65,7 @@ router.put('/periodos/:id', asyncHandler(async (req, res) => {
   res.json({ message: 'Período atualizado com sucesso.' });
 }));
 
-router.delete('/periodos/:id', asyncHandler(async (req, res) => {
+router.delete('/periodos/:id', exigir('excluir'), asyncHandler(async (req, res) => {
   if (!['master', 'coordenador'].includes(req.user.perfil)) {
     return res.status(403).json({ error: 'Só master/coordenador podem excluir períodos avaliativos.' });
   }
@@ -268,7 +270,7 @@ router.get('/alunos', asyncHandler(async (req, res) => {
 // alunos e categorias diferentes num POST só (mesmo espírito de "mudanças
 // pendentes, salva tudo de uma vez" de AjusteGrade.js). Professor só pode
 // enviar item cuja categoria ele realmente ensina pro aluno em questão.
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', exigir('editar'), asyncHandler(async (req, res) => {
   const { id_periodo, notas } = req.body;
   if (!id_periodo) return res.status(400).json({ error: 'id_periodo é obrigatório.' });
   if (!Array.isArray(notas) || notas.length === 0) return res.status(400).json({ error: 'Nenhuma nota enviada.' });

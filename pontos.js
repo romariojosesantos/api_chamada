@@ -33,8 +33,10 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { escopoDeAcesso } = require('./escopoPonto');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const exigir = (recurso) => exigirRecurso('/pontos', recurso);
 
 const DIAS_SEMANA_POR_INDICE = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 
@@ -242,7 +244,7 @@ router.get('/educadores', asyncHandler(async (req, res) => {
 
 // Bater ponto de entrada numa turma — só vale pra HOJE (Brasília); cria a
 // linha se não existir, ou marca a entrada se a linha já existia sem entrada.
-router.post('/bater', asyncHandler(async (req, res) => {
+router.post('/bater', exigir('criar'), asyncHandler(async (req, res) => {
   const idProfessor = exigirProfessor(req, res);
   if (!idProfessor) return;
 
@@ -289,7 +291,7 @@ router.post('/bater', asyncHandler(async (req, res) => {
 }));
 
 // Registrar saída — a linha já precisa existir (hoje) com entrada e sem saída.
-router.post('/saida', asyncHandler(async (req, res) => {
+router.post('/saida', exigir('editar'), asyncHandler(async (req, res) => {
   const idProfessor = exigirProfessor(req, res);
   if (!idProfessor) return;
 
@@ -315,7 +317,7 @@ router.post('/saida', asyncHandler(async (req, res) => {
 // aceita um tipo de uma área onde esse professor já deu aula alguma vez
 // (mesmo filtro de GET /turmas). Grava só id_tipo_interno (id_atividade fica
 // NULL) — nunca as duas colunas preenchidas.
-router.post('/bater-interno', asyncHandler(async (req, res) => {
+router.post('/bater-interno', exigir('criar'), asyncHandler(async (req, res) => {
   const idProfessor = exigirProfessor(req, res);
   if (!idProfessor) return;
 
@@ -357,7 +359,7 @@ router.post('/bater-interno', asyncHandler(async (req, res) => {
 
 // Registrar saída de atividade interna — a linha já precisa existir (hoje)
 // com entrada e sem saída (mesma regra do /saida de turma).
-router.post('/saida-interno', asyncHandler(async (req, res) => {
+router.post('/saida-interno', exigir('editar'), asyncHandler(async (req, res) => {
   const idProfessor = exigirProfessor(req, res);
   if (!idProfessor) return;
 
@@ -378,7 +380,7 @@ router.post('/saida-interno', asyncHandler(async (req, res) => {
 
 // Corrigir horários manualmente — só coordenador (geral ou da área dessa
 // turma) ou master (ver podeEditarPonto).
-router.put('/:id', asyncHandler(async (req, res) => {
+router.put('/:id', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const [[ponto]] = await pool.query('SELECT id, id_professor, id_atividade, id_tipo_interno FROM pontos WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
   if (!ponto) return res.status(404).json({ error: 'Registro de ponto não encontrado.' });
@@ -393,7 +395,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
 }));
 
 // Apagar um registro equivocado (mesma regra de posse do PUT).
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete('/:id', exigir('excluir'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const [[ponto]] = await pool.query('SELECT id, id_professor, id_atividade, id_tipo_interno FROM pontos WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
   if (!ponto) return res.status(404).json({ error: 'Registro de ponto não encontrado.' });

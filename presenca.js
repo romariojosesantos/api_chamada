@@ -8,6 +8,7 @@ const { validate } = require('./validation');
 const { logAuditEvent } = require('./audit');
 const { criarNotificacao } = require('./notificacoes-service');
 const { hojeBrasil } = require('./data-brasil');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -77,7 +78,7 @@ router.get('/', asyncHandler(async (req, res) => {
 // "Presente" para tirar a marcação — ver handleTogglePresence em AttendanceList.jsx).
 // Como a coluna `status` é NOT NULL, esse caso não é um upsert: é tratado como
 // pedido para APAGAR o registro de presença existente daquele aluno na data.
-router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
+router.post('/', exigirRecurso('/', 'editar'), validate('presenca'), asyncHandler(async (req, res) => {
   const { data, chamadas } = req.body;
   // Sem `periodo` (chamada antiga/turno não mapeado): grava NULL, mesmo
   // comportamento de antes da coluna existir — nunca bloqueia o salvamento
@@ -170,7 +171,7 @@ router.post('/', validate('presenca'), asyncHandler(async (req, res) => {
 // além do log de auditoria + notificação de sempre. Chamado pelo frontend
 // assim que o professor seleciona o aluno na busca (ver addManualStudent em
 // AttendanceList.jsx), independente de ele marcar presença.
-router.post('/adicao-manual', asyncHandler(async (req, res) => {
+router.post('/adicao-manual', exigirRecurso('/', 'criar'), asyncHandler(async (req, res) => {
   const { aluno_id, data, turno, transporte } = req.body;
 
   if (!aluno_id || !data || !turno) {
@@ -357,7 +358,7 @@ async function finalizarChamadaTurno(inst, data, turno) {
   return { ausentesRegistrados };
 }
 
-router.post('/finalizar', asyncHandler(async (req, res) => {
+router.post('/finalizar', exigirRecurso('/', 'editar'), asyncHandler(async (req, res) => {
   const { data, turno } = req.body;
   if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
   if (!turno) return res.status(400).json({ error: 'Turno é obrigatório.' });
@@ -384,7 +385,7 @@ router.post('/finalizar', asyncHandler(async (req, res) => {
 // da Chamada); um turno sem ninguém esperado naquele dia simplesmente não
 // insere nada (ver finalizarChamadaTurno), não é erro.
 const TURNOS_CANONICOS = ['Manhã', 'Tarde', 'Noite'];
-router.post('/finalizar-dia', asyncHandler(async (req, res) => {
+router.post('/finalizar-dia', exigirRecurso('/relatorio-diario', 'editar'), asyncHandler(async (req, res) => {
   const { data } = req.body;
   if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
 

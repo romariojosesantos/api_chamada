@@ -6,8 +6,10 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { logAuditEvent } = require('./audit');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const exigir = (recurso) => exigirRecurso('/gerenciar-matriculas', recurso);
 
 // Listar contatos de emergência de um aluno
 router.get('/aluno/:alunoId', asyncHandler(async (req, res) => {
@@ -22,7 +24,7 @@ router.get('/aluno/:alunoId', asyncHandler(async (req, res) => {
 }));
 
 // Criar contato de emergência
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', exigir('criar'), asyncHandler(async (req, res) => {
   const { id_aluno, nome, telefone, parentesco } = req.body;
   const alunoId = parseInt(id_aluno);
   
@@ -40,7 +42,7 @@ router.post('/', asyncHandler(async (req, res) => {
 }));
 
 // Atualizar contato de emergência
-router.put('/:id', asyncHandler(async (req, res) => {
+router.put('/:id', exigir('editar'), asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   const { nome, telefone, parentesco } = req.body;
   
@@ -60,7 +62,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
 }));
 
 // Deletar contato de emergência
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete('/:id', exigir('excluir'), asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
 

@@ -12,8 +12,10 @@ const router = express.Router();
 const pool = require('./db');
 const { logAuditEvent } = require('./audit');
 const { PRINCIPIOS_CARATER, PRINCIPIO_IDS } = require('./carater-principios');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const exigir = (recurso) => exigirRecurso('/carater', recurso);
 
 // Só master/coordenador definem o catálogo de missões (conteúdo curricular);
 // professor participa da confirmação/reconhecimento, mas não cria missão.
@@ -44,7 +46,7 @@ router.get('/missoes', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
-router.post('/missoes', gestorMiddleware, asyncHandler(async (req, res) => {
+router.post('/missoes', gestorMiddleware, exigir('criar'), asyncHandler(async (req, res) => {
   const titulo = String(req.body.titulo || '').trim();
   const descricao = String(req.body.descricao || '').trim();
   const principio = parseInt(req.body.principio);
@@ -60,7 +62,7 @@ router.post('/missoes', gestorMiddleware, asyncHandler(async (req, res) => {
   res.status(201).json({ id: result.insertId, message: 'Missão criada com sucesso.' });
 }));
 
-router.put('/missoes/:id', gestorMiddleware, asyncHandler(async (req, res) => {
+router.put('/missoes/:id', gestorMiddleware, exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const titulo = String(req.body.titulo || '').trim();
   const descricao = String(req.body.descricao || '').trim();
@@ -98,7 +100,7 @@ router.get('/pendentes', confirmadorMiddleware, asyncHandler(async (req, res) =>
   res.json(rows);
 }));
 
-router.put('/:id/confirmar', confirmadorMiddleware, asyncHandler(async (req, res) => {
+router.put('/:id/confirmar', confirmadorMiddleware, exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const aprovado = !!req.body.aprovado;
   const comentario = String(req.body.comentario || '').trim();
@@ -120,7 +122,7 @@ router.put('/:id/confirmar', confirmadorMiddleware, asyncHandler(async (req, res
 
 // Reconhecimento espontâneo: a equipe registra um ato já confirmado, sem
 // depender do aluno ter marcado nada antes.
-router.post('/reconhecer', confirmadorMiddleware, asyncHandler(async (req, res) => {
+router.post('/reconhecer', confirmadorMiddleware, exigir('criar'), asyncHandler(async (req, res) => {
   const idAluno = parseInt(req.body.id_aluno);
   const principio = parseInt(req.body.principio);
   const texto = String(req.body.texto || '').trim();

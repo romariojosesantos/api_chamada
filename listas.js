@@ -7,8 +7,10 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { logAuditEvent } = require('./audit');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const exigir = (recurso) => exigirRecurso('/listas', recurso);
 
 // Lista todas as listas da instituição, com quantos alunos cada uma tem —
 // é a "tela inicial" (cartões com título, estilo Apple Notas).
@@ -24,7 +26,7 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', exigir('criar'), asyncHandler(async (req, res) => {
   const titulo = String(req.body.titulo || '').trim();
   if (!titulo) return res.status(400).json({ error: 'Título é obrigatório.' });
 
@@ -60,7 +62,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   res.json({ ...lista, alunos });
 }));
 
-router.patch('/:id', asyncHandler(async (req, res) => {
+router.patch('/:id', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const titulo = String(req.body.titulo || '').trim();
   if (!titulo) return res.status(400).json({ error: 'Título não pode ficar vazio.' });
@@ -74,7 +76,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   res.json({ id: Number(id), titulo });
 }));
 
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete('/:id', exigir('excluir'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const [[lista]] = await pool.query('SELECT titulo FROM listas WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
@@ -87,7 +89,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
   res.json({ success: true });
 }));
 
-router.post('/:id/alunos', asyncHandler(async (req, res) => {
+router.post('/:id/alunos', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const alunoId = Number(req.body.aluno_id);
   if (!alunoId) return res.status(400).json({ error: 'Informe aluno_id.' });
@@ -106,7 +108,7 @@ router.post('/:id/alunos', asyncHandler(async (req, res) => {
   res.status(201).json(aluno);
 }));
 
-router.delete('/:id/alunos/:alunoId', asyncHandler(async (req, res) => {
+router.delete('/:id/alunos/:alunoId', exigir('editar'), asyncHandler(async (req, res) => {
   const { id, alunoId } = req.params;
 
   const [result] = await pool.query(

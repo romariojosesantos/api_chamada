@@ -9,7 +9,8 @@ const crypto = require('crypto');
 const pool = require('./db');
 const { Resend } = require('resend');
 const { AREAS_VALIDAS } = require('./areas');
-const { TELAS_VALIDAS, PERFIS_EDITAVEIS } = require('./telas');
+const { TELAS_VALIDAS, carregarPerfisEditaveis, RECURSOS_VALIDOS } = require('./telas');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const router = express.Router();
 const TOKEN_SECRET = process.env.AUTH_SECRET;
@@ -90,16 +91,54 @@ const loadUserInstitutions = async (userId, perfil) => {
 // front, e a tela "Permissões", master-only, que edita isso). `master` nunca
 // passa pela tabela — acesso total sempre, fixo aqui, pra não haver risco de
 // o próprio master se trancar fora do sistema mudando isso pela tela.
-const carregarTelasPermitidas = async (perfil) => {
+//
+// Permissões são POR INSTITUIÇÃO (ver migrate-permissoes-por-instituicao.js):
+// "monitor" pode ter telas diferentes em cada instituição, por isso NÃO fica
+// mais cravado no token do login — ver GET /minhas-permissoes abaixo, chamado
+// de novo pelo front toda vez que troca a instituição ativa (ver
+// InstitutionContext.js).
+const carregarTelasPermitidas = async (perfil, idInstituicao) => {
   if (perfil === 'master') return TELAS_VALIDAS;
-  if (!PERFIS_EDITAVEIS.includes(perfil)) return []; // perfil 'aluno' ou outro sem telas de staff
-  const [rows] = await pool.query('SELECT tela FROM permissoes_perfil WHERE perfil = ?', [perfil]);
+  // Sem checar uma lista fixa de propósito: um perfil customizado (ver
+  // telas.js/perfis-customizados.js) usa exatamente esta mesma tabela, então
+  // funciona sem precisar saber que ele existe — só "aluno" (outro fluxo de
+  // token, nem passa por aqui na prática) e qualquer perfil nunca configurado
+  // caem no []  natural de "nenhuma linha encontrada".
+  const [rows] = await pool.query('SELECT tela FROM permissoes_perfil WHERE id_instituicao = ? AND perfil = ?', [idInstituicao, perfil]);
   return rows.map(r => r.tela);
 };
 
+// Ações (recursos) dentro de cada tela — ver permissoes_perfil_recurso em
+// backend/permissoes.js. Master tem tudo liberado em toda tela permitida,
+// igual ao próprio telas_permitidas. `permissoes_perfil_recurso` guarda o
+// INVERSO (ações bloqueadas, não liberadas): tela nunca configurada pelo
+// master = continua 100% liberada, só passa a faltar aqui o que foi
+// explicitamente desmarcado na tela de Permissões — importante pra não
+// travar de uma hora pra outra quem já usava o sistema antes dessa feature.
+const carregarRecursosPermitidos = async (perfil, telasPermitidas, idInstituicao) => {
+  if (perfil === 'master') {
+    return Object.fromEntries(telasPermitidas.map(tela => [tela, RECURSOS_VALIDOS]));
+  }
+  const [rows] = await pool.query('SELECT tela, recurso FROM permissoes_perfil_recurso WHERE id_instituicao = ? AND perfil = ?', [idInstituicao, perfil]);
+  const bloqueadosPorTela = {};
+  for (const r of rows) {
+    if (!bloqueadosPorTela[r.tela]) bloqueadosPorTela[r.tela] = [];
+    bloqueadosPorTela[r.tela].push(r.recurso);
+  }
+  const recursos = {};
+  for (const tela of telasPermitidas) {
+    const bloqueados = bloqueadosPorTela[tela] || [];
+    recursos[tela] = RECURSOS_VALIDOS.filter(r => !bloqueados.includes(r));
+  }
+  return recursos;
+};
+
+// Monta a sessão do usuário SEM telas_permitidas/recursos_permitidos — como
+// essas duas agora dependem de qual instituição está ativa (o usuário escolhe
+// isso DEPOIS do login, ver SelecionarInstituicao.js), não dá pra cravar no
+// token; o front busca via GET /minhas-permissoes a cada troca de instituição.
 const buildUserSession = async (userRow) => {
   const instituicoes = await loadUserInstitutions(userRow.id, userRow.perfil);
-  const telas_permitidas = await carregarTelasPermitidas(userRow.perfil);
   return {
     id: userRow.id,
     nome: userRow.nome,
@@ -107,8 +146,7 @@ const buildUserSession = async (userRow) => {
     perfil: userRow.perfil,
     id_professor: userRow.id_professor || null,
     area_coordenacao: userRow.area_coordenacao || null,
-    instituicoes,
-    telas_permitidas
+    instituicoes
   };
 };
 
@@ -138,11 +176,23 @@ router.get('/has-master', asyncHandler(async (req, res) => {
 
 // --- Validação de campos de usuário (compartilhada entre register/admin create/admin update) ---
 // Retorna uma mensagem de erro (string) se algo for inválido, ou null se estiver tudo certo.
-const validarCamposUsuario = ({ nome, email, senha, perfil, exigirSenha = true }) => {
+// Async por causa do perfil: além dos 4 fixos (PERFIS), aceita qualquer perfil
+// customizado que o master já tenha criado (ver telas.js/perfis-customizados.js).
+// Perfil customizado é POR INSTITUIÇÃO agora — por isso recebe `idsInstituicoes`
+// (as instituições sendo vinculadas a este usuário) e exige que o perfil exista
+// em TODAS elas; sem isso o usuário ficaria com um perfil "fantasma" (sem
+// nenhuma tela configurada) em alguma das instituições escolhidas.
+const validarCamposUsuario = async ({ nome, email, senha, perfil, exigirSenha = true, idsInstituicoes = [] }) => {
   if (nome.length < 3) return 'Informe um nome com pelo menos 3 caracteres.';
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Informe um e-mail válido.';
   if (exigirSenha && senha.length < 6) return 'A senha deve ter pelo menos 6 caracteres.';
-  if (!PERFIS.includes(perfil)) return 'Perfil inválido.';
+  if (PERFIS.includes(perfil)) return null;
+  if (idsInstituicoes.length === 0) return 'Selecione ao menos uma instituição para usar um perfil customizado.';
+  for (const idInstituicao of idsInstituicoes) {
+    if (!(await carregarPerfisEditaveis(idInstituicao)).includes(perfil)) {
+      return `Perfil "${perfil}" não existe na instituição selecionada (ID ${idInstituicao}). Crie-o antes pela tela de Permissões.`;
+    }
+  }
   return null;
 };
 
@@ -212,7 +262,7 @@ router.post('/register', asyncHandler(async (req, res) => {
   const cleanPerfil = String(perfil || 'monitor').trim().toLowerCase();
   const institutionId = parseInt(id_instituicao);
 
-  const erro = validarCamposUsuario({ nome: cleanName, email: cleanEmail, senha: cleanPassword, perfil: cleanPerfil });
+  const erro = await validarCamposUsuario({ nome: cleanName, email: cleanEmail, senha: cleanPassword, perfil: cleanPerfil, idsInstituicoes: isNaN(institutionId) ? [] : [institutionId] });
   if (erro) return res.status(400).json({ error: erro });
   if (cleanPerfil !== 'master' && isNaN(institutionId)) return res.status(400).json({ error: 'Selecione a instituição vinculada ao usuário.' });
 
@@ -319,6 +369,22 @@ router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
   if (rows.length === 0) return res.status(401).json({ error: 'Usuário não encontrado.' });
   const user = await buildUserSession(rows[0]);
   res.json({ user: { ...user, status: rows[0].status } });
+}));
+
+// Telas/recursos liberados pro perfil do usuário logado NA INSTITUIÇÃO ATIVA
+// (header x-institution-id) — como permissões agora podem divergir por
+// instituição (ver migrate-permissoes-por-instituicao.js), isso não fica mais
+// cravado no token do login; o front chama de novo toda vez que troca de
+// instituição (ver InstitutionContext.js).
+router.get('/minhas-permissoes', authMiddleware, asyncHandler(async (req, res) => {
+  if (req.user.perfil === 'aluno') return res.json({ telas_permitidas: [], recursos_permitidos: {} });
+  const idInstituicao = parseInt(req.headers['x-institution-id']);
+  if (req.user.perfil !== 'master' && isNaN(idInstituicao)) {
+    return res.status(400).json({ error: 'Cabeçalho "x-institution-id" é obrigatório.' });
+  }
+  const telas_permitidas = await carregarTelasPermitidas(req.user.perfil, idInstituicao);
+  const recursos_permitidos = await carregarRecursosPermitidos(req.user.perfil, telas_permitidas, idInstituicao);
+  res.json({ telas_permitidas, recursos_permitidos });
 }));
 
 router.post('/change-password', authMiddleware, asyncHandler(async (req, res) => {
@@ -541,7 +607,7 @@ router.post('/admin/usuarios', authMiddleware, masterMiddleware, asyncHandler(as
   const cleanPerfil = String(perfil || 'monitor').trim().toLowerCase();
   const selectedInstitutions = Array.isArray(instituicoes) ? instituicoes.map(Number).filter(Boolean) : [];
 
-  const erro = validarCamposUsuario({ nome: cleanName, email: cleanEmail, senha: cleanPassword, perfil: cleanPerfil });
+  const erro = await validarCamposUsuario({ nome: cleanName, email: cleanEmail, senha: cleanPassword, perfil: cleanPerfil, idsInstituicoes: selectedInstitutions });
   if (erro) return res.status(400).json({ error: erro });
   if (cleanPerfil !== 'master' && selectedInstitutions.length === 0) return res.status(400).json({ error: 'Vincule ao menos uma instituição ao usuário.' });
 
@@ -576,7 +642,7 @@ router.put('/admin/usuarios/:id', authMiddleware, masterMiddleware, asyncHandler
   const cleanStatus = String(status || '').trim().toLowerCase();
 
   if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
-  const erro = validarCamposUsuario({ nome: cleanName, email: cleanEmail, senha: '', perfil: cleanPerfil, exigirSenha: false });
+  const erro = await validarCamposUsuario({ nome: cleanName, email: cleanEmail, senha: '', perfil: cleanPerfil, exigirSenha: false, idsInstituicoes: selectedInstitutions });
   if (erro) return res.status(400).json({ error: erro });
   if (cleanPerfil !== 'master' && selectedInstitutions.length === 0) return res.status(400).json({ error: 'Vincule ao menos uma instituição ao usuário.' });
   if (cleanStatus && !['ativo', 'inativo', 'pendente'].includes(cleanStatus)) return res.status(400).json({ error: 'Status inválido.' });
@@ -661,7 +727,7 @@ router.get('/vincular-professor/professores', authMiddleware, coordenadorOuMaste
   res.json(rows);
 }));
 
-router.put('/vincular-professor/usuarios/:id', authMiddleware, coordenadorOuMasterMiddleware, asyncHandler(async (req, res) => {
+router.put('/vincular-professor/usuarios/:id', authMiddleware, coordenadorOuMasterMiddleware, exigirRecurso('/vincular-professor', 'editar'), asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.id);
   const { id_professor } = req.body;
   if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });

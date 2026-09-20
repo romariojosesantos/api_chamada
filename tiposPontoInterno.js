@@ -13,8 +13,10 @@ const router = express.Router();
 const pool = require('./db');
 const { AREAS_VALIDAS } = require('./areas');
 const { escopoDeAcesso } = require('./escopoPonto');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const exigir = (recurso) => exigirRecurso('/pontos', recurso);
 
 // true se esse usuário pode agir (criar/editar/apagar) num tipo daquela área.
 function podeGerenciarArea(escopo, area) {
@@ -35,7 +37,7 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(tipos);
 }));
 
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', exigir('criar'), asyncHandler(async (req, res) => {
   const escopo = escopoDeAcesso(req);
   if (escopo === null) return res.status(403).json({ error: 'Sem acesso a atividades internas.' });
 
@@ -66,7 +68,7 @@ router.post('/', asyncHandler(async (req, res) => {
 
 // Edita nome e/ou ativo — a área do tipo nunca muda depois de criado (evita
 // um coordenador "roubar" um tipo já existente pra outra área).
-router.put('/:id', asyncHandler(async (req, res) => {
+router.put('/:id', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const [[tipo]] = await pool.query(
     'SELECT id, area FROM tipos_ponto_interno WHERE id = ? AND id_instituicao = ?',
@@ -94,7 +96,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
 // (mesmo padrão de atividades.js bloqueando apagar turma com matrícula):
 // nesse caso o histórico ficaria com um tipo "fantasma". Sugere desativar em
 // vez de apagar.
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete('/:id', exigir('excluir'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const [[tipo]] = await pool.query(
     'SELECT id, area FROM tipos_ponto_interno WHERE id = ? AND id_instituicao = ?',

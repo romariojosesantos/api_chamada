@@ -8,8 +8,10 @@ const router = express.Router();
 const pool = require('./db');
 const { logAuditEvent } = require('./audit');
 const { resolverNomeParecido } = require('./nome-similar');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const exigir = (recurso) => exigirRecurso('/professores', recurso);
 
 // Lista todos os professores da instituição (ativos e inativos — quem decide
 // esconder é o front), com quantas turmas ativas cada um dá (como principal
@@ -44,7 +46,7 @@ router.get('/', asyncHandler(async (req, res) => {
 // import em massa (ver nome-similar.js): corrige sozinho se for só diferença
 // de grafia (reaproveita o já cadastrado em vez de duplicar), ou cria mesmo
 // assim mas avisa se for só "parecido" (pode ser gente diferente de verdade).
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', exigir('criar'), asyncHandler(async (req, res) => {
   const nomeEnviado = String(req.body.nome || '').trim();
   if (!nomeEnviado) return res.status(400).json({ error: 'Nome é obrigatório.' });
 
@@ -84,7 +86,7 @@ router.post('/', asyncHandler(async (req, res) => {
 
 // Edita nome e/ou ativo. Renomear passa pela mesma checagem de nome parecido
 // (contra os outros professores, não contra ele mesmo).
-router.patch('/:id', asyncHandler(async (req, res) => {
+router.patch('/:id', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { nome, ativo } = req.body;
 
@@ -134,7 +136,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 // co-professor) — nem turma ativa nem histórico. Mesma regra/mensagem-estilo
 // do DELETE de turma em atividades.js: histórico não pode ficar com um
 // professor "fantasma".
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete('/:id', exigir('excluir'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const [[existente]] = await pool.query(
@@ -182,7 +184,7 @@ router.get('/:id/turmas', asyncHandler(async (req, res) => {
 // (atividade_professores) — se o professor de origem também era co-professor
 // em alguma turma, isso é decidido à parte (turma continua tendo outro
 // principal).
-router.post('/:id/transferir', asyncHandler(async (req, res) => {
+router.post('/:id/transferir', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const idDestino = Number(req.body.id_destino);
   if (!idDestino) return res.status(400).json({ error: 'Informe id_destino.' });

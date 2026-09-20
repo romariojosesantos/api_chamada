@@ -10,8 +10,10 @@ const router = express.Router();
 const pool = require('./db');
 const { logAuditEvent } = require('./audit');
 const { hojeBrasil } = require('./data-brasil');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const exigir = (recurso) => exigirRecurso('/devolucoes', recurso);
 
 // Lista os itens da instituição com a contagem de devolvidos/pendentes —
 // "tela inicial" (cartões, mesmo estilo de Termos). Só considera alunos
@@ -31,7 +33,7 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', exigir('criar'), asyncHandler(async (req, res) => {
   const nome = String(req.body.nome || '').trim();
   if (!nome) return res.status(400).json({ error: 'Nome do item é obrigatório.' });
 
@@ -77,7 +79,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   res.json({ ...item, devolvidos, pendentes });
 }));
 
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete('/:id', exigir('excluir'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const [[item]] = await pool.query('SELECT nome FROM itens_devolucao WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
@@ -93,7 +95,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
 // Marca um aluno como tendo devolvido (upsert — devolver de novo só atualiza
 // a data, não dá erro de duplicidade). Só aceita aluno que esteja de fato
 // inativo hoje — não faz sentido registrar devolução de quem está ativo.
-router.post('/:id/registros', asyncHandler(async (req, res) => {
+router.post('/:id/registros', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const alunoId = Number(req.body.aluno_id);
   if (!alunoId) return res.status(400).json({ error: 'Informe aluno_id.' });
@@ -118,7 +120,7 @@ router.post('/:id/registros', asyncHandler(async (req, res) => {
 }));
 
 // Desmarca (registro feito por engano).
-router.delete('/:id/registros/:alunoId', asyncHandler(async (req, res) => {
+router.delete('/:id/registros/:alunoId', exigir('editar'), asyncHandler(async (req, res) => {
   const { id, alunoId } = req.params;
 
   const [result] = await pool.query(

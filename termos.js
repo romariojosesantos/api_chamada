@@ -8,8 +8,10 @@ const router = express.Router();
 const pool = require('./db');
 const { logAuditEvent } = require('./audit');
 const { hojeBrasil } = require('./data-brasil');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const exigir = (recurso) => exigirRecurso('/termos', recurso);
 
 // Lista os termos da instituição com a contagem de assinados/pendentes —
 // "tela inicial" (cartões, mesmo estilo de Listas). Só considera alunos
@@ -29,7 +31,7 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', exigir('criar'), asyncHandler(async (req, res) => {
   const nome = String(req.body.nome || '').trim();
   if (!nome) return res.status(400).json({ error: 'Nome do termo é obrigatório.' });
 
@@ -75,7 +77,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   res.json({ ...termo, assinados, pendentes });
 }));
 
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete('/:id', exigir('excluir'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const [[termo]] = await pool.query('SELECT nome FROM termos WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
@@ -90,7 +92,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
 
 // Marca um aluno como tendo assinado (upsert — assinar de novo só atualiza a
 // data, não dá erro de duplicidade).
-router.post('/:id/assinaturas', asyncHandler(async (req, res) => {
+router.post('/:id/assinaturas', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const alunoId = Number(req.body.aluno_id);
   if (!alunoId) return res.status(400).json({ error: 'Informe aluno_id.' });
@@ -112,7 +114,7 @@ router.post('/:id/assinaturas', asyncHandler(async (req, res) => {
 }));
 
 // Desmarca (assinatura registrada por engano).
-router.delete('/:id/assinaturas/:alunoId', asyncHandler(async (req, res) => {
+router.delete('/:id/assinaturas/:alunoId', exigir('editar'), asyncHandler(async (req, res) => {
   const { id, alunoId } = req.params;
 
   const [result] = await pool.query(

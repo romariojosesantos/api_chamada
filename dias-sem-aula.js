@@ -17,11 +17,13 @@ const router = express.Router();
 const pool = require('./db');
 const { authMiddleware } = require('./auth');
 const { hojeBrasil } = require('./data-brasil');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 // Redundante com o `app.use('/api', authMiddleware)` de _server.js (que já roda
 // antes deste router ser montado), mas inofensivo — mantido por clareza/segurança
 // caso este router um dia seja montado em outro lugar sem esse middleware global.
 router.use(authMiddleware);
+const exigir = (recurso) => exigirRecurso('/dias-sem-aula', recurso);
 
 // Listar dias sem aula da instituição, com o nome de quem cadastrou. Aceita
 // filtro opcional por período (?data_inicio=&data_fim=).
@@ -77,7 +79,7 @@ router.get('/verificar/:data', async (req, res) => {
 });
 
 // Criar um dia sem aula individual (um clique no calendário da tela DiasSemAula.js).
-router.post('/', async (req, res) => {
+router.post('/', exigir('criar'), async (req, res) => {
   try {
     const { data, motivo } = req.body;
 
@@ -113,7 +115,7 @@ router.post('/', async (req, res) => {
 });
 
 // Editar data/motivo de um dia sem aula existente.
-router.put('/:id', async (req, res) => {
+router.put('/:id', exigir('editar'), async (req, res) => {
   try {
     const { id } = req.params;
     const { data, motivo } = req.body;
@@ -152,7 +154,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', exigir('excluir'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -182,7 +184,7 @@ router.delete('/:id', async (req, res) => {
 // `ON DUPLICATE KEY UPDATE motivo = VALUES(motivo)` (em vez de INSERT IGNORE) faz
 // essa ação ser segura de repetir: datas que já existem só têm o motivo
 // atualizado, nunca duplicam linha (a unique key é data+id_instituicao).
-router.post('/marcar-fins-de-semana', async (req, res) => {
+router.post('/marcar-fins-de-semana', exigir('criar'), async (req, res) => {
   try {
     const { ano } = req.body;
     const year = ano || Number(hojeBrasil().slice(0, 4));
@@ -225,7 +227,7 @@ router.post('/marcar-fins-de-semana', async (req, res) => {
 // móveis, calculados a partir da Páscoa). Não inclui feriados estaduais/
 // municipais nem pontos facultativos locais — esses continuam sendo lançados
 // manualmente ou via /marcar-periodo.
-router.post('/adicionar-feriados-nacionais', async (req, res) => {
+router.post('/adicionar-feriados-nacionais', exigir('criar'), async (req, res) => {
   try {
     const { ano } = req.body;
     const year = ano || Number(hojeBrasil().slice(0, 4));
@@ -323,7 +325,7 @@ router.post('/adicionar-feriados-nacionais', async (req, res) => {
 
 // Marca todos os dias de um período (ex.: recesso de férias) como sem aula, com
 // um motivo comum a todos.
-router.post('/marcar-periodo', async (req, res) => {
+router.post('/marcar-periodo', exigir('criar'), async (req, res) => {
   try {
     const { data_inicio, data_fim, motivo } = req.body;
 

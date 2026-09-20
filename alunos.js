@@ -12,11 +12,13 @@ const { hojeBrasil, agoraBrasil } = require('./data-brasil');
 const { podeMatricular } = require('./regras-matricula');
 const { AREAS_VALIDAS } = require('./areas');
 const { resolverNomeParecido } = require('./nome-similar');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 
 
 // Helper para envolver rotas assíncronas e capturar erros
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const exigir = (recurso) => exigirRecurso('/gerenciar-matriculas', recurso);
 
 // Helper para subquery de dias matriculados (evita duplicação de código).
 // Retorna, por aluno, a lista de dias da semana em que ele tem matrícula ativa
@@ -484,7 +486,7 @@ router.get('/frequencia-plena', asyncHandler(async (req, res) => {
 // matrícula) — a planilha só atualiza/cria quem ela menciona; não existe mais
 // um "Passo 6" tratando a ausência como desistência (isso já causou
 // inativação em massa por engano quando a planilha vinha incompleta).
-router.post('/upsert-bulk', asyncHandler(async (req, res) => {
+router.post('/upsert-bulk', exigir('criar'), asyncHandler(async (req, res) => {
   let alunos = [];
   let atividadesExcel = [];
 
@@ -1398,7 +1400,7 @@ router.post('/upsert-bulk', asyncHandler(async (req, res) => {
 // saúde e o responsável legal (mesmos dados que o import em massa preenche
 // via planilha, ver Passo 5b-5e do upsert-bulk acima), pra dar pra cadastrar
 // um aluno completo manualmente sem precisar passar por Excel.
-router.post('/', validate('aluno'), asyncHandler(async (req, res) => {
+router.post('/', exigir('criar'), validate('aluno'), asyncHandler(async (req, res) => {
   const {
     nome, data_nascimento, data_cadastro, sexo, telefone, turma, turno, transporte, Inf, status, acompanhamento, ponto, informacoes_gerais, escola_atual,
     nivel, subnivel, situacao_matricula, situacao_divida, observacao_saude,
@@ -1488,7 +1490,7 @@ router.post('/', validate('aluno'), asyncHandler(async (req, res) => {
 // "o import em massa só adiciona, nunca apaga") — o texto do formulário vira
 // uma nova entrada na lista, as entradas antigas continuam intactas (removíveis
 // à parte via DELETE '/:alunoId/saude/:saudeId').
-router.put('/:id', validate('aluno'), asyncHandler(async (req, res) => {
+router.put('/:id', exigir('editar'), validate('aluno'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const {
     nome, data_nascimento, data_cadastro, sexo, telefone, turma, turno, transporte, Inf, status, acompanhamento, ponto, informacoes_gerais, escola_atual,
@@ -1634,7 +1636,7 @@ router.put('/:id', validate('aluno'), asyncHandler(async (req, res) => {
 
 // Atualização parcial via PATCH: só permite alterar um campo por vez, e apenas os
 // campos na whitelist (evita que o cliente altere colunas sensíveis como id_instituicao).
-router.patch('/:id', asyncHandler(async (req, res) => {
+router.patch('/:id', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { campo, valor } = req.body;
   const colunasPermitidas = ['data_nascimento', 'data_cadastro', 'sexo', 'telefone', 'turma', 'turno', 'transporte', 'Inf', 'acompanhamento', 'ponto', 'informacoes_gerais', 'escola_atual', 'status', 'inativado_em'];
@@ -1748,7 +1750,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 // Um aluno excluído nunca mais aparece em nenhuma lista/busca (ver
 // `AND excluido_em IS NULL` nas consultas de listagem) até ser restaurado —
 // ver GET '/excluidos' e POST '/:id/restaurar' logo abaixo.
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete('/:id', exigir('excluir'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const connection = await pool.getConnection();
 
@@ -1787,7 +1789,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
 // Só permite apagar quem já está na lixeira (excluido_em IS NOT NULL) — força
 // passar pelo soft-delete primeiro, pra nunca ser possível apagar pra sempre um
 // aluno ainda ativo com um clique só.
-router.delete('/:id/permanente', asyncHandler(async (req, res) => {
+router.delete('/:id/permanente', exigir('excluir'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const [alunos] = await pool.query(
@@ -1829,7 +1831,7 @@ router.get('/excluidos', asyncHandler(async (req, res) => {
 // novo nas turmas que for o caso, é uma decisão deliberada de quem restaura,
 // não algo automático (a turma antiga pode nem existir mais, ter mudado de
 // horário, etc.).
-router.post('/:id/restaurar', asyncHandler(async (req, res) => {
+router.post('/:id/restaurar', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const [result] = await pool.query(
@@ -1848,7 +1850,7 @@ router.post('/:id/restaurar', asyncHandler(async (req, res) => {
 // usa pra entrar na tela dele (ver POST /api/auth/aluno-login). Gerar de novo
 // invalida o código antigo na hora (é a mesma coluna sendo sobrescrita) — útil
 // se o aluno esquecer ou perder o código anterior.
-router.post('/:id/gerar-codigo', asyncHandler(async (req, res) => {
+router.post('/:id/gerar-codigo', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const [alunos] = await pool.query('SELECT id FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL', [id, req.id_instituicao]);
@@ -1929,7 +1931,7 @@ router.get('/:id/saude', asyncHandler(async (req, res) => {
 // Remove uma observação de saúde específica (correção de um lançamento errado
 // — o import em massa só adiciona, nunca apaga, então isso é o único jeito de
 // tirar uma entrada indevida).
-router.delete('/:alunoId/saude/:saudeId', asyncHandler(async (req, res) => {
+router.delete('/:alunoId/saude/:saudeId', exigir('editar'), asyncHandler(async (req, res) => {
   const { alunoId, saudeId } = req.params;
   const [result] = await pool.query(
     'DELETE FROM aluno_saude WHERE id = ? AND id_aluno = ? AND id_instituicao = ?',
@@ -1953,7 +1955,7 @@ router.get('/:id/responsavel', asyncHandler(async (req, res) => {
 
 // Cria ou atualiza o responsável legal do aluno (edição manual — o import em
 // massa faz a mesma coisa, ver Passo 5e). Upsert por id_aluno.
-router.put('/:id/responsavel', asyncHandler(async (req, res) => {
+router.put('/:id/responsavel', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { nome, cpf, rg, data_nascimento, email, endereco, bairro, cep, telefone } = req.body;
 
