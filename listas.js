@@ -50,10 +50,14 @@ router.get('/:id', asyncHandler(async (req, res) => {
   );
   if (!lista) return res.status(404).json({ error: 'Lista não encontrada.' });
 
+  // telefone_responsavel/telefone_aluno vêm separados (não resolve a
+  // prioridade aqui) pra exportação em Excel decidir: telefone do responsável
+  // se tiver, senão o do próprio aluno (ver exportarExcel em ListaDetalhe.js).
   const [alunos] = await pool.query(
-    `SELECT a.id, a.nome, a.turno, a.turma
+    `SELECT a.id, a.nome, a.turno, a.turma, a.telefone AS telefone_aluno, rl.telefone AS telefone_responsavel
      FROM lista_alunos la
      JOIN alunos a ON a.id = la.id_aluno
+     LEFT JOIN responsavel_legal rl ON rl.id_aluno = a.id
      WHERE la.id_lista = ?
      ORDER BY a.nome ASC`,
     [id]
