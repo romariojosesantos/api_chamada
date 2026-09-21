@@ -252,6 +252,25 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(results);
 }));
 
+// Telefones (aluno + responsável) só para os IDs pedidos — usado pela
+// exportação "nome/número" de Ajuste Grade (ver AjusteGrade.js): a listagem
+// principal acima já é chamada o tempo todo por várias telas, então o join
+// com responsavel_legal fica só aqui, sob demanda, e só para os alunos
+// realmente visíveis no momento da exportação (respeitando o filtro aplicado).
+router.get('/telefones', asyncHandler(async (req, res) => {
+  const ids = String(req.query.ids || '').split(',').map(Number).filter(n => Number.isInteger(n) && n > 0);
+  if (ids.length === 0) return res.json([]);
+
+  const [rows] = await pool.query(
+    `SELECT a.id, a.telefone AS telefone_aluno, rl.telefone AS telefone_responsavel
+     FROM alunos a
+     LEFT JOIN responsavel_legal rl ON rl.id_aluno = a.id
+     WHERE a.id IN (?) AND a.id_instituicao = ?`,
+    [ids, req.id_instituicao]
+  );
+  res.json(rows);
+}));
+
 // Rota para buscar alunos que possuem aula em um dia específico — base da tela de Chamada.
 //
 // Se a data cair num dia marcado como "sem aula" (feriado/recesso — ver
