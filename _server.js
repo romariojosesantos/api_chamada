@@ -289,6 +289,7 @@ app.use('/api/pontos', pontosRouter);
 app.use('/api/tipos-ponto-interno', tiposPontoInternoRouter);
 app.use('/api/notificacoes', notificacoesRouter);
 app.use('/api/carater', require('./carater'));
+app.use('/api/foguinhos', require('./foguinhos'));
 
 // Middleware de Tratamento de Erros Global (Melhoria de UX/Estabilidade)
 app.use((err, req, res, next) => {

@@ -7,8 +7,9 @@
 // De propósito NÃO incluem /admin-usuarios e /historico-aluno: essas duas
 // telas têm um redirecionamento pra master hardcoded dentro do próprio
 // componente React (AdminUsuarios.js, HistoricoAlunoMaster.js) — marcar pra
-// outro perfil aqui não teria efeito real, só confundiria. /trocar-senha
-// também fica de fora (sempre liberada pra qualquer perfil logado).
+// outro perfil aqui não teria efeito real, só confundiria. /trocar-senha e
+// /foguinhos também ficam de fora (sempre liberadas pra qualquer perfil
+// logado, sem depender de configuração nenhuma do master).
 const pool = require('./db');
 
 const TELAS = [
