@@ -511,7 +511,8 @@ async function calcularEstatisticasPeriodo(inst, data_inicio, data_fim, incluirT
       justificativas: [],
       total_dias_letivos: 0,
       media_alunos_dia: 0,
-      tendencia_diaria: []
+      tendencia_diaria: [],
+      tendencia_por_area: []
     };
   }
 
@@ -724,6 +725,71 @@ async function calcularEstatisticasPeriodo(inst, data_inicio, data_fim, incluirT
     }));
   }
 
+  // Mesma série dia a dia acima, só que quebrada por ÁREA da turma
+  // (atividades.area — ver AREAS em frontend/src/utils/areas.js) em vez do
+  // total da instituição — alimenta o gráfico "Frequência por Área" (Painel
+  // do Gestor, Mensal e Período). Presença aqui só conta quem tinha matrícula
+  // NAQUELA área naquele dia (mesmo JOIN que já define "esperados"), então
+  // presentes <= esperados por construção — sem risco do "passa de 100%" que
+  // o comentário de calcularFrequenciaPorAluno documenta para o caso
+  // individual (lá existe presença fora do dia normal do aluno; aqui isso só
+  // mudaria a QUAL área ela pertence, nunca infla o total de uma área além do
+  // que ela mesma esperava).
+  let tendenciaPorArea = [];
+  if (incluirTendencia) {
+    const [linhasPorArea] = await pool.query(
+      `WITH RECURSIVE datas AS (
+         SELECT ? as data
+         UNION ALL
+         SELECT DATE_ADD(data, INTERVAL 1 DAY) FROM datas WHERE data < ?
+       ),
+       dias_letivos AS (
+         SELECT data FROM datas
+         WHERE NOT EXISTS (SELECT 1 FROM dias_sem_aula WHERE data = datas.data AND id_instituicao = ?)
+       ),
+       esperados_por_dia_area AS (
+         SELECT d.data, atv.area, COUNT(DISTINCT a.id) as esperados
+         FROM dias_letivos d
+         JOIN matricula m ON TRIM(m.dia_semana) = ELT(
+             DAYOFWEEK(d.data), 'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
+           )
+           AND d.data >= m.data_inicio
+           AND (m.data_fim IS NULL OR d.data <= m.data_fim)
+         JOIN atividades atv ON atv.idatividades = m.idatividades
+         JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo' AND a.excluido_em IS NULL
+         GROUP BY d.data, atv.area
+       ),
+       presentes_por_dia_area AS (
+         SELECT d.data, atv.area, COUNT(DISTINCT p.aluno_id) as presentes
+         FROM dias_letivos d
+         JOIN matricula m ON TRIM(m.dia_semana) = ELT(
+             DAYOFWEEK(d.data), 'Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'
+           )
+           AND d.data >= m.data_inicio
+           AND (m.data_fim IS NULL OR d.data <= m.data_fim)
+         JOIN atividades atv ON atv.idatividades = m.idatividades
+         JOIN presenca p ON p.aluno_id = m.idaluno AND DATE(p.data) = d.data AND p.status = 'presente' AND p.id_instituicao = ?
+         GROUP BY d.data, atv.area
+       )
+       SELECT e.data, e.area, e.esperados, COALESCE(pr.presentes, 0) as presentes
+       FROM esperados_por_dia_area e
+       LEFT JOIN presentes_por_dia_area pr ON pr.data = e.data AND pr.area = e.area
+       ORDER BY e.data, e.area`,
+      [data_inicio, data_fim, inst, inst, inst]
+    );
+    // Pivota de "uma linha por (data, área)" pra "uma linha por data, com uma
+    // coluna de % por área" — formato que o gráfico consome direto, um ponto
+    // por dia com todas as áreas juntas.
+    const porData = new Map();
+    for (const row of linhasPorArea) {
+      const dataStr = row.data instanceof Date ? row.data.toISOString().split('T')[0] : row.data;
+      if (!porData.has(dataStr)) porData.set(dataStr, { data: dataStr });
+      const pct = row.esperados > 0 ? Math.round((row.presentes / row.esperados) * 100) : 0;
+      porData.get(dataStr)[row.area] = pct;
+    }
+    tendenciaPorArea = [...porData.values()].sort((a, b) => a.data.localeCompare(b.data));
+  }
+
   return {
     data_inicio,
     data_fim,
@@ -745,7 +811,8 @@ async function calcularEstatisticasPeriodo(inst, data_inicio, data_fim, incluirT
     // Info adicional para transparência do cálculo
     total_dias_letivos: diasLetivos.length,
     media_alunos_dia: mediaAlunosDia,
-    tendencia_diaria: tendenciaDiaria
+    tendencia_diaria: tendenciaDiaria,
+    tendencia_por_area: tendenciaPorArea
   };
 }
 
@@ -786,7 +853,7 @@ router.get('/estatisticas-mensais', asyncHandler(async (req, res) => {
       total_esperados_alunos: 0, total_presentes_alunos: 0, total_ausentes_alunos: 0,
       total_justificados: 0, total_nao_justificados: 0, total_esperados_registros: 0, total_presentes_registros: 0,
       total_faltas_registros: 0, total_justificativas_registros: 0, justificativas: [],
-      total_dias_letivos: 0, media_alunos_dia: 0, tendencia_diaria: [],
+      total_dias_letivos: 0, media_alunos_dia: 0, tendencia_diaria: [], tendencia_por_area: [],
       frequencia_por_aluno: [], media_frequencia_individual: 0, total_alunos_com_falta: 0
     });
   }

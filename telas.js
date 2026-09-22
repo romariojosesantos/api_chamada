@@ -32,6 +32,7 @@ const TELAS = [
   { tela: '/listas', label: 'Listas' },
   { tela: '/termos', label: 'Termos' },
   { tela: '/devolucoes', label: 'Devolução de Materiais' },
+  { tela: '/estatisticas-comparativas', label: 'Estatísticas' },
 ];
 
 const TELAS_VALIDAS = TELAS.map(t => t.tela);

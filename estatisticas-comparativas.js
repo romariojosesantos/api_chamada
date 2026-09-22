@@ -1,23 +1,27 @@
-// Tela "Comparativo" (master/coordenador) — compara dados gerais entre TODAS
-// as instituições que o usuário logado tem acesso, não só a que está
-// selecionada no momento. Por isso este router é montado em _server.js ANTES
-// do middleware de x-institution-id (mesmo motivo/posição de historico-aluno.js
-// e permissoes.js): a rota não trabalha "dentro" de uma instituição, ela
-// enxerga várias de uma vez.
+// Tela "Comparativo" (configurável pela tela de Permissões, ver backend/telas.js)
+// — compara dados gerais entre TODAS as instituições que o usuário logado tem
+// acesso, não só a que está selecionada no momento. Por isso este router é
+// montado em _server.js ANTES do middleware de x-institution-id (mesmo
+// motivo/posição de historico-aluno.js e permissoes.js): a rota não trabalha
+// "dentro" de uma instituição, ela enxerga várias de uma vez.
 //
-// Acesso: master vê todas as instituições cadastradas; coordenador só as que
-// estão vinculadas a ele (usuario_instituicoes, já embutido no token como
-// req.user.instituicoes — ver loadUserInstitutions em auth.js). Qualquer outro
-// perfil recebe 403 — tela não aparece no menu pra eles (ver perfis={['master',
-// 'coordenador']} em App.js/Layout.jsx), isso aqui é o cinto de segurança do
-// backend caso alguém tente acessar a rota direto.
+// Acesso: master vê todas as instituições cadastradas (sempre libera, ver
+// exigirRecurso); qualquer outro perfil só passa se tiver a tela liberada —
+// como não existe uma única "instituição ativa" aqui, exigirRecurso cai no
+// fallback dele de checar TODAS as instituições vinculadas ao usuário (basta
+// UMA liberar). Coordenador só vê, no resultado, as instituições vinculadas a
+// ele (usuario_instituicoes, embutido no token como req.user.instituicoes —
+// ver loadUserInstitutions em auth.js), independente de quantas tenham
+// liberado a tela.
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { calcularFrequenciaPorAluno } = require('./relatorios');
 const { hojeBrasil } = require('./data-brasil');
+const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const exigir = (recurso) => exigirRecurso('/estatisticas-comparativas', recurso);
 
 // Mesmo mapeamento turno -> período usado em relatorios.js (CONDICAO_PERIODO_SQL)
 // pra decidir "manhã/tarde/noite" a partir do texto livre de `matricula.turno`.
@@ -30,11 +34,7 @@ const PERIODO_DA_MATRICULA_SQL = `CASE
   ELSE 'outro'
 END`;
 
-router.get('/', asyncHandler(async (req, res) => {
-  if (!['master', 'coordenador'].includes(req.user.perfil)) {
-    return res.status(403).json({ error: 'Tela restrita a master/coordenador.' });
-  }
-
+router.get('/', exigir('visualizar'), asyncHandler(async (req, res) => {
   const souMaster = req.user.perfil === 'master';
   const idsVinculados = Array.isArray(req.user.instituicoes) ? req.user.instituicoes.map(Number) : [];
   if (!souMaster && idsVinculados.length === 0) {
@@ -261,10 +261,7 @@ router.get('/', asyncHandler(async (req, res) => {
 // célula em vez de um lote só (diferente de POST /api/notas, que salva várias
 // notas de uma vez porque lá o usuário edita várias antes de clicar Salvar).
 const TURNOS_CAPACIDADE = ['manha', 'tarde', 'noite'];
-router.put('/capacidade', asyncHandler(async (req, res) => {
-  if (!['master', 'coordenador'].includes(req.user.perfil)) {
-    return res.status(403).json({ error: 'Tela restrita a master/coordenador.' });
-  }
+router.put('/capacidade', exigir('editar'), asyncHandler(async (req, res) => {
   const { id_instituicao, nivel, turno, capacidade } = req.body;
   const idInst = Number(id_instituicao);
   const nivelNum = Number(nivel);
