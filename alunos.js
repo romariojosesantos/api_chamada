@@ -469,7 +469,8 @@ router.get('/meritocracia', asyncHandler(async (req, res) => {
 
   const [alunosBase, frequencias, ocorrencias] = await Promise.all([
     pool.query(
-      'SELECT id, nome, turno, turma FROM alunos WHERE id_instituicao = ? AND status = \'ativo\' AND excluido_em IS NULL',
+      `SELECT a.id, a.nome, a.turno, ${getNivelAtualSubquery()}
+       FROM alunos a WHERE a.id_instituicao = ? AND a.status = 'ativo' AND a.excluido_em IS NULL`,
       [req.id_instituicao]
     ).then(([rows]) => rows),
     calcularFrequenciaPorAluno(req.id_instituicao, inicio, fim),
@@ -500,7 +501,8 @@ router.get('/meritocracia', asyncHandler(async (req, res) => {
         id: aluno.id,
         nome: aluno.nome,
         turno: aluno.turno,
-        turma: aluno.turma,
+        nivel: aluno.nivel,
+        subnivel: aluno.subnivel,
         dias_esperados: f.dias_esperados,
         dias_presentes: f.dias_presentes,
         pontos_base: pontosBase,
