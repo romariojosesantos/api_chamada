@@ -13,6 +13,7 @@ const { podeMatricular } = require('./regras-matricula');
 const { AREAS_VALIDAS } = require('./areas');
 const { resolverNomeParecido } = require('./nome-similar');
 const { exigirRecurso } = require('./permissoes-middleware');
+const { calcularFrequenciaPorAluno } = require('./relatorios');
 
 
 
@@ -453,31 +454,64 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
 }));
 
 
-// Relatório Frequência Plena (Otimizado): total de presenças de cada aluno num
-// período e as datas exatas em que compareceu — usado na tela de "assiduidade".
-// Exclui dias marcados como sem aula do total (não deveriam ter presença mesmo,
-// mas a checagem é defensiva).
-router.get('/frequencia-plena', asyncHandler(async (req, res) => {
+// Ranking de Meritocracia: pontos de cada aluno num período = 1 ponto por dia
+// presente, descontado o percentual de ocorrências de comportamento
+// registradas no mesmo período (ver backend/ocorrencias.js — leve -25%,
+// grave -50%, gravíssima -100%, somando até no máximo 100% de desconto).
+// Substituiu a antiga /frequencia-plena, que só somava presenças brutas sem
+// saber quantos dias eram esperados (por isso não dava pra calcular % nem
+// pontuação de verdade) — dias_esperados/dias_presentes agora vêm da mesma
+// função já usada e testada em notas.js/estatisticas-comparativas.js, não
+// duplicada aqui.
+router.get('/meritocracia', asyncHandler(async (req, res) => {
   const { inicio, fim } = req.query;
   if (!inicio || !fim) return res.status(400).json({ error: 'Datas início/fim obrigatórias.' });
 
-  const sql = `
-    SELECT a.id, a.nome, a.turno, a.turma, a.transporte,
-           COUNT(DISTINCT p.data) as total_presencas,
-           GROUP_CONCAT(DISTINCT DATE_FORMAT(p.data, '%d/%m') ORDER BY p.data ASC SEPARATOR ', ') as dias_presente
-    FROM alunos a
-    INNER JOIN presenca p ON a.id = p.aluno_id AND p.status = 'presente'
-      AND p.data BETWEEN ? AND ? AND p.id_instituicao = ?
-      AND NOT EXISTS (
-        SELECT 1 FROM dias_sem_aula d
-        WHERE d.data = DATE(p.data) AND d.id_instituicao = ?
-      )
-    WHERE a.id_instituicao = ?
-    GROUP BY a.id, a.nome, a.turno, a.turma, a.transporte
-    ORDER BY a.nome ASC
-  `;
-  const [results] = await pool.query(sql, [inicio, fim, req.id_instituicao, req.id_instituicao, req.id_instituicao]);
-  res.json(results);
+  const [alunosBase, frequencias, ocorrencias] = await Promise.all([
+    pool.query(
+      'SELECT id, nome, turno, turma FROM alunos WHERE id_instituicao = ? AND status = \'ativo\' AND excluido_em IS NULL',
+      [req.id_instituicao]
+    ).then(([rows]) => rows),
+    calcularFrequenciaPorAluno(req.id_instituicao, inicio, fim),
+    pool.query(
+      `SELECT id_aluno, gravidade, percentual_aplicado, descricao, data_ocorrencia
+       FROM aluno_ocorrencias
+       WHERE id_instituicao = ? AND excluido_em IS NULL AND data_ocorrencia BETWEEN ? AND ?`,
+      [req.id_instituicao, inicio, fim]
+    ).then(([rows]) => rows)
+  ]);
+
+  const alunoPorId = new Map(alunosBase.map(a => [a.id, a]));
+  const ocorrenciasPorAluno = new Map();
+  for (const o of ocorrencias) {
+    if (!ocorrenciasPorAluno.has(o.id_aluno)) ocorrenciasPorAluno.set(o.id_aluno, []);
+    ocorrenciasPorAluno.get(o.id_aluno).push(o);
+  }
+
+  const resultado = frequencias
+    .filter(f => alunoPorId.has(f.aluno_id))
+    .map(f => {
+      const aluno = alunoPorId.get(f.aluno_id);
+      const ocorrenciasDoAluno = ocorrenciasPorAluno.get(f.aluno_id) || [];
+      const descontoPct = Math.min(100, ocorrenciasDoAluno.reduce((soma, o) => soma + o.percentual_aplicado, 0));
+      const pontosBase = f.dias_presentes;
+      const pontosFinais = Math.round(pontosBase * (1 - descontoPct / 100) * 10) / 10;
+      return {
+        id: aluno.id,
+        nome: aluno.nome,
+        turno: aluno.turno,
+        turma: aluno.turma,
+        dias_esperados: f.dias_esperados,
+        dias_presentes: f.dias_presentes,
+        pontos_base: pontosBase,
+        desconto_pct: descontoPct,
+        pontos_finais: pontosFinais,
+        ocorrencias: ocorrenciasDoAluno
+      };
+    })
+    .sort((a, b) => b.pontos_finais - a.pontos_finais || a.nome.localeCompare(b.nome, 'pt-BR'));
+
+  res.json(resultado);
 }));
 
 // Importação em massa a partir do Excel da grade (aba de alunos + aba opcional de
@@ -1898,7 +1932,7 @@ router.post('/:id/gerar-codigo', exigir('editar'), asyncHandler(async (req, res)
 
 // Busca um único aluno pelos campos diretos da tabela (mesma seleção de
 // colunas do GET '/' acima) — usado pela tela de edição pra pré-preencher o
-// formulário. Registrada depois de '/por-dia', '/frequencia-plena' e
+// formulário. Registrada depois de '/por-dia', '/meritocracia' e
 // '/excluidos' de propósito: são rotas literais que '/:id' engoliria se
 // viesse antes (Express casa por ordem de registro).
 router.get('/:id', asyncHandler(async (req, res) => {

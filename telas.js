@@ -24,6 +24,7 @@ const TELAS = [
   { tela: '/gerenciar-matriculas', label: 'Matrículas' },
   { tela: '/dias-sem-aula', label: 'Dias Sem Aula' },
   { tela: '/meritocracia', label: 'Meritocracia' },
+  { tela: '/ocorrencias', label: 'Ocorrências' },
   { tela: '/carater', label: 'Formação de Caráter' },
   { tela: '/notas', label: 'Notas' },
   { tela: '/pontos', label: 'Ponto' },

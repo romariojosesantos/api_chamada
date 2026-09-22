@@ -58,10 +58,14 @@ Obs:
   - Query: data=YYYY-MM-DD, ignoreFilters (true|false), professor
   - Retorna alunos esperados para a data (modo chamada) ou relatório (ignoreFilters=true). Verifica dias_sem_aula.
 
-- GET /api/alunos/frequencia-plena
+- GET /api/alunos/meritocracia
   - Auth: Bearer token + x-institution-id
   - Query: inicio, fim (datas)
-  - Retorna agregados de presença por aluno no período.
+  - Ranking de pontos por aluno no período: 1 ponto por dia de presença confirmada, descontado o % de ocorrências de comportamento (ver /api/ocorrencias). Substituiu /frequencia-plena.
+
+- GET/POST/DELETE /api/ocorrencias
+  - Auth: Bearer token + x-institution-id
+  - Ocorrências de comportamento (leve -25%, grave -50%, gravíssima -100%) que descontam pontos na Meritocracia. Apagar é restrito a coordenador/master.
 
 - POST /api/alunos/upsert-bulk
   - Auth: Bearer token + x-institution-id
