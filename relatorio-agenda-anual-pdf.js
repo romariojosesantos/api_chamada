@@ -218,11 +218,42 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
     });
   });
 
+  // Lista cronológica única de eventos (feriado/recesso já agrupado em faixa
+  // + agenda) — usada tanto no resumo dentro de cada card do mês quanto na
+  // legenda detalhada nas páginas seguintes, pra nunca divergir uma da outra.
+  const linhasLegenda = [
+    ...agruparDiasConsecutivos(diasSemAulaReais.map(d => ({ data: d.data, motivo: d.motivo || 'Dia sem aula' })))
+      .map(g => ({ origem: 'dia_sem_aula', data_inicio: g.data_inicio, data_fim: g.data_fim, titulo: g.motivo })),
+    ...eventos.map(e => ({ ...e, origem: 'agenda' })),
+  ].sort((a, b) => a.data_inicio.localeCompare(b.data_inicio));
+
+  // Mesma lista, dividida por mês (mês de `data_inicio`) — pro resumo dentro
+  // de cada card do ano-a-vista.
+  const eventosPorMes = Array.from({ length: 12 }, () => []);
+  linhasLegenda.forEach(item => {
+    eventosPorMes[Number(item.data_inicio.split('-')[1]) - 1].push(item);
+  });
+
   const ehFimDeSemana = (diaSemana) => diaSemana === 0 || diaSemana === 6;
 
-  // --- Desenha um mês em miniatura dentro de (x, y, largura, altura) ---
-  function desenharMes(mes, x, y, largura, altura) {
+  // Linha compacta do resumo — "05 Mostra Educação..." (dia(s) + título),
+  // sem repetir mês/ano (o card já é o mês inteiro).
+  function tituloResumo(item) {
+    const diaIni = item.data_inicio.split('-')[2];
+    const diaFim = item.data_fim.split('-')[2];
+    const rotuloDia = diaIni === diaFim ? diaIni : `${diaIni}-${diaFim}`;
+    return `${rotuloDia} ${item.titulo}`;
+  }
+
+  // --- Desenha um mês em miniatura dentro de (x, y, largura, altura),
+  // reservando uma faixa fixa no rodapé do card pra um resumo dos eventos do
+  // mês (mesma altura de card em todo mês, com ou sem evento, pra grade
+  // continuar alinhada) — pedido do usuário: "sem empurrar o espaço
+  // existente", por isso o resumo cabe ENCOLHENDO a grade de dias, nunca
+  // aumentando o card ou deslocando os outros meses. ---
+  function desenharMes(mes, x, y, largura, altura, eventosDoMes) {
     const ALTURA_CABECALHO = 15;
+    const ALTURA_RESUMO = 26;
     doc.roundedRect(x, y, largura, altura, 3).fillAndStroke('#FFFFFF', COR_BORDA);
     doc.rect(x, y, largura, ALTURA_CABECALHO).fill(COR_AMBAR);
     doc.fillColor('#FFFFFF').font(F_BOLD).fontSize(8.5)
@@ -240,7 +271,8 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
     const inicioSemana = primeiroDia.getUTCDay();
 
     const yGrid = yWeek + 10;
-    const alturaLinha = (y + altura - 3 - yGrid) / 6;
+    const yFimGrid = y + altura - 3 - ALTURA_RESUMO;
+    const alturaLinha = (yFimGrid - yGrid) / 6;
     for (let dia = 1; dia <= diasNoMes; dia++) {
       const posicao = inicioSemana + dia - 1;
       const linha = Math.floor(posicao / 7);
@@ -280,6 +312,29 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
         });
       }
     }
+
+    // --- Resumo do mês, na faixa reservada abaixo da grade ---
+    if (eventosDoMes.length > 0) {
+      doc.moveTo(x + 4, yFimGrid + 2).lineTo(x + largura - 4, yFimGrid + 2).strokeColor(COR_BORDA).lineWidth(0.5).stroke();
+
+      const ALTURA_LINHA_RESUMO = 7.4;
+      const maxLinhas = Math.max(1, Math.floor((ALTURA_RESUMO - 4) / ALTURA_LINHA_RESUMO));
+      const cabemTodos = eventosDoMes.length <= maxLinhas;
+      const visiveis = cabemTodos ? eventosDoMes : eventosDoMes.slice(0, maxLinhas - 1);
+
+      let yLinha = yFimGrid + 5;
+      visiveis.forEach(item => {
+        doc.circle(x + 6, yLinha + 2.6, 1.3).fill(corDoEvento(item).solida);
+        doc.fillColor(COR_TEXTO).font(F_REGULAR).fontSize(6)
+          .text(tituloResumo(item), x + 10, yLinha, { width: largura - 13, height: ALTURA_LINHA_RESUMO, ellipsis: true, lineBreak: false });
+        yLinha += ALTURA_LINHA_RESUMO;
+      });
+      if (!cabemTodos) {
+        const restantes = eventosDoMes.length - visiveis.length;
+        doc.fillColor(COR_TEXTO_CLARO).font(F_ITALIC).fontSize(6)
+          .text(`+${restantes} evento${restantes > 1 ? 's' : ''}`, x + 10, yLinha, { width: largura - 13 });
+      }
+    }
   }
 
   // --- Página 1: o ano inteiro numa grade 4 colunas x 3 linhas ---
@@ -303,7 +358,7 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
     const lin = Math.floor(mes / COLS);
     const x = MARGEM_ESQUERDA + col * (larguraMes + GAP_X);
     const y = yTopoGrade + lin * (alturaMes + GAP_Y);
-    desenharMes(mes, x, y, larguraMes, alturaMes);
+    desenharMes(mes, x, y, larguraMes, alturaMes, eventosPorMes[mes]);
   }
 
   // --- Tira de legenda de cores, no rodapé da própria página do ano ---
@@ -329,12 +384,8 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
     .text('O que cada dia marcado no calendário representa', MARGEM_ESQUERDA, doc.y + 2, { width: LARGURA_CONTEUDO });
   doc.moveDown(1.4);
 
-  const linhasLegenda = [
-    ...agruparDiasConsecutivos(diasSemAulaReais.map(d => ({ data: d.data, motivo: d.motivo || 'Dia sem aula' })))
-      .map(g => ({ origem: 'dia_sem_aula', data_inicio: g.data_inicio, data_fim: g.data_fim, titulo: g.motivo })),
-    ...eventos.map(e => ({ ...e, origem: 'agenda' })),
-  ].sort((a, b) => a.data_inicio.localeCompare(b.data_inicio));
-
+  // `linhasLegenda` já foi montada mais acima (reaproveitada no resumo de
+  // cada card do mês, ver eventosPorMes).
   function garantirEspaco(h) {
     if (doc.y + h > 790) novaPagina();
   }
