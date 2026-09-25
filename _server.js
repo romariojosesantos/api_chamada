@@ -15,7 +15,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const pool = require('./db');
-const { logAuditEvent } = require('./audit');
 const { hojeBrasil } = require('./data-brasil');
 
 // Cache simples em memória para endpoints estáticos. Só é útil localmente ou
@@ -296,10 +295,6 @@ app.use('/api/ocorrencias', require('./ocorrencias'));
 // Middleware de Tratamento de Erros Global (Melhoria de UX/Estabilidade)
 app.use((err, req, res, next) => {
   console.error(`[ERRO GLOBAL]: ${err.stack}`);
-  // Debug temporário: grava o erro real no banco (nunca na resposta HTTP —
-  // isso vazaria detalhe interno pro cliente) só pra investigar o 500 do
-  // relatório de ponto em PDF em produção. Remover depois de resolvido.
-  logAuditEvent('DEBUG_ERRO_GLOBAL', `${req.method} ${req.originalUrl} :: ${err.message}\n${err.stack}`.slice(0, 60000), req.id_instituicao || null);
 
   // Tratar especificamente erros de validação do Joi
   if (err.isJoi || err.name === 'ValidationError') {
