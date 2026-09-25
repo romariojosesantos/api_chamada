@@ -72,6 +72,7 @@ const { router: dbHealthRouter } = require('./db-health');
 const cronSaudeBancoRouter = require('./cron-saude-banco');
 const pontosRouter = require('./pontos');
 const tiposPontoInternoRouter = require('./tiposPontoInterno');
+const agendaEventosRouter = require('./agenda-eventos');
 
 // Middlewares
 app.use(cors({
@@ -284,6 +285,7 @@ app.use('/api/devolucoes', devolucoesRouter);
 app.use('/api/pontos-embarque', pontosEmbarqueRouter);
 app.use('/api/contatos-emergencia', contatosEmergenciaRouter);
 app.use('/api/dias-sem-aula', diasSemAulaRouter);
+app.use('/api/agenda-eventos', agendaEventosRouter);
 app.use('/api/notas', notasRouter);
 app.use('/api/pontos', pontosRouter);
 app.use('/api/tipos-ponto-interno', tiposPontoInternoRouter);
