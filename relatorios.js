@@ -350,23 +350,43 @@ router.get('/ativos-sem-matricula', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
-// Contagem de matrículas ATIVAS por área (Educacional/Esportivo/Cultural/
-// Tecnológico/Capelania — ver `area` em `atividades`) — "no geral", sem
-// recorte de dia/período: quantas matrículas em aberto (`status='matriculado'
-// AND data_fim IS NULL`) existem em cada área agora. Conta a MATRÍCULA (uma
-// turma), não o aluno único — um aluno com 2 turmas na mesma área conta 2
-// vezes, de propósito (é "quantidade de matrículas", não "quantidade de
-// alunos"). Diferente de frequência: matrícula é um dado estrutural (existe
-// ou não), não depende de presença — por isso dá pra contar por área sem cair
-// no problema de presença ser registrada por dia, não por atividade.
+// Contagem de ALUNOS ÚNICOS com matrícula ATIVA por área (Educacional/
+// Esportivo/Cultural/Tecnológico/Capelania — ver `area` em `atividades`) —
+// quantos alunos distintos tinham pelo menos uma matrícula em aberto em cada
+// área numa certa data. COUNT(DISTINCT m.idaluno) de propósito — um aluno
+// com 2 turmas na mesma área conta 1 vez só (é "quantidade de alunos", não
+// "quantidade de matrículas"; o mesmo aluno também pode contar em mais de
+// uma área, se tiver turma em cada uma). Diferente de frequência: matrícula
+// é um dado estrutural (existe ou não), não depende de presença — por isso
+// dá pra contar por área sem cair no problema de presença ser registrada por
+// dia, não por atividade.
+//
+// `data` (opcional, YYYY-MM-DD): quando vem preenchida, reconstrói a
+// situação NAQUELE dia específico em vez de "agora" — mesma lógica de
+// intervalo (`data_inicio <= data <= data_fim`, incluindo quem nunca foi
+// encerrada) já usada em `esperados_por_aluno`/`oportunidades_por_aluno`
+// acima, sem repetir o filtro por `status`: uma matrícula cancelada sempre
+// leva `data_fim` preenchida no momento do cancelamento (ver
+// encerrarMatriculasSeNaoAtivo em status-sync.js), então o intervalo sozinho
+// já exclui datas posteriores ao cancelamento sem precisar checar o status.
+// Sem `data` (comportamento antigo, usado pelos modos Mensal/Período antes
+// de uma busca), continua sendo "agora": só quem está com `status =
+// 'matriculado' AND data_fim IS NULL` neste exato momento.
 router.get('/matriculas-por-area', asyncHandler(async (req, res) => {
+  const { data } = req.query;
+  const condicaoVigencia = data
+    ? 'm.data_inicio <= ? AND (m.data_fim IS NULL OR m.data_fim >= ?)'
+    : "m.status = 'matriculado' AND m.data_fim IS NULL";
+  const params = data
+    ? [req.id_instituicao, data, data]
+    : [req.id_instituicao];
   const [rows] = await pool.query(
-    `SELECT COALESCE(atv.area, 'sem_area') AS area, COUNT(*) AS total
+    `SELECT COALESCE(atv.area, 'sem_area') AS area, COUNT(DISTINCT m.idaluno) AS total
      FROM matricula m
      JOIN atividades atv ON atv.idatividades = m.idatividades
-     WHERE m.id_instituicao = ? AND m.status = 'matriculado' AND m.data_fim IS NULL
+     WHERE m.id_instituicao = ? AND ${condicaoVigencia}
      GROUP BY area`,
-    [req.id_instituicao]
+    params
   );
   res.json(rows);
 }));

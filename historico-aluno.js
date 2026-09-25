@@ -8,7 +8,7 @@ const router = express.Router();
 const pool = require('./db');
 const { masterMiddleware } = require('./auth');
 const { logAuditEvent } = require('./audit');
-const { syncAlunoStatusFromMatriculas } = require('./status-sync');
+const { syncAlunoStatusFromMatriculas, encerrarMatriculasSeNaoAtivo } = require('./status-sync');
 
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -167,6 +167,20 @@ router.put('/:id', masterMiddleware, asyncHandler(async (req, res) => {
       await pool.query('UPDATE alunos SET inativado_em = CURDATE() WHERE id = ?', [alunoId]);
     } else if (aluno.status === 'inativo') {
       await pool.query('UPDATE alunos SET inativado_em = NULL WHERE id = ?', [alunoId]);
+    }
+
+    // Matrícula só vale pra aluno ativo (mesma regra de backend/alunos.js) —
+    // essa rota ficava de fora dessa trava até agora, e era o único caminho
+    // que trocava o status sem encerrar as matrículas junto (foi assim que
+    // alunos marcados inativos aqui ficaram com matrícula aberta pra sempre,
+    // inflando "esperado" em relatório até alguém notar).
+    const resultadoStatus = await encerrarMatriculasSeNaoAtivo(pool, alunoId, statusNovo, aluno.id_instituicao);
+    if (resultadoStatus.encerradas > 0) {
+      await logAuditEvent(
+        'MATRICULAS_ENCERRADAS_STATUS',
+        `Aluno ID: ${alunoId}, status ${aluno.status || '(vazio)'} -> ${statusNovo} (via ficha do master), ${resultadoStatus.encerradas} matrícula(s) encerrada(s): ${resultadoStatus.turmas.join(', ')}`,
+        aluno.id_instituicao
+      );
     }
   }
 

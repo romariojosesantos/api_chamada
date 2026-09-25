@@ -18,7 +18,7 @@ const exigir = (recurso) => exigirRecurso('/professores', recurso);
 // OU como co-professor, ver atividade_professores) e quantos alunos matriculados no total.
 router.get('/', asyncHandler(async (req, res) => {
   const [rows] = await pool.query(
-    `SELECT p.id, p.nome, p.ativo,
+    `SELECT p.id, p.nome, p.nome_completo, p.ativo,
        (SELECT COUNT(DISTINCT atv.idatividades)
         FROM atividades atv
         WHERE atv.id_instituicao = p.id_instituicao AND atv.data_fim IS NULL
@@ -49,6 +49,7 @@ router.get('/', asyncHandler(async (req, res) => {
 router.post('/', exigir('criar'), asyncHandler(async (req, res) => {
   const nomeEnviado = String(req.body.nome || '').trim();
   if (!nomeEnviado) return res.status(400).json({ error: 'Nome é obrigatório.' });
+  const nomeCompletoEnviado = String(req.body.nome_completo || '').trim() || null;
 
   const [existentes] = await pool.query(
     'SELECT nome FROM professores WHERE id_instituicao = ?',
@@ -70,8 +71,8 @@ router.post('/', exigir('criar'), asyncHandler(async (req, res) => {
   }
 
   const [result] = await pool.query(
-    'INSERT INTO professores (nome, ativo, id_instituicao) VALUES (?, 1, ?)',
-    [nomeEnviado, req.id_instituicao]
+    'INSERT INTO professores (nome, nome_completo, ativo, id_instituicao) VALUES (?, ?, 1, ?)',
+    [nomeEnviado, nomeCompletoEnviado, req.id_instituicao]
   );
 
   await logAuditEvent('PROFESSOR_CRIADO', `Professor "${nomeEnviado}" (#${result.insertId})`, req.id_instituicao);
@@ -79,6 +80,7 @@ router.post('/', exigir('criar'), asyncHandler(async (req, res) => {
   res.status(201).json({
     id: result.insertId,
     nome: nomeEnviado,
+    nome_completo: nomeCompletoEnviado,
     ativo: 1,
     parecido_com: resultado.tipo === 'suspeita' ? resultado.nome : null
   });
@@ -88,10 +90,10 @@ router.post('/', exigir('criar'), asyncHandler(async (req, res) => {
 // (contra os outros professores, não contra ele mesmo).
 router.patch('/:id', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { nome, ativo } = req.body;
+  const { nome, ativo, nome_completo } = req.body;
 
   const [[atual]] = await pool.query(
-    'SELECT id, nome, ativo FROM professores WHERE id = ? AND id_instituicao = ?',
+    'SELECT id, nome, nome_completo, ativo FROM professores WHERE id = ? AND id_instituicao = ?',
     [id, req.id_instituicao]
   );
   if (!atual) return res.status(404).json({ error: 'Professor não encontrado.' });
@@ -116,10 +118,11 @@ router.patch('/:id', exigir('editar'), asyncHandler(async (req, res) => {
   }
 
   const ativoFinal = ativo === undefined ? atual.ativo : (ativo ? 1 : 0);
+  const nomeCompletoFinal = nome_completo === undefined ? atual.nome_completo : (String(nome_completo || '').trim() || null);
 
   await pool.query(
-    'UPDATE professores SET nome = ?, ativo = ? WHERE id = ? AND id_instituicao = ?',
-    [nomeFinal, ativoFinal, id, req.id_instituicao]
+    'UPDATE professores SET nome = ?, nome_completo = ?, ativo = ? WHERE id = ? AND id_instituicao = ?',
+    [nomeFinal, nomeCompletoFinal, ativoFinal, id, req.id_instituicao]
   );
 
   if (nomeFinal !== atual.nome) {
@@ -129,7 +132,7 @@ router.patch('/:id', exigir('editar'), asyncHandler(async (req, res) => {
     await logAuditEvent(ativoFinal ? 'PROFESSOR_REATIVADO' : 'PROFESSOR_DESATIVADO', `Professor #${id} "${nomeFinal}"`, req.id_instituicao);
   }
 
-  res.json({ id: Number(id), nome: nomeFinal, ativo: Number(ativoFinal), parecido_com: avisoParecido });
+  res.json({ id: Number(id), nome: nomeFinal, nome_completo: nomeCompletoFinal, ativo: Number(ativoFinal), parecido_com: avisoParecido });
 }));
 
 // Apaga só se o professor nunca deu aula (nem como principal, nem como

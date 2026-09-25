@@ -14,6 +14,7 @@ const { AREAS_VALIDAS } = require('./areas');
 const { resolverNomeParecido } = require('./nome-similar');
 const { exigirRecurso } = require('./permissoes-middleware');
 const { calcularFrequenciaPorAluno } = require('./relatorios');
+const { enviarFoto, removerFoto, configurado: storageConfigurado } = require('./storage');
 
 
 
@@ -227,7 +228,7 @@ router.get('/', asyncHandler(async (req, res) => {
   let sql = `
     SELECT a.id, a.nome, a.data_nascimento, a.data_cadastro, a.criado_em, a.sexo, a.telefone,
            a.turma, a.turno, a.transporte, a.status, a.inativado_em, a.Inf,
-           a.acompanhamento, a.ponto, a.informacoes_gerais, a.escola_atual,
+           a.acompanhamento, a.ponto, a.informacoes_gerais, a.escola_atual, a.foto_url,
            ${getDiasMatriculadosSubquery()},
            ${getNivelAtualSubquery()},
            ${getSaudeSubquery()}
@@ -309,23 +310,79 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
 
   let sql, params;
 
+  // Período correspondente ao `turno` pedido (ver migrate-add-periodo-
+  // presenca.js) — usado nos DOIS modos abaixo (Relatório e Chamada) pra
+  // juntar só a presença DAQUELE período, nunca a de outro turno. Sem isso,
+  // um aluno com matrícula em mais de um turno no mesmo dia (turma comum +
+  // ensaio à noite, algo que o sistema permite de propósito) pode ter duas
+  // linhas de presença nesse dia — uma por período — e um LEFT JOIN direto
+  // traria as duas ao mesmo tempo: `SELECT DISTINCT` não deduplica porque
+  // `presenca_status` diverge entre elas, e quem "ganha" no front vira sorte
+  // de ordenação das linhas. Era exatamente o bug relatado na tela de Grade
+  // (professor): presença de manhã/tarde aparecendo refletida na turma da
+  // noite, porque a rota usada por ela (Modo Relatório) juntava a presença
+  // sem filtrar por período — a de Chamada já fazia esse filtro corretamente.
+  const periodo = turno
+    ? (String(turno).toLowerCase().includes('manh') ? 'manha'
+      : String(turno).toLowerCase().includes('tard') ? 'tarde'
+      : String(turno).toLowerCase().includes('noit') ? 'noite'
+      : null)
+    : null;
+  // Um registro sem período (legado, de antes dessa coluna existir) só conta
+  // como fallback pro turno do DIA (manhã/tarde) — nunca pra noite, já que a
+  // chamada da noite nem existia como opção separada antes disso (qualquer
+  // registro antigo só pode ter vindo de manhã/tarde).
+  const condicaoPeriodo = !turno ? '' : (periodo === 'noite' ? 'AND periodo = ?' : 'AND (periodo IS NULL OR periodo = ?)');
+  // Junta com uma SUBQUERY (não direto na tabela) que resolve pra NO MÁXIMO
+  // uma linha de presença por aluno — nunca mais de uma, mesmo se o aluno
+  // tiver tanto um registro ANTIGO sem período quanto um registro NOVO já
+  // com o período certo: o `ORDER BY (periodo IS NOT NULL) DESC` prioriza o
+  // registro com período definido (o mais preciso), só caindo pro
+  // sem-período se não existir nenhum com período batendo.
+  // Separador '\x1F' (caractere de controle "unit separator", nunca digitado
+  // por um humano) em vez de string vazia: SUBSTRING_INDEX(str, '', n) é
+  // degenerado no MySQL e sempre devolve '' — com separador vazio, isso
+  // travava esse "pegar só o primeiro valor" silenciosamente (bug latente,
+  // nunca notado porque até agora só a Chamada usava esse subquery, e ela
+  // nunca leu esse campo — pegava presença por outro caminho).
+  const subqueryPresenca = `
+    (SELECT aluno_id,
+       SUBSTRING_INDEX(GROUP_CONCAT(status ORDER BY (periodo IS NOT NULL) DESC SEPARATOR '\x1F'), '\x1F', 1) AS status,
+       SUBSTRING_INDEX(GROUP_CONCAT(COALESCE(observacao, '') ORDER BY (periodo IS NOT NULL) DESC SEPARATOR '\x1F'), '\x1F', 1) AS observacao
+     FROM presenca
+     WHERE DATE(data) = ? AND id_instituicao = ? ${condicaoPeriodo}
+     GROUP BY aluno_id)
+  `;
+  const paramsPresenca = [data, req.id_instituicao, ...(turno ? [periodo] : [])];
+
   // `m.data_fim IS NULL` em todo lugar abaixo: uma matrícula com data_fim
   // preenchida está encerrada (soft-delete), independente de qual data seja —
   // não é um intervalo de vigência, é um "isso não vale mais" (mesmo padrão
   // usado em matriculas.js, presenca.js e relatorios.js).
   if (ignoreFilters === 'true') {
-    // Modo Relatório: retorna TODOS os alunos ativos com status de presença para a data
+    // Modo Relatório: retorna TODOS os alunos ativos com status de presença
+    // para a data. Quando `turno` vem preenchido (ver Grade.js, que manda o
+    // turno da turma aberta), junta a presença já filtrada por período, igual
+    // ao Modo Chamada abaixo. Sem `turno` (ex.: DailyReport.jsx, que quer o
+    // status de todo mundo independente de qual turno cada um é), continua
+    // com o LEFT JOIN direto de sempre, sem filtro de período — comportamento
+    // inalterado pra quem não manda turno.
+    const juncaoPresenca = turno
+      ? `LEFT JOIN ${subqueryPresenca} p ON p.aluno_id = a.id`
+      : `LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao`;
+    const paramsJuncao = turno ? paramsPresenca : [data];
+
     if (professor) {
       sql = `
         SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status, a.telefone,
-               a.acompanhamento, a.ponto,
+               a.acompanhamento, a.ponto, a.foto_url,
                ${getDiasMatriculadosSubquery()},
                p.status AS presenca_status, p.observacao AS presenca_obs
         FROM alunos a
         JOIN matricula m ON a.id = m.idaluno
         JOIN atividades atv ON m.idatividades = atv.idatividades
         JOIN professores prof ON atv.idprofessor = prof.id
-        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
+        ${juncaoPresenca}
         WHERE a.status = 'ativo'
         AND TRIM(LOWER(m.status)) = 'matriculado'
         AND m.data_fim IS NULL
@@ -333,23 +390,23 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         AND a.id_instituicao = ?
         ORDER BY a.nome ASC
       `;
-      params = [data, professor, req.id_instituicao];
+      params = [...paramsJuncao, professor, req.id_instituicao];
     } else {
       sql = `
         SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status, a.telefone,
-               a.acompanhamento, a.ponto,
+               a.acompanhamento, a.ponto, a.foto_url,
                ${getDiasMatriculadosSubquery()},
                p.status AS presenca_status, p.observacao AS presenca_obs
         FROM alunos a
         JOIN matricula m ON a.id = m.idaluno
-        LEFT JOIN presenca p ON a.id = p.aluno_id AND DATE(p.data) = ? AND p.id_instituicao = a.id_instituicao
+        ${juncaoPresenca}
         WHERE a.status = 'ativo'
         AND TRIM(LOWER(m.status)) = 'matriculado'
         AND m.data_fim IS NULL
         AND a.id_instituicao = ?
         ORDER BY a.nome ASC
       `;
-      params = [data, req.id_instituicao];
+      params = [...paramsJuncao, req.id_instituicao];
     }
   } else {
     // Modo Chamada: filtra apenas os alunos matriculados no dia da semana
@@ -357,49 +414,12 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
     // um aluno pode ter o turno cadastrado como "Manhã" mas também ter uma
     // matrícula de ensaio à noite; filtrar pelo turno DA MATRÍCULA (em vez do
     // atributo fixo do aluno) é o que faz esse aluno aparecer certinho tanto
-    // na chamada da manhã quanto na da noite, cada uma com sua própria lista
-    // (ver migrate-add-periodo-presenca.js pro mesmo raciocínio do lado da
-    // presença em si).
+    // na chamada da manhã quanto na da noite, cada uma com sua própria lista.
     const filtroTurno = turno ? 'AND LOWER(m.turno) = LOWER(?)' : '';
-    // Período correspondente (ver migrate-add-periodo-presenca.js) — junta só
-    // a presença DESSE período; sem isso, um aluno com matrícula dupla
-    // (turma do dia + ensaio à noite) que já tem presença nos dois períodos
-    // apareceria DUAS VEZES na lista (uma por registro de presença
-    // encontrado), já que o SELECT é DISTINCT e presenca_status divergiria.
-    const periodo = turno
-      ? (String(turno).toLowerCase().includes('manh') ? 'manha'
-        : String(turno).toLowerCase().includes('tard') ? 'tarde'
-        : String(turno).toLowerCase().includes('noit') ? 'noite'
-        : null)
-      : null;
-    // Junta com uma SUBQUERY (não direto na tabela) que resolve pra NO MÁXIMO
-    // uma linha de presença por aluno — nunca mais de uma, mesmo se o aluno
-    // tiver tanto um registro ANTIGO sem período (de antes dessa coluna
-    // existir, ver migrate-add-periodo-presenca.js) quanto um registro NOVO
-    // já com o período certo pra esta chamada: o `ORDER BY (periodo IS NOT
-    // NULL) DESC` prioriza o registro com período definido (o mais preciso),
-    // só caindo pro sem-período se não existir nenhum com período batendo.
-    // Sem essa priorização (ou juntando direto com `presenca`), um aluno
-    // nessa situação apareceria DUAS VEZES na lista (SELECT é DISTINCT, e
-    // `presenca_status` divergiria entre as duas linhas de presença).
-    // Um registro sem período (legado, de antes dessa coluna existir) só
-    // conta como fallback pro turno do DIA (manhã/tarde) — nunca pra noite,
-    // já que a chamada da noite nem existia como opção separada antes disso
-    // (qualquer registro antigo só pode ter vindo de manhã/tarde).
-    const condicaoPeriodo = !turno ? '' : (periodo === 'noite' ? 'AND periodo = ?' : 'AND (periodo IS NULL OR periodo = ?)');
-    const subqueryPresenca = `
-      (SELECT aluno_id,
-         SUBSTRING_INDEX(GROUP_CONCAT(status ORDER BY (periodo IS NOT NULL) DESC SEPARATOR ''), '', 1) AS status,
-         SUBSTRING_INDEX(GROUP_CONCAT(COALESCE(observacao, '') ORDER BY (periodo IS NOT NULL) DESC SEPARATOR ''), '', 1) AS observacao
-       FROM presenca
-       WHERE DATE(data) = ? AND id_instituicao = ? ${condicaoPeriodo}
-       GROUP BY aluno_id)
-    `;
-    const paramsPresenca = [data, req.id_instituicao, ...(turno ? [periodo] : [])];
     if (professor) {
       sql = `
         SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status, a.telefone,
-               a.acompanhamento, a.ponto,
+               a.acompanhamento, a.ponto, a.foto_url,
                ${getDiasMatriculadosSubquery()},
                p.status AS presenca_status, p.observacao AS presenca_obs
         FROM alunos a
@@ -413,8 +433,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
         AND m.data_fim IS NULL
         -- data_inicio <= data da chamada: sem isso, matricular um aluno HOJE
         -- numa turma fazia ele aparecer na chamada de dias PASSADOS também,
-        -- antes de ele sequer existir naquela turma (mesmo ajuste feito em
-        -- relatorios.js, ver comentário no topo daquele arquivo).
+        -- antes de ele sequer existir naquela turma.
         AND m.data_inicio <= ?
         AND TRIM(prof.nome) = ?
         AND a.id_instituicao = ?
@@ -425,7 +444,7 @@ router.get('/por-dia', asyncHandler(async (req, res) => {
     } else {
       sql = `
         SELECT DISTINCT a.id, a.nome, a.turno, a.transporte, a.turma, a.status, a.telefone,
-               a.acompanhamento, a.ponto,
+               a.acompanhamento, a.ponto, a.foto_url,
                ${getDiasMatriculadosSubquery()},
                p.status AS presenca_status, p.observacao AS presenca_obs
         FROM alunos a
@@ -678,10 +697,10 @@ router.post('/upsert-bulk', exigir('criar'), asyncHandler(async (req, res) => {
     // atualiza a linha antiga (é a mesma restrição UNIQUE do banco), mas aqui
     // a gente simplesmente não processa matrícula pra ela.
     const [existingStudents] = await connection.query(
-      `SELECT id, nome, turno FROM alunos WHERE nome IN (?) AND id_instituicao = ? AND excluido_em IS NULL`,
+      `SELECT id, nome, turno, status FROM alunos WHERE nome IN (?) AND id_instituicao = ? AND excluido_em IS NULL`,
       [studentNames, req.id_instituicao]
     );
-    const studentIdMap = new Map(existingStudents.map(s => [s.nome, { id: s.id, turno: s.turno }]));
+    const studentIdMap = new Map(existingStudents.map(s => [s.nome, { id: s.id, turno: s.turno, status: s.status }]));
     const idalunoParaNome = new Map(existingStudents.map(s => [s.id, s.nome]));
 
     // Passo 2b: status explícito da planilha (ex.: "espera" — aluno na fila
@@ -709,6 +728,20 @@ router.post('/upsert-bulk', exigir('criar'), asyncHandler(async (req, res) => {
         [...statusExplicitos.map(([, s]) => s), ...ids, req.id_instituicao]
       );
     }
+
+    // Diferente de uma versão anterior desta rota: matrícula da planilha NÃO
+    // é mais bloqueada quando o status explícito diz "inativo"/"espera" —
+    // matrícula é o dado que manda. Se a planilha contradiz a si mesma (diz
+    // "inativo" na coluna de status MAS também dá turma pra ele), a matrícula
+    // é criada normalmente aqui, e o `syncAlunoStatusFromMatriculas` lá embaixo
+    // (que agora roda pra TODO mundo, sem exceção pra quem tem status
+    // explícito — ver esse ponto mais abaixo) corrige o status pra "ativo"
+    // depois, porque é isso que reflete a realidade. Só fica "inativo"/"espera"
+    // de verdade quem realmente não tem turma nenhuma na planilha. Foi assim
+    // que um aluno ficou preso 8 meses como "inativo com matrícula aberta": a
+    // planilha de origem continuava marcando "inativo" a cada reimportação, o
+    // que também tirava ele da sincronização automática — matrícula era criada,
+    // status nunca se corrigia sozinho.
 
     // Passo 3: varre as colunas de cada linha do Excel procurando o padrão de
     // matrícula (dia + horário, ex.: "SEG HR 1", "Segunda-HR2") e monta a lista de
@@ -1408,12 +1441,16 @@ router.post('/upsert-bulk', exigir('criar'), asyncHandler(async (req, res) => {
     // Garante que alunos.status reflita a matrícula real de todo mundo que foi
     // tocado nesta importação — quem NÃO veio na planilha não é sincronizado
     // aqui (nem em nenhum outro lugar deste endpoint): a ausência não é mais
-    // tratada como desistência (ver comentário no topo da rota).
-    // Alunos com status explícito não-ativo nesta planilha são excluídos daqui:
-    // já foram fixados acima e não devem ser "promovidos" de volta a ativo só
-    // porque ainda têm (ou ganharam) matrícula formalmente aberta antes do encerramento.
-    const idsComStatusExplicito = new Set(statusExplicitos.map(([id]) => id));
-    const idsParaSincronizar = [...new Set(existingStudents.map(s => s.id).filter(id => !idsComStatusExplicito.has(id)))];
+    // tratada como desistência (ver comentário no topo da rota). Roda pra
+    // TODO MUNDO tocado, inclusive quem tem status explícito na planilha —
+    // matrícula é a fonte da verdade (ver comentário no Passo 2b): se a
+    // planilha disse "inativo"/"espera" mas também deu turma, o status
+    // explícito gravado acima é sobrescrito pra "ativo" aqui, porque é isso
+    // que reflete a realidade. Só continua "inativo"/"espera" quem realmente
+    // não tem nenhuma matrícula aberta (a proteção de "espera" contra virar
+    // "inativo" sozinho por falta de matrícula continua em
+    // syncAlunoStatusFromMatriculas, sem mudança).
+    const idsParaSincronizar = existingStudents.map(s => s.id);
     await syncAlunoStatusFromMatriculas(connection, idsParaSincronizar, req.id_instituicao);
 
     await connection.commit();
@@ -1932,6 +1969,72 @@ router.post('/:id/gerar-codigo', exigir('editar'), asyncHandler(async (req, res)
   res.json({ codigo_acesso: codigo });
 }));
 
+// Tipos de imagem aceitos pra foto de aluno — restrito de propósito (nunca
+// aceita svg, por exemplo, que pode carregar script).
+const TIPOS_FOTO_ACEITOS = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+const TAMANHO_MAX_FOTO_BYTES = 3 * 1024 * 1024; // 3MB — a foto já chega comprimida do navegador (canvas), isso é só um teto de segurança.
+
+// Foto do aluno (tirada pela câmera ou escolhida no dispositivo, já
+// redimensionada/comprimida no navegador antes de chegar aqui — ver
+// CadastrarAluno.js). Recebe como data URL (mesmo formato de
+// canvas.toDataURL()) dentro de um JSON comum, sem multipart/form-data, pra
+// seguir o mesmo padrão do resto da API. Guarda no bucket R2 (ver
+// backend/storage.js) — nunca no MySQL — e salva só a URL pública em
+// alunos.foto_url.
+router.post('/:id/foto', exigir('editar'), asyncHandler(async (req, res) => {
+  if (!storageConfigurado) {
+    return res.status(503).json({ error: 'Armazenamento de fotos não configurado neste ambiente ainda.' });
+  }
+
+  const { id } = req.params;
+  const [[aluno]] = await pool.query(
+    'SELECT id, foto_url FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL',
+    [id, req.id_instituicao]
+  );
+  if (!aluno) return res.status(404).json({ error: 'Aluno não encontrado.' });
+
+  const dataUrl = String(req.body.imagem_base64 || '');
+  const match = dataUrl.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
+  if (!match) return res.status(400).json({ error: 'Envie a foto como data URL (data:image/...;base64,...).' });
+
+  const [, contentType, base64] = match;
+  const extensao = TIPOS_FOTO_ACEITOS[contentType];
+  if (!extensao) return res.status(400).json({ error: 'Formato de imagem não aceito. Use JPEG, PNG ou WEBP.' });
+
+  const buffer = Buffer.from(base64, 'base64');
+  if (buffer.length > TAMANHO_MAX_FOTO_BYTES) {
+    return res.status(400).json({ error: 'Foto muito grande (máximo 3MB).' });
+  }
+
+  const key = `alunos/${req.id_instituicao}/${id}/${Date.now()}.${extensao}`;
+  const url = await enviarFoto(key, buffer, contentType);
+
+  await pool.query('UPDATE alunos SET foto_url = ? WHERE id = ?', [url, id]);
+  if (aluno.foto_url) await removerFoto(aluno.foto_url);
+
+  await logAuditEvent('ALUNO_FOTO_ATUALIZADA', `Aluno ID: ${id}`, req.id_instituicao);
+
+  res.json({ foto_url: url });
+}));
+
+// Remove a foto (volta a mostrar o avatar padrão nas telas).
+router.delete('/:id/foto', exigir('editar'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const [[aluno]] = await pool.query(
+    'SELECT id, foto_url FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL',
+    [id, req.id_instituicao]
+  );
+  if (!aluno) return res.status(404).json({ error: 'Aluno não encontrado.' });
+  if (!aluno.foto_url) return res.json({ success: true });
+
+  await pool.query('UPDATE alunos SET foto_url = NULL WHERE id = ?', [id]);
+  await removerFoto(aluno.foto_url);
+
+  await logAuditEvent('ALUNO_FOTO_REMOVIDA', `Aluno ID: ${id}`, req.id_instituicao);
+
+  res.json({ success: true });
+}));
+
 // Busca um único aluno pelos campos diretos da tabela (mesma seleção de
 // colunas do GET '/' acima) — usado pela tela de edição pra pré-preencher o
 // formulário. Registrada depois de '/por-dia', '/meritocracia' e
@@ -1941,7 +2044,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params;
   const [results] = await pool.query(
     `SELECT id, nome, data_nascimento, data_cadastro, criado_em, sexo, telefone, turma, turno, transporte, status, Inf,
-            acompanhamento, ponto, informacoes_gerais, escola_atual
+            acompanhamento, ponto, informacoes_gerais, escola_atual, foto_url
      FROM alunos WHERE id = ? AND id_instituicao = ? AND excluido_em IS NULL`,
     [id, req.id_instituicao]
   );
