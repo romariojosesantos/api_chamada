@@ -27,7 +27,7 @@ const TELAS = [
   { tela: '/ocorrencias', label: 'Ocorrências' },
   { tela: '/carater', label: 'Formação de Caráter' },
   { tela: '/notas', label: 'Notas' },
-  { tela: '/pontos', label: 'Ponto' },
+  { tela: '/pontos', label: 'Registro de Atividades' },
   { tela: '/vincular-professor', label: 'Vincular Educador' },
   { tela: '/listas', label: 'Listas' },
   { tela: '/termos', label: 'Termos' },

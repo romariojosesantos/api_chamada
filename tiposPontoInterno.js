@@ -111,7 +111,7 @@ router.delete('/:id', exigir('excluir'), asyncHandler(async (req, res) => {
 
   const [[{ total }]] = await pool.query('SELECT COUNT(*) AS total FROM pontos WHERE id_tipo_interno = ?', [id]);
   if (total > 0) {
-    return res.status(409).json({ error: `Esse tipo já tem ${total} ponto(s) registrado(s). Desative em vez de apagar, pra manter o histórico.` });
+    return res.status(409).json({ error: `Esse tipo já tem ${total} registro(s) associado(s). Desative em vez de apagar, pra manter o histórico.` });
   }
 
   await pool.query('DELETE FROM tipos_ponto_interno WHERE id = ?', [id]);

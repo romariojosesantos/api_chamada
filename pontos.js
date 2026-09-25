@@ -219,7 +219,7 @@ router.get('/meu-historico', asyncHandler(async (req, res) => {
 router.get('/', asyncHandler(async (req, res) => {
   const escopo = escopoDeAcesso(req);
   if (escopo === null) {
-    return res.status(403).json({ error: 'Sem acesso à visão geral de pontos.' });
+    return res.status(403).json({ error: 'Sem acesso à visão geral de registros.' });
   }
 
   const dataInicio = String(req.query.data_inicio || '').trim();
@@ -260,7 +260,7 @@ router.get('/', asyncHandler(async (req, res) => {
 router.get('/educadores', asyncHandler(async (req, res) => {
   const escopo = escopoDeAcesso(req);
   if (escopo === null) {
-    return res.status(403).json({ error: 'Sem acesso à visão geral de pontos.' });
+    return res.status(403).json({ error: 'Sem acesso à visão geral de registros.' });
   }
 
   const params = [req.id_instituicao];
@@ -293,7 +293,7 @@ router.get('/educadores', asyncHandler(async (req, res) => {
 router.get('/relatorio-pdf', exigir('exportar'), asyncHandler(async (req, res) => {
   const escopo = escopoDeAcesso(req);
   if (escopo === null) {
-    return res.status(403).json({ error: 'Sem acesso à visão geral de pontos.' });
+    return res.status(403).json({ error: 'Sem acesso à visão geral de registros.' });
   }
 
   const dataInicio = String(req.query.data_inicio || '').trim();
@@ -341,7 +341,7 @@ router.get('/relatorio-pdf', exigir('exportar'), asyncHandler(async (req, res) =
   );
   const [[instituicao]] = await pool.query('SELECT nome FROM instituicoes WHERE id = ?', [req.id_instituicao]);
 
-  const nomeArquivo = `Ponto_${professor.nome.replace(/[^a-zA-Z0-9]+/g, '_')}_${dataInicio}_a_${dataFim}.pdf`;
+  const nomeArquivo = `RegistroAtividades_${professor.nome.replace(/[^a-zA-Z0-9]+/g, '_')}_${dataInicio}_a_${dataFim}.pdf`;
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
 
@@ -394,19 +394,19 @@ router.post('/bater', exigir('criar'), asyncHandler(async (req, res) => {
 
   const pontoAberto = await buscarPontoAberto(idProfessor, data, req.id_instituicao);
   if (pontoAberto) {
-    return res.status(409).json({ error: `Você já tem um ponto em aberto em "${pontoAberto.nome}" — registre a saída antes de bater outro.` });
+    return res.status(409).json({ error: `Você já tem um registro em aberto em "${pontoAberto.nome}" — registre a saída antes de bater outro.` });
   }
 
   const agora = agoraBrasilia();
   if (existente) {
     await pool.query('UPDATE pontos SET hora_entrada = ? WHERE id = ?', [agora, existente.id]);
-    return res.json({ message: 'Ponto de entrada registrado.', id: existente.id });
+    return res.json({ message: 'Entrada registrada.', id: existente.id });
   }
   const [result] = await pool.query(
     'INSERT INTO pontos (id_instituicao, id_professor, id_atividade, data, hora_entrada) VALUES (?, ?, ?, ?, ?)',
     [req.id_instituicao, idProfessor, id_atividade, data, agora]
   );
-  res.status(201).json({ message: 'Ponto de entrada registrado.', id: result.insertId });
+  res.status(201).json({ message: 'Entrada registrada.', id: result.insertId });
 }));
 
 // Registrar saída — a linha já precisa existir (hoje) com entrada e sem saída.
@@ -422,7 +422,7 @@ router.post('/saida', exigir('editar'), asyncHandler(async (req, res) => {
     'SELECT id, hora_entrada, hora_saida FROM pontos WHERE id_professor = ? AND id_atividade = ? AND data = ? AND id_instituicao = ?',
     [idProfessor, id_atividade, data, req.id_instituicao]
   );
-  if (!ponto || !ponto.hora_entrada) return res.status(400).json({ error: 'Bata o ponto de entrada primeiro.' });
+  if (!ponto || !ponto.hora_entrada) return res.status(400).json({ error: 'Registre a entrada primeiro.' });
   if (ponto.hora_saida) return res.status(409).json({ error: 'Você já registrou a saída dessa aula.' });
 
   await pool.query('UPDATE pontos SET hora_saida = ? WHERE id = ?', [agoraBrasilia(), ponto.id]);
@@ -458,7 +458,7 @@ router.post('/bater-interno', exigir('criar'), asyncHandler(async (req, res) => 
 
   const pontoAberto = await buscarPontoAberto(idProfessor, data, req.id_instituicao);
   if (pontoAberto) {
-    return res.status(409).json({ error: `Você já tem um ponto em aberto em "${pontoAberto.nome}" — registre a saída antes de bater outro.` });
+    return res.status(409).json({ error: `Você já tem um registro em aberto em "${pontoAberto.nome}" — registre a saída antes de bater outro.` });
   }
 
   // Sempre cria uma linha NOVA (ao contrário de turma) — atividade interna
@@ -471,7 +471,7 @@ router.post('/bater-interno', exigir('criar'), asyncHandler(async (req, res) => 
     'INSERT INTO pontos (id_instituicao, id_professor, id_tipo_interno, data, hora_entrada) VALUES (?, ?, ?, ?, ?)',
     [req.id_instituicao, idProfessor, id_tipo_interno, data, agoraBrasilia()]
   );
-  res.status(201).json({ message: 'Ponto de entrada registrado.', id: result.insertId });
+  res.status(201).json({ message: 'Entrada registrada.', id: result.insertId });
 }));
 
 // Registrar saída de atividade interna — pega a sessão em ABERTO de hoje
@@ -491,7 +491,7 @@ router.post('/saida-interno', exigir('editar'), asyncHandler(async (req, res) =>
     'SELECT id FROM pontos WHERE id_professor = ? AND id_tipo_interno = ? AND data = ? AND id_instituicao = ? AND hora_entrada IS NOT NULL AND hora_saida IS NULL ORDER BY hora_entrada DESC LIMIT 1',
     [idProfessor, id_tipo_interno, data, req.id_instituicao]
   );
-  if (!ponto) return res.status(400).json({ error: 'Bata o ponto de entrada primeiro.' });
+  if (!ponto) return res.status(400).json({ error: 'Registre a entrada primeiro.' });
 
   await pool.query('UPDATE pontos SET hora_saida = ? WHERE id = ?', [agoraBrasilia(), ponto.id]);
   res.json({ message: 'Saída registrada.', id: ponto.id });
@@ -502,29 +502,29 @@ router.post('/saida-interno', exigir('editar'), asyncHandler(async (req, res) =>
 router.put('/:id', exigir('editar'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const [[ponto]] = await pool.query('SELECT id, id_professor, id_atividade, id_tipo_interno FROM pontos WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
-  if (!ponto) return res.status(404).json({ error: 'Registro de ponto não encontrado.' });
+  if (!ponto) return res.status(404).json({ error: 'Registro não encontrado.' });
 
   if (!(await podeEditarPonto(req, ponto))) {
-    return res.status(403).json({ error: 'Só o coordenador da área dessa turma (ou master) pode corrigir esse ponto.' });
+    return res.status(403).json({ error: 'Só o coordenador da área dessa turma (ou master) pode corrigir esse registro.' });
   }
 
   const { hora_entrada, hora_saida } = req.body;
   await pool.query('UPDATE pontos SET hora_entrada = ?, hora_saida = ? WHERE id = ?', [hora_entrada || null, hora_saida || null, id]);
-  res.json({ message: 'Ponto atualizado.' });
+  res.json({ message: 'Registro atualizado.' });
 }));
 
 // Apagar um registro equivocado (mesma regra de posse do PUT).
 router.delete('/:id', exigir('excluir'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const [[ponto]] = await pool.query('SELECT id, id_professor, id_atividade, id_tipo_interno FROM pontos WHERE id = ? AND id_instituicao = ?', [id, req.id_instituicao]);
-  if (!ponto) return res.status(404).json({ error: 'Registro de ponto não encontrado.' });
+  if (!ponto) return res.status(404).json({ error: 'Registro não encontrado.' });
 
   if (!(await podeEditarPonto(req, ponto))) {
-    return res.status(403).json({ error: 'Só o coordenador da área dessa turma (ou master) pode apagar esse ponto.' });
+    return res.status(403).json({ error: 'Só o coordenador da área dessa turma (ou master) pode apagar esse registro.' });
   }
 
   await pool.query('DELETE FROM pontos WHERE id = ?', [id]);
-  res.json({ message: 'Registro de ponto removido.' });
+  res.json({ message: 'Registro removido.' });
 }));
 
 module.exports = router;

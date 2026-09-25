@@ -153,10 +153,14 @@ app.use('/api/aluno', authMiddleware, require('./aluno-gamificacao'));
 app.use('/api/aluno', authMiddleware, require('./aluno-carater'));
 
 // Lista de instituições para o seletor do usuário logado: master vê todas, os
-// demais perfis só as instituições vinculadas a eles (req.user.instituicoes).
-// Fica fora do bloco `app.use('/api', authMiddleware)` porque usa authMiddleware
-// diretamente, sem depender do header x-institution-id (o usuário ainda não
-// escolheu instituição neste ponto do fluxo do front).
+// demais perfis só as instituições vinculadas a eles. Consulta
+// usuario_instituicoes NA HORA (nunca req.user.instituicoes, que vem do
+// TOKEN assinado no login — token dura 7 dias, então se um master desvincula
+// esse usuário de uma instituição, confiar no token deixaria o seletor ainda
+// listando ela por até 7 dias). Fica fora do bloco `app.use('/api',
+// authMiddleware)` porque usa authMiddleware diretamente, sem depender do
+// header x-institution-id (o usuário ainda não escolheu instituição neste
+// ponto do fluxo do front).
 app.get('/api/instituicoes/todas', authMiddleware, async (req, res) => {
   try {
     if (req.user.perfil === 'master') {
@@ -171,7 +175,8 @@ app.get('/api/instituicoes/todas', authMiddleware, async (req, res) => {
       return res.json(results);
     }
 
-    const ids = Array.isArray(req.user.instituicoes) ? req.user.instituicoes : [];
+    const [vinculos] = await pool.query('SELECT id_instituicao FROM usuario_instituicoes WHERE id_usuario = ?', [req.user.id]);
+    const ids = vinculos.map(v => v.id_instituicao);
     if (ids.length === 0) return res.json([]);
 
     const [results] = await pool.query("SELECT id, nome FROM instituicoes WHERE id IN (?) ORDER BY nome ASC", [ids]);
@@ -194,28 +199,42 @@ app.get('/api/hoje', authMiddleware, (req, res) => {
 
 app.use('/api', authMiddleware);
 
-// Middleware para forçar o ID da instituição em todas as rotas da API
-app.use('/api', (req, res, next) => {
-  const institutionId = req.headers['x-institution-id'];
+// Middleware para forçar o ID da instituição em todas as rotas da API.
+//
+// Confere o vínculo direto em usuario_instituicoes (nunca req.user.instituicoes,
+// que vem do TOKEN assinado no login) — sem isso, desvincular um usuário de uma
+// instituição (ex.: coordenador trocou de unidade, ou teve acesso revogado) só
+// tinha efeito depois que o token dele expirasse (até 7 dias), porque a lista de
+// instituições ficava cravada no token e nunca era reconferida no banco. Com a
+// consulta aqui, a remoção vale já na PRÓXIMA requisição.
+app.use('/api', async (req, res, next) => {
+  try {
+    const institutionId = req.headers['x-institution-id'];
 
-  const parsedId = parseInt(institutionId);
-  if (!institutionId) {
-    console.warn(`Tentativa de acesso sem header x-institution-id em: ${req.originalUrl}`);
-    return res.status(401).json({ error: 'Acesso negado. O cabeçalho "x-institution-id" é obrigatório.' });
-  }
-  if (isNaN(parsedId)) {
-    return res.status(401).json({ error: 'Acesso negado. ID da instituição deve ser um número válido.' });
-  }
-
-  if (req.user.perfil !== 'master') {
-    const instituicoes = Array.isArray(req.user.instituicoes) ? req.user.instituicoes.map(Number) : [];
-    if (!instituicoes.includes(parsedId)) {
-      return res.status(403).json({ error: 'Acesso negado. Usuário não vinculado a esta instituição.' });
+    const parsedId = parseInt(institutionId);
+    if (!institutionId) {
+      console.warn(`Tentativa de acesso sem header x-institution-id em: ${req.originalUrl}`);
+      return res.status(401).json({ error: 'Acesso negado. O cabeçalho "x-institution-id" é obrigatório.' });
     }
-  }
+    if (isNaN(parsedId)) {
+      return res.status(401).json({ error: 'Acesso negado. ID da instituição deve ser um número válido.' });
+    }
 
-  req.id_instituicao = parsedId;
-  next();
+    if (req.user.perfil !== 'master') {
+      const [vinculo] = await pool.query(
+        'SELECT 1 FROM usuario_instituicoes WHERE id_usuario = ? AND id_instituicao = ? LIMIT 1',
+        [req.user.id, parsedId]
+      );
+      if (vinculo.length === 0) {
+        return res.status(403).json({ error: 'Acesso negado. Usuário não vinculado a esta instituição.' });
+      }
+    }
+
+    req.id_instituicao = parsedId;
+    next();
+  } catch (err) {
+    next(err);
+  }
 });
 
 // Rota para obter detalhes da instituição selecionada (ID vindo do header via middleware)

@@ -115,7 +115,7 @@ function gerarRelatorioPontoPDF({ res, instituicaoNome, professorNome, professor
   }
   doc.pipe(res);
 
-  const rotuloTopo = `Relatório de Ponto · ${rotuloPeriodo(dataInicio, dataFim)}`;
+  const rotuloTopo = `Relatório de Atividades · ${rotuloPeriodo(dataInicio, dataFim)}`;
   let numeroPagina = 1;
 
   function desenharCabecalhoRodape() {
@@ -169,7 +169,7 @@ function gerarRelatorioPontoPDF({ res, instituicaoNome, professorNome, professor
 
   // --- Título + subtítulo ---
   doc.fillColor(COR_TEXTO).font(F_BOLD).fontSize(21)
-    .text('RELATÓRIO DE PONTO', MARGEM_ESQUERDA, doc.y, { align: 'center', width: LARGURA_TABELA, characterSpacing: 0.4 });
+    .text('RELATÓRIO DE ATIVIDADES', MARGEM_ESQUERDA, doc.y, { align: 'center', width: LARGURA_TABELA, characterSpacing: 0.4 });
   doc.moveDown(0.2);
   doc.fillColor(COR_TEXTO_CLARO).font(F_REGULAR).fontSize(10)
     .text(`${instituicaoNome} · Período de ${formatarDataBR(dataInicio)} a ${formatarDataBR(dataFim)}`, MARGEM_ESQUERDA, doc.y, { align: 'center', width: LARGURA_TABELA });
