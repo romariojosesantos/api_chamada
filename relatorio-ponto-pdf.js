@@ -96,6 +96,23 @@ function gerarRelatorioPontoPDF({ res, instituicaoNome, professorNome, professor
   doc.registerFont(F_REGULAR, path.join(FONT_DIR, 'Lato-Regular.ttf'));
   doc.registerFont(F_BOLD, path.join(FONT_DIR, 'Lato-Bold.ttf'));
   doc.registerFont(F_ITALIC, path.join(FONT_DIR, 'Lato-Italic.ttf'));
+  // `registerFont` só guarda o caminho (não lê o arquivo ainda — isso só
+  // acontece no primeiro `.font(...)` usado de verdade) — por isso testa aqui
+  // com um `.font()` de propósito, pra cair no fallback ANTES de começar a
+  // desenhar o resto, em vez de quebrar o relatório inteiro no meio. Cobre um
+  // ambiente onde os arquivos da Lato não foram publicados junto (ex.: builder
+  // da Vercel não leva arquivo estático que só é referenciado via caminho de
+  // disco, sem `includeFiles` no vercel.json) — nesse caso usa as fontes
+  // padrão do PDFKit sob os MESMOS nomes, pra nenhuma chamada de `.font()`
+  // abaixo precisar saber disso.
+  try {
+    doc.font(F_REGULAR);
+  } catch (e) {
+    console.error('Fonte Lato indisponível, usando Helvetica como fallback:', e.message);
+    doc.registerFont(F_REGULAR, 'Helvetica');
+    doc.registerFont(F_BOLD, 'Helvetica-Bold');
+    doc.registerFont(F_ITALIC, 'Helvetica-Oblique');
+  }
   doc.pipe(res);
 
   const rotuloTopo = `Relatório de Ponto · ${rotuloPeriodo(dataInicio, dataFim)}`;
