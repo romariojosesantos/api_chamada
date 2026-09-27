@@ -16,7 +16,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
-const { calcularFrequenciaPorAluno } = require('./relatorios');
+const { calcularFrequenciaPorAluno } = require('./src/modules/relatorios/periodo.service');
 const { hojeBrasil } = require('./src/utils/data-brasil');
 const { exigirRecurso } = require('./permissoes-middleware');
 

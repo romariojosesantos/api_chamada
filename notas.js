@@ -13,7 +13,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
-const { calcularFrequenciaPorAluno } = require('./relatorios');
+const { calcularFrequenciaPorAluno } = require('./src/modules/relatorios/periodo.service');
 const {
   CATEGORIAS_VALIDAS,
   CATEGORIA_LABEL,

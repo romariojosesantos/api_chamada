@@ -25,7 +25,7 @@ const PORT = process.env.PORT || 3001;
 // Importação de Rotas
 const alunosRouter = require('./src/modules/alunos/alunos.routes');
 const presencaRouter = require('./presenca');
-const relatoriosRouter = require('./relatorios');
+const relatoriosRouter = require('./src/modules/relatorios/relatorios.routes');
 const gradeRouter = require('./grade');
 const matriculasRouter = require('./src/modules/matriculas/matriculas.routes');
 const atividadesRouter = require('./atividades');

@@ -2,7 +2,7 @@
 // pelas ocorrências de comportamento (leve -25%, grave -50%, gravíssima -100%,
 // limitado a 100%).
 const model = require('./alunos.model');
-const { calcularFrequenciaPorAluno } = require('../../../relatorios');
+const { calcularFrequenciaPorAluno } = require('../relatorios/periodo.service');
 
 function montarRanking(alunos, frequencias, ocorrencias) {
   const alunoPorId = new Map(alunos.map((a) => [a.id, a]));
