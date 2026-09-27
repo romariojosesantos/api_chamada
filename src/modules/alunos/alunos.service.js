@@ -10,24 +10,10 @@ const {
 } = require('../../../status-sync');
 const { hojeBrasil, agoraBrasil } = require('../../utils/data-brasil');
 const { enviarFoto, removerFoto, configurado: storageConfigurado } = require('../../utils/storage');
+const { emTransacao } = require('../../utils/transacao');
 const { truncar, parseInteiro } = require('./normalizacao');
 
 const SEM_ENCERRAMENTOS = { encerradas: 0, turmas: [] };
-
-async function emTransacao(fn) {
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-    const resultado = await fn(connection);
-    await connection.commit();
-    return resultado;
-  } catch (err) {
-    await connection.rollback();
-    throw err;
-  } finally {
-    connection.release();
-  }
-}
 
 function dadosDoAluno(body) {
   return {
