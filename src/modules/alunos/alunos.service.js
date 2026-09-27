@@ -330,7 +330,7 @@ async function atualizarCampo(id, campo, valor, idInstituicao) {
 async function moverParaLixeira(id, idUsuario, idInstituicao) {
   await emTransacao(async (db) => {
     const alterados = await model.moverParaLixeira(db, id, idUsuario, idInstituicao);
-    if (alterados === 0) throw new Error('Aluno não encontrado');
+    if (alterados === 0) throw new AppError('Aluno não encontrado.', 404);
 
     await model.encerrarMatriculasAtivas(db, id, idInstituicao);
     await logAuditEvent(
