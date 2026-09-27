@@ -11,9 +11,9 @@
 // Permissões pra cada instituição existente.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
+const pool = require('./src/config/database');
 const { authMiddleware } = require('./src/middlewares/auth');
-const { exigirRecurso } = require('./permissoes-middleware');
+const { exigirRecurso } = require('./src/middlewares/permissao');
 
 router.use(authMiddleware);
 const exigir = (recurso) => exigirRecurso('/', recurso);

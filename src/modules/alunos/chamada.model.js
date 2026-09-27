@@ -1,5 +1,5 @@
 // Consultas da lista de chamada de um dia (GET /api/alunos/por-dia).
-const pool = require('../../../db');
+const pool = require('../../config/database');
 const { SUBQUERY_DIAS_MATRICULADOS } = require('./alunos.model');
 const { periodoDoTurno } = require('./normalizacao');
 

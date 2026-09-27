@@ -14,10 +14,10 @@
 // dá o mesmo resultado, em qualquer fuso do processo.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
+const pool = require('./src/config/database');
 const { authMiddleware } = require('./src/middlewares/auth');
 const { hojeBrasil } = require('./src/utils/data-brasil');
-const { exigirRecurso } = require('./permissoes-middleware');
+const { exigirRecurso } = require('./src/middlewares/permissao');
 
 // Redundante com o `app.use('/api', authMiddleware)` de src/routes/index.js (que já roda
 // antes deste router ser montado), mas inofensivo — mantido por clareza/segurança

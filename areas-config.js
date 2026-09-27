@@ -6,10 +6,10 @@
 // única do sistema inteiro (ver pedido que motivou esta rota).
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
+const pool = require('./src/config/database');
 const { authMiddleware, masterMiddleware } = require('./src/middlewares/auth');
-const { logAuditEvent } = require('./audit');
-const { AREAS_VALIDAS } = require('./areas');
+const { logAuditEvent } = require('./src/utils/audit');
+const { AREAS_VALIDAS } = require('./src/constants/areas');
 
 // Labels padrão — usados pra qualquer área que por algum motivo não tenha
 // linha em areas_config ainda (ex.: logo após a migração, antes do seed, ou

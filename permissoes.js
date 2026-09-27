@@ -18,16 +18,11 @@
 // src/routes/index.js), então lê o header diretamente em vez de usar req.id_instituicao.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
+const pool = require('./src/config/database');
 const { authMiddleware, masterMiddleware } = require('./src/middlewares/auth');
-const { logAuditEvent } = require('./audit');
-const {
-  TELAS,
-  TELAS_VALIDAS,
-  carregarPerfisEditaveis,
-  RECURSOS,
-  RECURSOS_VALIDOS,
-} = require('./telas');
+const { logAuditEvent } = require('./src/utils/audit');
+const { TELAS, TELAS_VALIDAS, RECURSOS, RECURSOS_VALIDOS } = require('./src/constants/telas');
+const { carregarPerfisEditaveis } = require('./src/modules/permissoes/permissoes.model');
 
 router.use(authMiddleware, masterMiddleware);
 

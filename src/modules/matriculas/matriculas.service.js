@@ -1,12 +1,12 @@
 // Regras de matrícula individual: matricular, mover, cancelar e duplicidades.
-const pool = require('../../../db');
+const pool = require('../../config/database');
 const model = require('./matriculas.model');
 const AppError = require('../../utils/AppError');
 const { emTransacao } = require('../../utils/transacao');
-const { podeMatricular } = require('../../../regras-matricula');
-const { syncAlunoStatusFromMatriculas } = require('../../../status-sync');
-const { logAuditEvent } = require('../../../audit');
-const { criarNotificacao } = require('../../../notificacoes-service');
+const { podeMatricular } = require('./regras-matricula');
+const { syncAlunoStatusFromMatriculas } = require('../alunos/status-sync');
+const { logAuditEvent } = require('../../utils/audit');
+const { criarNotificacao } = require('../notificacoes/notificacoes.service');
 const { descreverTurma } = require('./descricao-turma');
 
 // Turma de destino com dia/horário/turno definidos: a matrícula herda tudo

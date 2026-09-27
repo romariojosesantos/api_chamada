@@ -9,8 +9,8 @@
 //   - 'reconhecimento_professor': a equipe registrou direto, já confirmado
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
-const { PRINCIPIOS_CARATER, PRINCIPIO_IDS } = require('./carater-principios');
+const pool = require('./src/config/database');
+const { PRINCIPIOS_CARATER, PRINCIPIO_IDS } = require('./src/modules/carater/carater.constants');
 const { hojeBrasil } = require('./src/utils/data-brasil');
 
 const LIMITE_EMBLEMA_PRINCIPIO = 3; // atos confirmados num princípio pra desbloquear o emblema dele

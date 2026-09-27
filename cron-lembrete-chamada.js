@@ -11,8 +11,8 @@
 // $CRON_SECRET`) quando a variável de ambiente CRON_SECRET está configurada.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
-const { criarNotificacao } = require('./notificacoes-service');
+const pool = require('./src/config/database');
+const { criarNotificacao } = require('./src/modules/notificacoes/notificacoes.service');
 const { hojeBrasil } = require('./src/utils/data-brasil');
 
 const CRON_SECRET = process.env.CRON_SECRET;

@@ -1,7 +1,8 @@
 const express = require('express');
 const controller = require('./alunos.controller');
-const { validate } = require('../../../validation');
-const { exigirRecurso } = require('../../../permissoes-middleware');
+const { validate } = require('../../middlewares/validate');
+const { alunoSchema } = require('./alunos.schema');
+const { exigirRecurso } = require('../../middlewares/permissao');
 
 const exigir = (acao) => exigirRecurso('/gerenciar-matriculas', acao);
 
@@ -13,8 +14,8 @@ router.get('/telefones', controller.telefones);
 router.get('/por-dia', controller.porDia);
 router.get('/meritocracia', controller.ranking);
 router.post('/upsert-bulk', exigir('criar'), controller.importar);
-router.post('/', exigir('criar'), validate('aluno'), controller.criar);
-router.put('/:id', exigir('editar'), validate('aluno'), controller.atualizar);
+router.post('/', exigir('criar'), validate(alunoSchema), controller.criar);
+router.put('/:id', exigir('editar'), validate(alunoSchema), controller.atualizar);
 router.patch('/:id', exigir('editar'), controller.atualizarCampo);
 router.delete('/:id', exigir('excluir'), controller.excluir);
 router.delete('/:id/permanente', exigir('excluir'), controller.excluirDefinitivamente);

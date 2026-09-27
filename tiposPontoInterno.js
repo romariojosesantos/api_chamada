@@ -10,10 +10,10 @@
 // escopoDeAcesso usada em pontos.js pra editar/apagar um ponto já registrado.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
-const { AREAS_VALIDAS } = require('./areas');
-const { escopoDeAcesso } = require('./escopoPonto');
-const { exigirRecurso } = require('./permissoes-middleware');
+const pool = require('./src/config/database');
+const { AREAS_VALIDAS } = require('./src/constants/areas');
+const { escopoDeAcesso } = require('./src/modules/pontos/escopo-ponto');
+const { exigirRecurso } = require('./src/middlewares/permissao');
 
 const exigir = (recurso) => exigirRecurso('/pontos', recurso);
 

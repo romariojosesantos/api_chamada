@@ -1,8 +1,8 @@
 // Validação dos dados de usuário (autocadastro e administração).
 const model = require('./usuarios.model');
 const AppError = require('../../utils/AppError');
-const { AREAS_VALIDAS } = require('../../../areas');
-const { carregarPerfisEditaveis } = require('../../../telas');
+const { AREAS_VALIDAS } = require('../../constants/areas');
+const { carregarPerfisEditaveis } = require('../permissoes/permissoes.model');
 
 const PERFIS_FIXOS = ['master', 'coordenador', 'professor', 'monitor'];
 

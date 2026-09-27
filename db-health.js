@@ -11,7 +11,7 @@
 // essa mesma checagem automaticamente 1x por dia.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
+const pool = require('./src/config/database');
 const { agoraBrasil } = require('./src/utils/data-brasil');
 
 async function medirSaudeBanco() {

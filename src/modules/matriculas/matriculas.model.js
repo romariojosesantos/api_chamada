@@ -1,6 +1,6 @@
 // SQL de matrículas. Uma matrícula com data_fim preenchida está encerrada
 // (soft-delete): não é um intervalo de vigência, é "isso não vale mais".
-const pool = require('../../../db');
+const pool = require('../../config/database');
 
 const CAMPOS_MATRICULA_ATIVA = `
   SELECT m.idmatricula AS id,

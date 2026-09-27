@@ -1,6 +1,6 @@
 // SQL do cadastro de alunos. As funções que escrevem recebem `db` (pool ou a
 // conexão de uma transação) para poderem participar de uma transação maior.
-const pool = require('../../../db');
+const pool = require('../../config/database');
 
 // Dias da semana com matrícula ativa do aluno (ex.: "Segunda,Quarta").
 const SUBQUERY_DIAS_MATRICULADOS = `

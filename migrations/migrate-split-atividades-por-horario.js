@@ -18,7 +18,7 @@
 //
 // Roda por padrão em modo DRY-RUN (só mostra o que faria). Passe --aplicar
 // pra executar de verdade, dentro de uma transação.
-const pool = require('../db');
+const pool = require('../src/config/database');
 
 const APLICAR = process.argv.includes('--aplicar');
 

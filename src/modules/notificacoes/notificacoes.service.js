@@ -5,7 +5,7 @@
 // Mesmo princípio do audit.js: nunca lança erro pra quem chamou — uma falha ao
 // registrar a notificação não pode derrubar a operação principal (matricular
 // aluno, marcar como inativo, etc.) que está sendo notificada.
-const pool = require('./db');
+const pool = require('../../config/database');
 
 /**
  * @param {object} dados

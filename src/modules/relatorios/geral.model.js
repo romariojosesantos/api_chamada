@@ -1,5 +1,5 @@
 // SQL dos resumos "no geral" (sem recorte de dia) e do histórico geral.
-const pool = require('../../../db');
+const pool = require('../../config/database');
 const { FORA_DE_DIA_SEM_AULA } = require('./sql-comum');
 
 // Ativos sem nenhuma matrícula (nem histórica): ficha incompleta.

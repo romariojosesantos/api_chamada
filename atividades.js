@@ -5,12 +5,12 @@
 // vários horários diferentes.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
-const { logAuditEvent } = require('./audit');
-const { syncAlunoStatusFromMatriculas } = require('./status-sync');
-const { AREAS_VALIDAS } = require('./areas');
+const pool = require('./src/config/database');
+const { logAuditEvent } = require('./src/utils/audit');
+const { syncAlunoStatusFromMatriculas } = require('./src/modules/alunos/status-sync');
+const { AREAS_VALIDAS } = require('./src/constants/areas');
 const { hojeBrasil } = require('./src/utils/data-brasil');
-const { exigirRecurso } = require('./permissoes-middleware');
+const { exigirRecurso } = require('./src/middlewares/permissao');
 
 const exigir = (recurso) => exigirRecurso('/turmas', recurso);
 

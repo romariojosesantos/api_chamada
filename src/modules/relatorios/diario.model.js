@@ -1,7 +1,7 @@
 // SQL do relatório de um único dia. "Esperado" = matrícula ativa para aquele
 // dia da semana, iniciada até a data (senão quem foi matriculado hoje
 // apareceria como ausente em dias passados).
-const pool = require('../../../db');
+const pool = require('../../config/database');
 const { CONDICAO_PERIODO } = require('./sql-comum');
 
 async function diaSemAula(data, inst) {

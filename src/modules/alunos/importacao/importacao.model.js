@@ -1,5 +1,5 @@
 // SQL da importação em massa. Tudo roda na conexão da transação (`db`).
-const pool = require('../../../../db');
+const pool = require('../../../config/database');
 
 async function nomesDeAlunos(db, idInstituicao) {
   const [rows] = await db.query(

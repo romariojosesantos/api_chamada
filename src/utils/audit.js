@@ -1,5 +1,5 @@
 // Registro de eventos de auditoria (quem fez o quê, quando) na tabela chamada_conexao.
-const pool = require('./db');
+const pool = require('../config/database');
 
 /**
  * Grava um evento de auditoria. Nunca lança erro para quem chamou: um problema

@@ -8,9 +8,9 @@
 const model = require('./matriculas.model');
 const AppError = require('../../utils/AppError');
 const { emTransacao } = require('../../utils/transacao');
-const { podeMatricular } = require('../../../regras-matricula');
-const { syncAlunoStatusFromMatriculas } = require('../../../status-sync');
-const { criarNotificacao } = require('../../../notificacoes-service');
+const { podeMatricular } = require('./regras-matricula');
+const { syncAlunoStatusFromMatriculas } = require('../alunos/status-sync');
+const { criarNotificacao } = require('../notificacoes/notificacoes.service');
 const { descreverTurma } = require('./descricao-turma');
 
 function validar(alteracoes) {

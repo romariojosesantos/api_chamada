@@ -1,6 +1,6 @@
 const express = require('express');
 const controller = require('./matriculas.controller');
-const { exigirRecurso } = require('../../../permissoes-middleware');
+const { exigirRecurso } = require('../../middlewares/permissao');
 
 const router = express.Router();
 

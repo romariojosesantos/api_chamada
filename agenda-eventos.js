@@ -14,11 +14,11 @@
 // controle de quem PODE VER.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
+const pool = require('./src/config/database');
 const { authMiddleware } = require('./src/middlewares/auth');
-const { escopoDeAcesso } = require('./escopoPonto');
-const { exigirRecurso } = require('./permissoes-middleware');
-const { AREAS_VALIDAS } = require('./areas');
+const { escopoDeAcesso } = require('./src/modules/pontos/escopo-ponto');
+const { exigirRecurso } = require('./src/middlewares/permissao');
+const { AREAS_VALIDAS } = require('./src/constants/areas');
 const { gerarRelatorioAgendaAnualPDF } = require('./relatorio-agenda-anual-pdf');
 
 router.use(authMiddleware);

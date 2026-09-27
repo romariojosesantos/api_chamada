@@ -1,6 +1,6 @@
 // O que o usuário logado pode ver e fazer.
 const model = require('./usuarios.model');
-const { TELAS_VALIDAS, RECURSOS_VALIDOS } = require('../../../telas');
+const { TELAS_VALIDAS, RECURSOS_VALIDOS } = require('../../constants/telas');
 
 // Master acessa todas as instituições sem vínculo em usuario_instituicoes.
 async function instituicoesDoUsuario(idUsuario, perfil) {

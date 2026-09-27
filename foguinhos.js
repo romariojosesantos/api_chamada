@@ -14,7 +14,7 @@
 // aluno-gamificacao.js, que só serve pro próprio aluno ver os dados dele.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
+const pool = require('./src/config/database');
 const { hojeBrasil } = require('./src/utils/data-brasil');
 
 const NOMES_DIA_CURTO = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];

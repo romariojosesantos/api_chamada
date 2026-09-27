@@ -4,14 +4,14 @@
 // A planilha só cria/atualiza quem ela menciona. Aluno ausente não é tocado:
 // tratar ausência como desistência já inativou alunos em massa por engano.
 // A matrícula é a fonte da verdade do status (ver syncAlunoStatusFromMatriculas).
-const pool = require('../../../../db');
+const pool = require('../../../config/database');
 const model = require('./importacao.model');
 const planilha = require('./planilha');
 const matriculas = require('./matriculas');
 const complementares = require('./complementares');
 const { prepararTurmas } = require('./turmas');
 const { criarResolvedorDeNomes } = require('./nomes');
-const { syncAlunoStatusFromMatriculas } = require('../../../../status-sync');
+const { syncAlunoStatusFromMatriculas } = require('../status-sync');
 const { hojeBrasil, agoraBrasil } = require('../../../utils/data-brasil');
 
 // Aba "Atividades": professor e área declarados para cada nome de turma.

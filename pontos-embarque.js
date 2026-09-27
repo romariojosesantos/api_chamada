@@ -5,8 +5,8 @@
 // acesso à tela de cadastro de aluno pode gerenciar.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
-const { logAuditEvent } = require('./audit');
+const pool = require('./src/config/database');
+const { logAuditEvent } = require('./src/utils/audit');
 
 router.get('/', async (req, res) => {
   const [rows] = await pool.query(

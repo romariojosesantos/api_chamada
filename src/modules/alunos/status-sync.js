@@ -10,7 +10,7 @@
 // "espera" pra "inativo" sozinha (senão toda sincronização em lote apagaria a
 // fila de espera). Só um PATCH manual tira alguém de "espera".
 
-const { podeMatricular } = require('./regras-matricula');
+const { podeMatricular } = require('../matriculas/regras-matricula');
 
 function resolveAlunoStatus(temMatriculaAtiva) {
   return temMatriculaAtiva ? 'ativo' : 'inativo';

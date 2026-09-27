@@ -1,5 +1,5 @@
 // SQL de usuários, vínculos com instituição e permissões.
-const pool = require('../../../db');
+const pool = require('../../config/database');
 
 // --- Usuário ---
 

@@ -31,9 +31,9 @@
 // compliance aqui de propósito.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
-const { escopoDeAcesso } = require('./escopoPonto');
-const { exigirRecurso } = require('./permissoes-middleware');
+const pool = require('./src/config/database');
+const { escopoDeAcesso } = require('./src/modules/pontos/escopo-ponto');
+const { exigirRecurso } = require('./src/middlewares/permissao');
 const { gerarRelatorioPontoPDF } = require('./relatorio-ponto-pdf');
 
 const exigir = (recurso) => exigirRecurso('/pontos', recurso);

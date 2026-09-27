@@ -14,7 +14,7 @@
 //     tempo, substituiu a antiga medalha única "Mês Perfeito".
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
+const pool = require('./src/config/database');
 const { hojeBrasil } = require('./src/utils/data-brasil');
 
 const JANELA_STREAK_DIAS = 90; // olha só os últimos 90 dias pra trás — suficiente pra qualquer streak realista de uma instituição, sem escanear o histórico inteiro

@@ -12,14 +12,14 @@
 // já têm nota lançada.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
+const pool = require('./src/config/database');
 const { calcularFrequenciaPorAluno } = require('./src/modules/relatorios/periodo.service');
 const {
   CATEGORIAS_VALIDAS,
   CATEGORIA_LABEL,
   categoriaDaTurma,
-} = require('./categorias-avaliativas');
-const { exigirRecurso } = require('./permissoes-middleware');
+} = require('./src/modules/notas/categorias.constants');
+const { exigirRecurso } = require('./src/middlewares/permissao');
 
 const exigir = (recurso) => exigirRecurso('/notas', recurso);
 

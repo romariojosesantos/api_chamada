@@ -3,12 +3,13 @@
 // de uma transação, para nunca salvar uma chamada pela metade.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
-const { validate } = require('./validation');
-const { logAuditEvent } = require('./audit');
-const { criarNotificacao } = require('./notificacoes-service');
+const pool = require('./src/config/database');
+const { validate } = require('./src/middlewares/validate');
+const { presencaSchema } = require('./src/modules/presenca/presenca.schema');
+const { logAuditEvent } = require('./src/utils/audit');
+const { criarNotificacao } = require('./src/modules/notificacoes/notificacoes.service');
 const { hojeBrasil } = require('./src/utils/data-brasil');
-const { exigirRecurso } = require('./permissoes-middleware');
+const { exigirRecurso } = require('./src/middlewares/permissao');
 
 // Cláusula SQL pra "presença desse período" — um registro SEM período (de
 // antes da coluna `periodo` existir, ver migrate-add-periodo-presenca.js)
@@ -76,7 +77,7 @@ router.get('/', async (req, res) => {
 // "Presente" para tirar a marcação — ver handleTogglePresence em AttendanceList.jsx).
 // Como a coluna `status` é NOT NULL, esse caso não é um upsert: é tratado como
 // pedido para APAGAR o registro de presença existente daquele aluno na data.
-router.post('/', exigirRecurso('/', 'editar'), validate('presenca'), async (req, res) => {
+router.post('/', exigirRecurso('/', 'editar'), validate(presencaSchema), async (req, res) => {
   const { data, chamadas } = req.body;
   // Sem `periodo` (chamada antiga/turno não mapeado): grava NULL, mesmo
   // comportamento de antes da coluna existir — nunca bloqueia o salvamento

@@ -1,12 +1,9 @@
 // Matrículas da importação. Uma "turma" é o par nome + dia + horário + turno
 // (ver migrate-split-atividades-por-horario.js); o nome sozinho não basta.
 const model = require('./importacao.model');
-const { logAuditEvent } = require('../../../../audit');
-const { podeMatricular } = require('../../../../regras-matricula');
-const {
-  encerrarMatriculasForaDoTurno,
-  encerrarMatriculasSeNaoAtivo,
-} = require('../../../../status-sync');
+const { logAuditEvent } = require('../../../utils/audit');
+const { podeMatricular } = require('../../matriculas/regras-matricula');
+const { encerrarMatriculasForaDoTurno, encerrarMatriculasSeNaoAtivo } = require('../status-sync');
 const { validarTurno, truncar } = require('../normalizacao');
 const { nomeDaLinha, lerMatriculas } = require('./planilha');
 

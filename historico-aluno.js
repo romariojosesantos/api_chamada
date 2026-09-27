@@ -5,10 +5,13 @@
 // matrículas e contatos de emergência, e histórico de presença.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
+const pool = require('./src/config/database');
 const { masterMiddleware } = require('./src/middlewares/auth');
-const { logAuditEvent } = require('./audit');
-const { syncAlunoStatusFromMatriculas, encerrarMatriculasSeNaoAtivo } = require('./status-sync');
+const { logAuditEvent } = require('./src/utils/audit');
+const {
+  syncAlunoStatusFromMatriculas,
+  encerrarMatriculasSeNaoAtivo,
+} = require('./src/modules/alunos/status-sync');
 
 // Buscar alunos por nome em TODAS as instituições (só master enxerga globalmente
 // assim) — alimenta a busca com debounce da tela HistoricoAlunoMaster.js.

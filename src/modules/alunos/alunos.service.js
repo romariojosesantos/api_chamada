@@ -1,13 +1,10 @@
 // Regras de cadastro, edição e exclusão de alunos.
-const pool = require('../../../db');
+const pool = require('../../config/database');
 const model = require('./alunos.model');
 const AppError = require('../../utils/AppError');
-const { logAuditEvent } = require('../../../audit');
-const { criarNotificacao } = require('../../../notificacoes-service');
-const {
-  encerrarMatriculasForaDoTurno,
-  encerrarMatriculasSeNaoAtivo,
-} = require('../../../status-sync');
+const { logAuditEvent } = require('../../utils/audit');
+const { criarNotificacao } = require('../notificacoes/notificacoes.service');
+const { encerrarMatriculasForaDoTurno, encerrarMatriculasSeNaoAtivo } = require('./status-sync');
 const { hojeBrasil, agoraBrasil } = require('../../utils/data-brasil');
 const { enviarFoto, removerFoto, configurado: storageConfigurado } = require('../../utils/storage');
 const { emTransacao } = require('../../utils/transacao');

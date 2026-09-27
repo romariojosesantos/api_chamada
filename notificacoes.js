@@ -14,9 +14,9 @@
 // cada usuário tem seu próprio estado de "já vi isso".
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
-const { criarNotificacao } = require('./notificacoes-service');
-const { logAuditEvent } = require('./audit');
+const pool = require('./src/config/database');
+const { criarNotificacao } = require('./src/modules/notificacoes/notificacoes.service');
+const { logAuditEvent } = require('./src/utils/audit');
 
 const CLAUSULA_VISIVEIS = '(n.id_instituicao IS NULL OR n.id_instituicao = ?)';
 

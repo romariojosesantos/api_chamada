@@ -1,4 +1,4 @@
-const pool = require('../../db');
+const pool = require('../config/database');
 
 // Roda `fn(conexao)` numa transação: commit se der certo, rollback se lançar.
 // A conexão sempre volta para o pool (em produção o pool tem só 1 conexão).

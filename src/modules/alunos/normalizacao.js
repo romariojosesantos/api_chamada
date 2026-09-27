@@ -1,5 +1,5 @@
 // Funções puras de limpeza/conversão de dados de aluno (formulário e planilha).
-const { AREAS_VALIDAS } = require('../../../areas');
+const { AREAS_VALIDAS } = require('../../constants/areas');
 
 const TURNOS_CONHECIDOS = [
   'Manhã',

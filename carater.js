@@ -9,10 +9,10 @@
 //     já confirmado, sem o aluno precisar iniciar nada.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
-const { logAuditEvent } = require('./audit');
-const { PRINCIPIOS_CARATER, PRINCIPIO_IDS } = require('./carater-principios');
-const { exigirRecurso } = require('./permissoes-middleware');
+const pool = require('./src/config/database');
+const { logAuditEvent } = require('./src/utils/audit');
+const { PRINCIPIOS_CARATER, PRINCIPIO_IDS } = require('./src/modules/carater/carater.constants');
+const { exigirRecurso } = require('./src/middlewares/permissao');
 
 const exigir = (recurso) => exigirRecurso('/carater', recurso);
 

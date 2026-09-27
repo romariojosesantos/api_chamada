@@ -1,5 +1,5 @@
 // SQL dos relatórios por período (intervalo de datas e visão mensal).
-const pool = require('../../../db');
+const pool = require('../../config/database');
 const { CTE_DIAS_LETIVOS, JOIN_MATRICULA_DO_DIA, FORA_DE_DIA_SEM_AULA } = require('./sql-comum');
 
 const ALUNO_ATIVO = `JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo' AND a.excluido_em IS NULL`;

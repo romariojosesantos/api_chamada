@@ -30,7 +30,7 @@
 // "dona" do endpoint (aqui, Chamada "/"). Bloquear "editar" nessa tela também
 // bloqueia o marcador rápido da Grade mesmo que "/grade" esteja liberado —
 // limitação aceita: não dá pra saber por qual tela do front a chamada veio.
-const pool = require('./db');
+const pool = require('../config/database');
 
 function exigirRecurso(tela, recurso) {
   return async (req, res, next) => {

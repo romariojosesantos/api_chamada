@@ -4,9 +4,9 @@
 // /contato e /contato/:id), para quando o master edita um aluno de qualquer instituição.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
-const { logAuditEvent } = require('./audit');
-const { exigirRecurso } = require('./permissoes-middleware');
+const pool = require('./src/config/database');
+const { logAuditEvent } = require('./src/utils/audit');
+const { exigirRecurso } = require('./src/middlewares/permissao');
 
 const exigir = (recurso) => exigirRecurso('/gerenciar-matriculas', recurso);
 

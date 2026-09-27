@@ -1,6 +1,6 @@
 const express = require('express');
 const c = require('./auth.controller');
-const { exigirRecurso } = require('../../../permissoes-middleware');
+const { exigirRecurso } = require('../../middlewares/permissao');
 const {
   authMiddleware,
   masterMiddleware,

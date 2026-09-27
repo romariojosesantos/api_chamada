@@ -9,10 +9,10 @@
 // o header diretamente em vez de usar req.id_instituicao.
 const express = require('express');
 const router = express.Router();
-const pool = require('./db');
+const pool = require('./src/config/database');
 const { authMiddleware, masterMiddleware } = require('./src/middlewares/auth');
-const { logAuditEvent } = require('./audit');
-const { PERFIS_EDITAVEIS_BASE } = require('./telas');
+const { logAuditEvent } = require('./src/utils/audit');
+const { PERFIS_EDITAVEIS_BASE } = require('./src/constants/telas');
 
 // Nunca pode colidir com um perfil que já tem significado especial fixo no
 // código (master sempre tem acesso total; os 3 da PERFIS_EDITAVEIS_BASE já
