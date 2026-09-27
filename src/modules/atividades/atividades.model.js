@@ -147,9 +147,12 @@ async function criarProfessor(nome, idInstituicao) {
   return result.insertId;
 }
 
-async function buscarProfessor(id) {
-  const [[professor]] = await pool.query('SELECT id, nome FROM professores WHERE id = ?', [id]);
-  return professor;
+async function buscarProfessor(id, idInstituicao) {
+  const [[professor]] = await pool.query(
+    'SELECT id, nome FROM professores WHERE id = ? AND id_instituicao = ?',
+    [id, idInstituicao],
+  );
+  return professor || null;
 }
 
 async function ehCoProfessor(id, idProfessor) {

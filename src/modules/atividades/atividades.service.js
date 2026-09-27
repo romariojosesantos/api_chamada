@@ -126,9 +126,12 @@ async function adicionarCoProfessor(id, { idprofessor, professor_nome }, idInsti
   if (await model.ehCoProfessor(id, idProfessor)) {
     throw new AppError('Esse professor já está nessa turma.', 409);
   }
+  // Confere antes de gravar: sem isso, um id inexistente (ou de outra
+  // instituição) virava vínculo gravado e a rota respondia 500.
+  const professor = await model.buscarProfessor(idProfessor, idInstituicao);
+  if (!professor) throw new AppError('Professor não encontrado.', 404);
 
   await model.adicionarCoProfessor(id, idProfessor, idInstituicao);
-  const professor = await model.buscarProfessor(idProfessor);
   await logAuditEvent(
     'TURMA_CO_PROFESSOR_ADICIONADO',
     `Turma #${id}: adicionado "${professor.nome}" (#${idProfessor})`,

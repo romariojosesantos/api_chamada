@@ -142,6 +142,7 @@ async function atualizarMatricula(idTexto, { status, data_inicio, data_fim }) {
 
   const idatividades = matricula.idatividades;
   const horario = await horarioDaTurma(idatividades);
+  if (!horario) throw new AppError('A turma dessa matrícula não existe mais.', 404);
   await model.atualizarMatricula(id, {
     turno: horario.turno,
     horario: horario.horario,
@@ -303,12 +304,14 @@ async function criarContato({ id_aluno, nome, telefone, parentesco, id_instituic
 
 async function excluirContato(idTexto) {
   const id = exigirId(idTexto, 'ID inválido.');
+  // Lida antes de apagar: depois do DELETE a linha não existe mais.
+  const idInstituicao = await model.instituicaoDoContato(id);
   if ((await model.excluirContato(id)) === 0) throw new AppError('Contato não encontrado.', 404);
 
   await logAuditEvent(
     'CONTATO_EMERGENCIA_DELETADO_MASTER',
     `Contato de emergência ID ${id} deletado pelo master`,
-    await model.instituicaoDoContato(id),
+    idInstituicao,
   );
 }
 
