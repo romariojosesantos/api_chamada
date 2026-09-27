@@ -67,7 +67,8 @@ router.get('/', async (req, res) => {
     params.push(data_fim, data_inicio);
   }
 
-  sql += ' ORDER BY ae.data_inicio ASC';
+  // Desempate por id: sem ele, eventos do mesmo dia vinham em ordem aleatória.
+  sql += ' ORDER BY ae.data_inicio ASC, ae.id ASC';
 
   const [rows] = await pool.query(sql, params);
   res.json(rows);
@@ -185,7 +186,7 @@ router.get('/relatorio-anual-pdf', exigir('exportar'), async (req, res) => {
      FROM agenda_eventos ae
      LEFT JOIN atividades atv ON atv.idatividades = ae.id_atividade
      WHERE ae.id_instituicao = ? AND ae.excluido_em IS NULL AND ae.data_inicio <= ? AND ae.data_fim >= ?
-     ORDER BY ae.data_inicio ASC`,
+     ORDER BY ae.data_inicio ASC, ae.id ASC`,
     [req.id_instituicao, dataFim, dataInicio],
   );
   const [[instituicao]] = await pool.query('SELECT nome FROM instituicoes WHERE id = ?', [
