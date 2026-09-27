@@ -3,12 +3,12 @@
 Resumo organizado das rotas expostas pelo backend (método, caminho, auth, parâmetros esperados e observações).
 
 Obs:
-- Muitos endpoints requerem o header `Authorization: Bearer <token>` (token HMAC implementado em [auth.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/auth.js)).
-- Quase todas as rotas relevantes exigem também o header `x-institution-id` (exceto rotas admin/master que podem operar cross-instituição). O middleware em [_server.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/_server.js) valida e popula `req.id_instituicao`.
+- Muitos endpoints requerem o header `Authorization: Bearer <token>` (token HMAC implementado em [auth.routes.js](../src/modules/auth/auth.routes.js)).
+- Quase todas as rotas relevantes exigem também o header `x-institution-id` (exceto rotas admin/master que podem operar cross-instituição). O middleware [tenant.js](../src/middlewares/tenant.js) valida e popula `req.id_instituicao`.
 
 ---
 
-## /api/auth (arquivo: [auth.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/auth.js))
+## /api/auth (arquivo: [auth.routes.js](../src/modules/auth/auth.routes.js))
 - POST /api/auth/register
   - Auth: público
   - Body: { nome, email, senha, perfil, id_instituicao }
@@ -47,7 +47,7 @@ Obs:
 
 ---
 
-## /api/alunos (arquivo: [alunos.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/alunos.js))
+## /api/alunos (arquivo: [alunos.routes.js](../src/modules/alunos/alunos.routes.js))
 - GET /api/alunos/
   - Auth: Bearer token + x-institution-id
   - Query: nome, turno, transporte, status
@@ -83,7 +83,7 @@ Obs:
 
 ---
 
-## /api/presenca (arquivo: [presenca.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/presenca.js))
+## /api/presenca (arquivo: [presenca.routes.js](../src/modules/presenca/presenca.routes.js))
 - GET /api/presenca/
   - Auth: Bearer token + x-institution-id
   - Retorna histórico de presenças da instituição (exclui dias_sem_aula).
@@ -100,7 +100,7 @@ Obs:
 
 ---
 
-## /api/relatorios (arquivo: [relatorios.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/relatorios.js))
+## /api/relatorios (arquivo: [relatorios.routes.js](../src/modules/relatorios/relatorios.routes.js))
 - GET /api/relatorios/estatisticas-diarias?data=YYYY-MM-DD
   - Auth: Bearer token + x-institution-id
   - Retorna métricas do dia: totais, por turno, por transporte, justificativas, lista de presenças, frequência %.
@@ -111,14 +111,14 @@ Obs:
 
 ---
 
-## /api/grade (arquivo: [grade.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/grade.js))
+## /api/grade (arquivo: [grade.routes.js](../src/modules/matriculas/grade.routes.js))
 - GET /api/grade/
   - Auth: Bearer token + x-institution-id
   - Lista matrículas/grade ativas da instituição (joins com alunos, atividades, professores).
 
 ---
 
-## /api/dias-sem-aula (arquivo: [dias-sem-aula.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/dias-sem-aula.js))
+## /api/dias-sem-aula (arquivo: [dias-sem-aula.routes.js](../src/modules/calendario/dias-sem-aula.routes.js))
 - GET /api/dias-sem-aula/?data_inicio=&data_fim=
   - Auth: Bearer token + x-institution-id
   - Lista dias sem aula (possui filtro de intervalo).
@@ -152,7 +152,7 @@ Obs:
 
 ---
 
-## /api/historico-aluno (arquivo: [historico-aluno.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/historico-aluno.js))
+## /api/historico-aluno (arquivo: [historico.routes.js](../src/modules/alunos/historico/historico.routes.js))
 - Observação: este roteador tem várias rotas protegidas por `masterMiddleware` (somente perfil `master`).
 
 - GET /api/historico-aluno/atividades/:instituicaoId
@@ -180,7 +180,7 @@ Obs:
 
 ---
 
-## /api/contatos-emergencia (arquivo: [contatos-emergencia.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/contatos-emergencia.js))
+## /api/contatos-emergencia (arquivo: [contatos.routes.js](../src/modules/alunos/contatos/contatos.routes.js))
 - GET /api/contatos-emergencia/aluno/:alunoId
   - Auth: Bearer token + x-institution-id
   - Lista contatos do aluno (filtra por id_instituicao).
@@ -201,10 +201,10 @@ Obs:
 ---
 
 ## Utilitários e infra
-- DB pool: [db.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/db.js) — configurações de mysql2/promise, adaptações para Vercel (connectionLimit = 1).
-- Validação: [validation.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/validation.js) — schemas Joi para `aluno` e `presenca`.
-- Auditoria: [audit.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/audit.js) — logAuditEvent(evento, detalhes, id_instituicao).
-- Arquivo principal/entrypoint: [_server.js](C:/Users/romar/OneDrive/Documentos/Sistemas/Controle/backend/_server.js)
+- DB pool: [database.js](../src/config/database.js) — configurações de mysql2/promise, adaptações para Vercel (connectionLimit = 1).
+- Validação: [validate.js](../src/middlewares/validate.js) — middleware; schemas Joi em `alunos.schema.js` e `presenca.schema.js`.
+- Auditoria: [audit.js](../src/utils/audit.js) — logAuditEvent(evento, detalhes, id_instituicao).
+- Arquivo principal/entrypoint: [server.js](../server.js) (local) e [api/index.js](../api/index.js) (Vercel), que montam [src/app.js](../src/app.js)
 
 ---
 

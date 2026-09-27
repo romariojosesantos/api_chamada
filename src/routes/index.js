@@ -22,20 +22,24 @@ router.use('/cron/saude-banco', require('../jobs/saude-banco'));
 
 // 2. Globais (login, sem instituição)
 // master consulta alunos de qualquer instituição
-router.use('/historico-aluno', authMiddleware, require('../../historico-aluno'));
+router.use(
+  '/historico-aluno',
+  authMiddleware,
+  require('../modules/alunos/historico/historico.routes'),
+);
 // login e perfil master checados dentro dos próprios roteadores
-router.use('/permissoes', require('../../permissoes'));
-router.use('/perfis-customizados', require('../../perfis-customizados'));
-router.use('/areas', require('../../areas-config')); // nomes das áreas valem para o sistema todo
+router.use('/permissoes', require('../modules/permissoes/permissoes.routes'));
+router.use('/perfis-customizados', require('../modules/permissoes/perfis-customizados.routes'));
+router.use('/areas', require('../modules/areas/areas.routes')); // nomes das áreas valem para o sistema todo
 router.use(
   '/estatisticas-comparativas',
   authMiddleware,
-  require('../../estatisticas-comparativas'),
+  require('../modules/relatorios/comparativo.routes'),
 );
 router.use('/db-health', authMiddleware, require('../modules/sistema/db-health.routes'));
 // Telas do aluno: o token de aluno já traz a instituição.
-router.use('/aluno', authMiddleware, require('../../aluno-gamificacao'));
-router.use('/aluno', authMiddleware, require('../../aluno-carater'));
+router.use('/aluno', authMiddleware, require('../modules/area-aluno/gamificacao.routes'));
+router.use('/aluno', authMiddleware, require('../modules/area-aluno/carater.routes'));
 // Antes de escolher a instituição: o seletor e a data do servidor.
 router.use('/instituicoes', authMiddleware, instituicoes.globalRouter);
 router.use('/hoje', authMiddleware, require('../modules/hoje/hoje.routes'));
@@ -45,26 +49,29 @@ router.use(authMiddleware, tenantMiddleware);
 router.use('/instituicao', instituicoes.tenantRouter);
 router.use('/', require('../modules/filtros/filtros.routes')); // /transportes e /professores
 router.use('/alunos', require('../modules/alunos/alunos.routes'));
-router.use('/presenca', require('../../presenca'));
+router.use('/presenca', require('../modules/presenca/presenca.routes'));
 router.use('/relatorios', require('../modules/relatorios/relatorios.routes'));
-router.use('/grade', require('../../grade'));
+router.use('/grade', require('../modules/matriculas/grade.routes'));
 router.use('/matriculas', require('../modules/matriculas/matriculas.routes'));
-router.use('/atividades', require('../../atividades'));
-router.use('/professores-admin', require('../../professores'));
-router.use('/listas', require('../../listas'));
-router.use('/termos', require('../../termos'));
-router.use('/devolucoes', require('../../devolucoes'));
-router.use('/pontos-embarque', require('../../pontos-embarque'));
-router.use('/contatos-emergencia', require('../../contatos-emergencia').router);
-router.use('/dias-sem-aula', require('../../dias-sem-aula'));
-router.use('/agenda-eventos', require('../../agenda-eventos'));
-router.use('/justificativas-falta', require('../../justificativas-falta'));
-router.use('/notas', require('../../notas'));
-router.use('/pontos', require('../../pontos'));
-router.use('/tipos-ponto-interno', require('../../tiposPontoInterno'));
-router.use('/notificacoes', require('../../notificacoes'));
-router.use('/carater', require('../../carater'));
-router.use('/foguinhos', require('../../foguinhos'));
-router.use('/ocorrencias', require('../../ocorrencias'));
+router.use('/atividades', require('../modules/atividades/atividades.routes'));
+router.use('/professores-admin', require('../modules/professores/professores.routes'));
+router.use('/listas', require('../modules/listas/listas.routes'));
+router.use('/termos', require('../modules/termos/termos.routes'));
+router.use('/devolucoes', require('../modules/devolucoes/devolucoes.routes'));
+router.use('/pontos-embarque', require('../modules/pontos-embarque/pontos-embarque.routes'));
+router.use('/contatos-emergencia', require('../modules/alunos/contatos/contatos.routes').router);
+router.use('/dias-sem-aula', require('../modules/calendario/dias-sem-aula.routes'));
+router.use('/agenda-eventos', require('../modules/agenda/agenda.routes'));
+router.use(
+  '/justificativas-falta',
+  require('../modules/justificativas-falta/justificativas-falta.routes'),
+);
+router.use('/notas', require('../modules/notas/notas.routes'));
+router.use('/pontos', require('../modules/pontos/pontos.routes'));
+router.use('/tipos-ponto-interno', require('../modules/pontos/tipos-interno.routes'));
+router.use('/notificacoes', require('../modules/notificacoes/notificacoes.routes'));
+router.use('/carater', require('../modules/carater/carater.routes'));
+router.use('/foguinhos', require('../modules/relatorios/foguinhos.routes'));
+router.use('/ocorrencias', require('../modules/ocorrencias/ocorrencias.routes'));
 
 module.exports = router;
