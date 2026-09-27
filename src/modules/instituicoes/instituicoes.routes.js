@@ -1,5 +1,5 @@
 const express = require('express');
-const controller = require('../controllers/instituicoes.controller');
+const controller = require('./instituicoes.controller');
 
 // Montado ANTES do middleware de x-institution-id (usuário ainda não escolheu instituição).
 const globalRouter = express.Router();

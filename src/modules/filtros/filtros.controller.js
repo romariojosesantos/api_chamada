@@ -1,5 +1,5 @@
-const alunosModel = require('../models/alunos.model');
-const professoresModel = require('../models/professores.model');
+const alunosModel = require('../alunos/alunos.model');
+const professoresModel = require('../professores/professores.model');
 
 async function transportes(req, res) {
   res.json(await alunosModel.listarTransportes(req.id_instituicao));

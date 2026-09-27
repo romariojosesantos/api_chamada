@@ -1,4 +1,4 @@
-const pool = require('../../db');
+const pool = require('../../../db');
 
 async function listarTodas() {
   const [rows] = await pool.query('SELECT id, nome FROM instituicoes ORDER BY nome ASC');

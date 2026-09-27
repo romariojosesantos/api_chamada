@@ -23,7 +23,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Importação de Rotas
-const alunosRouter = require('./alunos');
+const alunosRouter = require('./src/modules/alunos/alunos.routes');
 const presencaRouter = require('./presenca');
 const relatoriosRouter = require('./relatorios');
 const gradeRouter = require('./grade');
@@ -51,9 +51,9 @@ const pontosRouter = require('./pontos');
 const tiposPontoInternoRouter = require('./tiposPontoInterno');
 const agendaEventosRouter = require('./agenda-eventos');
 const justificativasFaltaRouter = require('./justificativas-falta');
-const instituicoesRoutes = require('./src/routes/instituicoes.routes');
-const hojeRouter = require('./src/routes/hoje.routes');
-const filtrosRouter = require('./src/routes/filtros.routes');
+const instituicoesRoutes = require('./src/modules/instituicoes/instituicoes.routes');
+const hojeRouter = require('./src/modules/hoje/hoje.routes');
+const filtrosRouter = require('./src/modules/filtros/filtros.routes');
 const AppError = require('./src/utils/AppError');
 
 // Middlewares

@@ -1,6 +1,6 @@
-const model = require('../models/instituicoes.model');
-const cache = require('../utils/cache');
-const AppError = require('../utils/AppError');
+const model = require('./instituicoes.model');
+const cache = require('../../utils/cache');
+const AppError = require('../../utils/AppError');
 
 // Master vê todas; os demais perfis só as vinculadas. O vínculo é consultado no
 // banco NA HORA (nunca req.user.instituicoes, que vem do token de 7 dias), para

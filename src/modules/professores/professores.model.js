@@ -1,4 +1,4 @@
-const pool = require('../../db');
+const pool = require('../../../db');
 
 // Só ativos: professor desativado (tela "Educadores") continua nas turmas/relatórios
 // onde já dava aula, só não entra em seleção nova (autocomplete/filtros).

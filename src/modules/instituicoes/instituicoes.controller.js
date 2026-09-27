@@ -1,4 +1,4 @@
-const service = require('../services/instituicoes.service');
+const service = require('./instituicoes.service');
 
 async function listarTodas(req, res) {
   res.json(await service.listarParaUsuario(req.user));
