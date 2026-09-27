@@ -37,7 +37,7 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', exigir('criar'), async (req, res) => {
-  const escopo = escopoDeAcesso(req);
+  const escopo = escopoDeAcesso(req.user);
   if (escopo === null) return res.status(403).json({ error: 'Sem acesso a atividades internas.' });
 
   const area = req.body.area;
@@ -75,7 +75,7 @@ router.put('/:id', exigir('editar'), async (req, res) => {
   );
   if (!tipo) return res.status(404).json({ error: 'Tipo não encontrado.' });
 
-  const escopo = escopoDeAcesso(req);
+  const escopo = escopoDeAcesso(req.user);
   if (!podeGerenciarArea(escopo, tipo.area)) {
     return res
       .status(403)
@@ -105,7 +105,7 @@ router.delete('/:id', exigir('excluir'), async (req, res) => {
   );
   if (!tipo) return res.status(404).json({ error: 'Tipo não encontrado.' });
 
-  const escopo = escopoDeAcesso(req);
+  const escopo = escopoDeAcesso(req.user);
   if (!podeGerenciarArea(escopo, tipo.area)) {
     return res
       .status(403)

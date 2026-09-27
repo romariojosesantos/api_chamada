@@ -41,7 +41,7 @@ function validarTipoEArea(tipo, area) {
 // coordenador geral (escopo '') sempre; coordenador de área só na PRÓPRIA área
 // (escopo === area do evento); evento institucional exige escopo '' sempre.
 function podeAgirNoEvento(req, tipo, area) {
-  const escopo = escopoDeAcesso(req);
+  const escopo = escopoDeAcesso(req.user);
   if (escopo === null) return false;
   if (escopo === '') return true;
   return tipo !== 'institucional' && area === escopo;
