@@ -11,7 +11,12 @@ const PORT = process.env.PORT || 3001;
 
 if (require.main === module) {
   // 0.0.0.0: acessível por outros aparelhos da mesma rede (pelo IP local).
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '0.0.0.0', (err) => {
+    // No Express 5 a falha ao abrir a porta (ex.: já em uso) chega aqui.
+    if (err) {
+      console.error(`Não foi possível iniciar na porta ${PORT}: ${err.message}`);
+      process.exit(1);
+    }
     console.log(`Servidor rodando na porta ${PORT}.`);
   });
 }
