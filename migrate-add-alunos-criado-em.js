@@ -37,7 +37,7 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.DB_PORT || 3306
+    port: process.env.DB_PORT || 3306,
   });
 
   try {
@@ -72,9 +72,13 @@ async function main() {
       WHERE a.criado_em IS NULL
         AND EXISTS (SELECT 1 FROM presenca p WHERE p.aluno_id = a.id)
     `);
-    console.log(`Camada 2 (1ª presença, piso aproximado): ${camada2.affectedRows} aluno(s) preenchido(s).`);
+    console.log(
+      `Camada 2 (1ª presença, piso aproximado): ${camada2.affectedRows} aluno(s) preenchido(s).`,
+    );
 
-    const [[{ semSinal }]] = await db.query('SELECT COUNT(*) as semSinal FROM alunos WHERE criado_em IS NULL');
+    const [[{ semSinal }]] = await db.query(
+      'SELECT COUNT(*) as semSinal FROM alunos WHERE criado_em IS NULL',
+    );
     console.log(`Camada 3 (sem sinal nenhum, ficou NULL): ${semSinal} aluno(s).`);
 
     console.log('Migração concluída com sucesso.');
@@ -83,7 +87,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Erro na migração:', err);
   process.exit(1);
 });

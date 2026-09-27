@@ -16,10 +16,15 @@ function hojeBrasil() {
 function agoraBrasil() {
   const partes = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Sao_Paulo',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
   }).formatToParts(new Date());
-  const valor = (tipo) => partes.find(p => p.type === tipo).value;
+  const valor = (tipo) => partes.find((p) => p.type === tipo).value;
   return `${valor('year')}-${valor('month')}-${valor('day')} ${valor('hour')}:${valor('minute')}:${valor('second')}`;
 }
 

@@ -21,12 +21,31 @@ const pool = require('./db');
  *   são `{ turma, professor, dia_semana, horario, turno }` ou `{ status }` ou null.
  * @param {object|null} [connection] - conexão de transação a reutilizar (opcional)
  */
-async function criarNotificacao({ tipo, titulo, mensagem = null, id_instituicao = null, id_aluno = null, criado_por = null, detalhes = null }, connection = null) {
+async function criarNotificacao(
+  {
+    tipo,
+    titulo,
+    mensagem = null,
+    id_instituicao = null,
+    id_aluno = null,
+    criado_por = null,
+    detalhes = null,
+  },
+  connection = null,
+) {
   try {
     const db = connection || pool;
     await db.query(
       'INSERT INTO notificacoes (tipo, titulo, mensagem, id_instituicao, id_aluno, criado_por, detalhes) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [tipo, titulo, mensagem, id_instituicao, id_aluno, criado_por, detalhes ? JSON.stringify(detalhes) : null]
+      [
+        tipo,
+        titulo,
+        mensagem,
+        id_instituicao,
+        id_aluno,
+        criado_por,
+        detalhes ? JSON.stringify(detalhes) : null,
+      ],
     );
   } catch (error) {
     console.error('Erro ao criar notificação:', error);

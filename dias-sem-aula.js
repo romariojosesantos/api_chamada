@@ -64,7 +64,7 @@ router.get('/verificar/:data', async (req, res) => {
     const [results] = await pool.query(
       `SELECT id, motivo FROM dias_sem_aula
        WHERE data = ? AND id_instituicao = ?`,
-      [data, req.id_instituicao]
+      [data, req.id_instituicao],
     );
 
     if (results.length > 0) {
@@ -90,7 +90,7 @@ router.post('/', exigir('criar'), async (req, res) => {
     // Verificar se já existe dia sem aula para essa data
     const [existing] = await pool.query(
       `SELECT id FROM dias_sem_aula WHERE data = ? AND id_instituicao = ?`,
-      [data, req.id_instituicao]
+      [data, req.id_instituicao],
     );
 
     if (existing.length > 0) {
@@ -99,14 +99,14 @@ router.post('/', exigir('criar'), async (req, res) => {
 
     const [result] = await pool.query(
       `INSERT INTO dias_sem_aula (data, motivo, id_instituicao, created_by) VALUES (?, ?, ?, ?)`,
-      [data, motivo || null, req.id_instituicao, req.user?.id]
+      [data, motivo || null, req.id_instituicao, req.user?.id],
     );
 
     res.status(201).json({
       id: result.insertId,
       data,
       motivo,
-      message: 'Dia sem aula criado com sucesso'
+      message: 'Dia sem aula criado com sucesso',
     });
   } catch (error) {
     console.error('Erro ao criar dia sem aula:', error);
@@ -123,7 +123,7 @@ router.put('/:id', exigir('editar'), async (req, res) => {
     // Verificar se o dia sem aula pertence à instituição do usuário
     const [check] = await pool.query(
       `SELECT id FROM dias_sem_aula WHERE id = ? AND id_instituicao = ?`,
-      [id, req.id_instituicao]
+      [id, req.id_instituicao],
     );
 
     if (check.length === 0) {
@@ -134,17 +134,19 @@ router.put('/:id', exigir('editar'), async (req, res) => {
     if (data) {
       const [existing] = await pool.query(
         `SELECT id FROM dias_sem_aula WHERE data = ? AND id_instituicao = ? AND id != ?`,
-        [data, req.id_instituicao, id]
+        [data, req.id_instituicao, id],
       );
 
       if (existing.length > 0) {
-        return res.status(400).json({ error: 'Já existe um dia sem aula registrado para esta data' });
+        return res
+          .status(400)
+          .json({ error: 'Já existe um dia sem aula registrado para esta data' });
       }
     }
 
     await pool.query(
       `UPDATE dias_sem_aula SET data = ?, motivo = ? WHERE id = ? AND id_instituicao = ?`,
-      [data, motivo || null, id, req.id_instituicao]
+      [data, motivo || null, id, req.id_instituicao],
     );
 
     res.json({ message: 'Dia sem aula atualizado com sucesso' });
@@ -161,17 +163,17 @@ router.delete('/:id', exigir('excluir'), async (req, res) => {
     // Verificar se o dia sem aula pertence à instituição do usuário
     const [check] = await pool.query(
       `SELECT id FROM dias_sem_aula WHERE id = ? AND id_instituicao = ?`,
-      [id, req.id_instituicao]
+      [id, req.id_instituicao],
     );
 
     if (check.length === 0) {
       return res.status(404).json({ error: 'Dia sem aula não encontrado' });
     }
 
-    await pool.query(
-      `DELETE FROM dias_sem_aula WHERE id = ? AND id_instituicao = ?`,
-      [id, req.id_instituicao]
-    );
+    await pool.query(`DELETE FROM dias_sem_aula WHERE id = ? AND id_instituicao = ?`, [
+      id,
+      req.id_instituicao,
+    ]);
 
     res.json({ message: 'Dia sem aula deletado com sucesso' });
   } catch (error) {
@@ -197,25 +199,31 @@ router.post('/marcar-fins-de-semana', exigir('criar'), async (req, res) => {
 
     while (currentDate <= endDate) {
       const dayOfWeek = currentDate.getUTCDay();
-      if (dayOfWeek === 0 || dayOfWeek === 6) { // 0 = Domingo, 6 = Sábado
+      if (dayOfWeek === 0 || dayOfWeek === 6) {
+        // 0 = Domingo, 6 = Sábado
         finsDeSemana.push(currentDate.toISOString().split('T')[0]);
       }
       currentDate.setUTCDate(currentDate.getUTCDate() + 1);
     }
 
-    const values = finsDeSemana.map(data => [data, 'Fim de semana', req.id_instituicao, req.user?.id]);
+    const values = finsDeSemana.map((data) => [
+      data,
+      'Fim de semana',
+      req.id_instituicao,
+      req.user?.id,
+    ]);
 
     if (values.length > 0) {
       await pool.query(
         `INSERT INTO dias_sem_aula (data, motivo, id_instituicao, created_by) VALUES ?
          ON DUPLICATE KEY UPDATE motivo = VALUES(motivo)`,
-        [values]
+        [values],
       );
     }
 
     res.json({
       message: `${finsDeSemana.length} fins de semana marcados com sucesso`,
-      total: finsDeSemana.length
+      total: finsDeSemana.length,
     });
   } catch (error) {
     console.error('Erro ao marcar fins de semana:', error);
@@ -287,35 +295,35 @@ router.post('/adicionar-feriados-nacionais', exigir('criar'), async (req, res) =
 
     const feriados = [];
 
-    feriadosFixos.forEach(feriado => {
+    feriadosFixos.forEach((feriado) => {
       const data = new Date(Date.UTC(year, feriado.mes, feriado.dia));
       feriados.push({
         data: data.toISOString().split('T')[0],
-        motivo: feriado.nome
+        motivo: feriado.nome,
       });
     });
 
-    feriadosMoveis.forEach(feriado => {
+    feriadosMoveis.forEach((feriado) => {
       feriados.push({
         data: feriado.data.toISOString().split('T')[0],
-        motivo: feriado.nome
+        motivo: feriado.nome,
       });
     });
 
-    const values = feriados.map(f => [f.data, f.motivo, req.id_instituicao, req.user?.id]);
+    const values = feriados.map((f) => [f.data, f.motivo, req.id_instituicao, req.user?.id]);
 
     if (values.length > 0) {
       await pool.query(
         `INSERT INTO dias_sem_aula (data, motivo, id_instituicao, created_by) VALUES ?
          ON DUPLICATE KEY UPDATE motivo = VALUES(motivo)`,
-        [values]
+        [values],
       );
     }
 
     res.json({
       message: `${feriados.length} feriados nacionais adicionados com sucesso`,
       total: feriados.length,
-      feriados
+      feriados,
     });
   } catch (error) {
     console.error('Erro ao adicionar feriados nacionais:', error);
@@ -348,20 +356,25 @@ router.post('/marcar-periodo', exigir('criar'), async (req, res) => {
       currentDate.setUTCDate(currentDate.getUTCDate() + 1);
     }
 
-    const values = diasSemAula.map(data => [data, motivo || 'Período sem aula', req.id_instituicao, req.user?.id]);
+    const values = diasSemAula.map((data) => [
+      data,
+      motivo || 'Período sem aula',
+      req.id_instituicao,
+      req.user?.id,
+    ]);
 
     if (values.length > 0) {
       await pool.query(
         `INSERT INTO dias_sem_aula (data, motivo, id_instituicao, created_by) VALUES ?
          ON DUPLICATE KEY UPDATE motivo = VALUES(motivo)`,
-        [values]
+        [values],
       );
     }
 
     res.json({
       message: `${diasSemAula.length} dias marcados como sem aula com sucesso`,
       total: diasSemAula.length,
-      periodo: { data_inicio, data_fim, motivo }
+      periodo: { data_inicio, data_fim, motivo },
     });
   } catch (error) {
     console.error('Erro ao marcar período:', error);

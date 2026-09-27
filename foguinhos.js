@@ -17,7 +17,7 @@ const router = express.Router();
 const pool = require('./db');
 const { hojeBrasil } = require('./data-brasil');
 
-const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 const NOMES_DIA_CURTO = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
@@ -32,49 +32,56 @@ function limitesSemana(dataRef) {
   fimObj.setDate(inicioObj.getDate() + 6);
   return {
     inicio: inicioObj.toISOString().split('T')[0],
-    fim: fimObj.toISOString().split('T')[0]
+    fim: fimObj.toISOString().split('T')[0],
   };
 }
 
-router.get('/', asyncHandler(async (req, res) => {
-  const hoje = hojeBrasil();
-  const dataRef = /^\d{4}-\d{2}-\d{2}$/.test(req.query.data) ? req.query.data : hoje;
-  const { inicio, fim } = limitesSemana(dataRef);
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const hoje = hojeBrasil();
+    const dataRef = /^\d{4}-\d{2}-\d{2}$/.test(req.query.data) ? req.query.data : hoje;
+    const { inicio, fim } = limitesSemana(dataRef);
 
-  // Filtros por professor/dia da semana/turno — SÓ decidem quais ALUNOS
-  // aparecem na lista (quem tem uma matrícula batendo com o filtro nesta
-  // semana). Não filtram os dias mostrados: cada aluno que aparecer continua
-  // mostrando a semana inteira dele (ver diasRes abaixo, que roda sem nenhuma
-  // dessas condições de propósito — pedido explícito do usuário).
-  const filtroProfessor = String(req.query.professor || '').trim();
-  const filtroDiaSemana = String(req.query.dia_semana || '').trim();
-  const filtroTurno = String(req.query.turno || '').trim();
-  const filtroAtivo = !!(filtroProfessor || filtroDiaSemana || filtroTurno);
+    // Filtros por professor/dia da semana/turno — SÓ decidem quais ALUNOS
+    // aparecem na lista (quem tem uma matrícula batendo com o filtro nesta
+    // semana). Não filtram os dias mostrados: cada aluno que aparecer continua
+    // mostrando a semana inteira dele (ver diasRes abaixo, que roda sem nenhuma
+    // dessas condições de propósito — pedido explícito do usuário).
+    const filtroProfessor = String(req.query.professor || '').trim();
+    const filtroDiaSemana = String(req.query.dia_semana || '').trim();
+    const filtroTurno = String(req.query.turno || '').trim();
+    const filtroAtivo = !!(filtroProfessor || filtroDiaSemana || filtroTurno);
 
-  const condicoesFiltro = ['m.data_inicio <= ?', '(m.data_fim IS NULL OR m.data_fim >= ?)'];
-  const paramsFiltro = [fim, inicio];
-  if (filtroDiaSemana) { condicoesFiltro.push('TRIM(m.dia_semana) = ?'); paramsFiltro.push(filtroDiaSemana); }
-  if (filtroTurno) { condicoesFiltro.push('m.turno = ?'); paramsFiltro.push(filtroTurno); }
-  if (filtroProfessor) { condicoesFiltro.push('prof.nome = ?'); paramsFiltro.push(filtroProfessor); }
+    const condicoesFiltro = ['m.data_inicio <= ?', '(m.data_fim IS NULL OR m.data_fim >= ?)'];
+    const paramsFiltro = [fim, inicio];
+    if (filtroDiaSemana) {
+      condicoesFiltro.push('TRIM(m.dia_semana) = ?');
+      paramsFiltro.push(filtroDiaSemana);
+    }
+    if (filtroTurno) {
+      condicoesFiltro.push('m.turno = ?');
+      paramsFiltro.push(filtroTurno);
+    }
+    if (filtroProfessor) {
+      condicoesFiltro.push('prof.nome = ?');
+      paramsFiltro.push(filtroProfessor);
+    }
 
-  const [
-    [alunosRes],
-    [diasRes],
-    [idsFiltradosRes]
-  ] = await Promise.all([
-    pool.query(
-      `SELECT id, nome, turma, turno FROM alunos
+    const [[alunosRes], [diasRes], [idsFiltradosRes]] = await Promise.all([
+      pool.query(
+        `SELECT id, nome, turma, turno FROM alunos
        WHERE id_instituicao = ? AND status = 'ativo' AND excluido_em IS NULL
        ORDER BY nome ASC`,
-      [req.id_instituicao]
-    ),
-    // Mesma CTE de aluno-gamificacao.js (dias_esperados da semana), só que
-    // aqui junta com TODOS os alunos da instituição de uma vez em vez de um
-    // idaluno fixo — cada aluno só aparece nos dias em que tinha aula
-    // esperada (dia_semana com matrícula ativa, fora de dias_sem_aula). Roda
-    // SEM os filtros de professor/dia/turno — sempre a semana completa.
-    pool.query(
-      `WITH RECURSIVE datas AS (
+        [req.id_instituicao],
+      ),
+      // Mesma CTE de aluno-gamificacao.js (dias_esperados da semana), só que
+      // aqui junta com TODOS os alunos da instituição de uma vez em vez de um
+      // idaluno fixo — cada aluno só aparece nos dias em que tinha aula
+      // esperada (dia_semana com matrícula ativa, fora de dias_sem_aula). Roda
+      // SEM os filtros de professor/dia/turno — sempre a semana completa.
+      pool.query(
+        `WITH RECURSIVE datas AS (
          SELECT ? as data
          UNION ALL
          SELECT DATE_ADD(data, INTERVAL 1 DAY) FROM datas WHERE data < ?
@@ -101,47 +108,52 @@ router.get('/', asyncHandler(async (req, res) => {
        LEFT JOIN presenca p ON p.aluno_id = e.aluno_id AND DATE(p.data) = e.data
        GROUP BY e.aluno_id, e.data
        ORDER BY e.aluno_id, e.data ASC`,
-      [inicio, fim, req.id_instituicao, req.id_instituicao]
-    ),
-    // Query separada e bem mais simples, só pra saber QUEM entra na lista
-    // quando algum filtro está ativo — não precisa das datas dia a dia, só
-    // se o aluno tem alguma matrícula (válida nesta semana) batendo com
-    // professor/dia/turno escolhidos.
-    filtroAtivo
-      ? pool.query(
-          `SELECT DISTINCT a.id AS aluno_id
+        [inicio, fim, req.id_instituicao, req.id_instituicao],
+      ),
+      // Query separada e bem mais simples, só pra saber QUEM entra na lista
+      // quando algum filtro está ativo — não precisa das datas dia a dia, só
+      // se o aluno tem alguma matrícula (válida nesta semana) batendo com
+      // professor/dia/turno escolhidos.
+      filtroAtivo
+        ? pool.query(
+            `SELECT DISTINCT a.id AS aluno_id
            FROM matricula m
            JOIN alunos a ON a.id = m.idaluno AND a.id_instituicao = ? AND a.status = 'ativo' AND a.excluido_em IS NULL
            LEFT JOIN atividades atv ON atv.idatividades = m.idatividades
            LEFT JOIN professores prof ON prof.id = atv.idprofessor
            WHERE ${condicoesFiltro.join(' AND ')}`,
-          [req.id_instituicao, ...paramsFiltro]
-        )
-      : Promise.resolve([[]])
-  ]);
+            [req.id_instituicao, ...paramsFiltro],
+          )
+        : Promise.resolve([[]]),
+    ]);
 
-  const diasPorAluno = new Map();
-  for (const row of diasRes) {
-    const dataStr = row.data instanceof Date ? row.data.toISOString().split('T')[0] : row.data;
-    const estado = row.presente ? 'presente' : (dataStr >= hoje ? 'futuro' : 'falta');
-    const dia = { data: dataStr, dia_semana_curto: NOMES_DIA_CURTO[new Date(`${dataStr}T00:00:00`).getDay()], estado };
-    if (!diasPorAluno.has(row.aluno_id)) diasPorAluno.set(row.aluno_id, []);
-    diasPorAluno.get(row.aluno_id).push(dia);
-  }
+    const diasPorAluno = new Map();
+    for (const row of diasRes) {
+      const dataStr = row.data instanceof Date ? row.data.toISOString().split('T')[0] : row.data;
+      const estado = row.presente ? 'presente' : dataStr >= hoje ? 'futuro' : 'falta';
+      const dia = {
+        data: dataStr,
+        dia_semana_curto: NOMES_DIA_CURTO[new Date(`${dataStr}T00:00:00`).getDay()],
+        estado,
+      };
+      if (!diasPorAluno.has(row.aluno_id)) diasPorAluno.set(row.aluno_id, []);
+      diasPorAluno.get(row.aluno_id).push(dia);
+    }
 
-  let alunos = alunosRes.map(a => ({
-    id: a.id,
-    nome: a.nome,
-    turma: a.turma,
-    turno: a.turno,
-    dias: diasPorAluno.get(a.id) || []
-  }));
-  if (filtroAtivo) {
-    const idsFiltrados = new Set(idsFiltradosRes.map(r => r.aluno_id));
-    alunos = alunos.filter(a => idsFiltrados.has(a.id));
-  }
+    let alunos = alunosRes.map((a) => ({
+      id: a.id,
+      nome: a.nome,
+      turma: a.turma,
+      turno: a.turno,
+      dias: diasPorAluno.get(a.id) || [],
+    }));
+    if (filtroAtivo) {
+      const idsFiltrados = new Set(idsFiltradosRes.map((r) => r.aluno_id));
+      alunos = alunos.filter((a) => idsFiltrados.has(a.id));
+    }
 
-  res.json({ inicio_semana: inicio, fim_semana: fim, alunos });
-}));
+    res.json({ inicio_semana: inicio, fim_semana: fim, alunos });
+  }),
+);
 
 module.exports = router;

@@ -32,7 +32,7 @@ const pool = mysql.createPool({
   // forma de nunca deslocar um dia é nunca deixar isso passar por um objeto
   // Date: essa opção faz o driver devolver "2021-09-01" como texto puro,
   // idêntico ao que está armazenado, sem nenhuma conversão de fuso no meio.
-  dateStrings: ['DATE']
+  dateStrings: ['DATE'],
 });
 
 // Sem esse listener, um erro de conexão em background do pool (ex.: o MySQL

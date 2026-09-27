@@ -2,16 +2,17 @@
   "version": 2,
   "installCommand": "npm install",
   "regions": ["gru1"],
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index" }
-  ],
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
   "headers": [
     {
       "source": "/api/(.*)",
       "headers": [
         { "key": "Access-Control-Allow-Origin", "value": "*" },
         { "key": "Access-Control-Allow-Methods", "value": "GET,POST,PUT,PATCH,DELETE,OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, x-institution-id, Authorization, Pragma, Cache-Control, Expires" }
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, x-institution-id, Authorization, Pragma, Cache-Control, Expires"
+        }
       ]
     }
   ],

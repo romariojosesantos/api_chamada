@@ -14,7 +14,7 @@ const { authMiddleware, masterMiddleware } = require('./auth');
 const { logAuditEvent } = require('./audit');
 const { PERFIS_EDITAVEIS_BASE } = require('./telas');
 
-const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // Nunca pode colidir com um perfil que já tem significado especial fixo no
 // código (master sempre tem acesso total; os 3 da PERFIS_EDITAVEIS_BASE já
@@ -41,7 +41,8 @@ const obterIdInstituicao = async (req, res) => {
 // 30 (limite de usuarios.perfil).
 function gerarChave(nome) {
   return String(nome || '')
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '')
     .slice(0, 30);
@@ -49,66 +50,116 @@ function gerarChave(nome) {
 
 router.use(authMiddleware, masterMiddleware);
 
-router.get('/', asyncHandler(async (req, res) => {
-  const idInstituicao = await obterIdInstituicao(req, res);
-  if (idInstituicao === null) return;
-  const [rows] = await pool.query('SELECT chave, nome, criado_em FROM perfis_customizados WHERE id_instituicao = ? ORDER BY nome ASC', [idInstituicao]);
-  res.json(rows);
-}));
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const idInstituicao = await obterIdInstituicao(req, res);
+    if (idInstituicao === null) return;
+    const [rows] = await pool.query(
+      'SELECT chave, nome, criado_em FROM perfis_customizados WHERE id_instituicao = ? ORDER BY nome ASC',
+      [idInstituicao],
+    );
+    res.json(rows);
+  }),
+);
 
-router.post('/', asyncHandler(async (req, res) => {
-  const idInstituicao = await obterIdInstituicao(req, res);
-  if (idInstituicao === null) return;
-  const nome = String(req.body.nome || '').trim();
-  if (!nome) return res.status(400).json({ error: 'Nome do perfil é obrigatório.' });
+router.post(
+  '/',
+  asyncHandler(async (req, res) => {
+    const idInstituicao = await obterIdInstituicao(req, res);
+    if (idInstituicao === null) return;
+    const nome = String(req.body.nome || '').trim();
+    if (!nome) return res.status(400).json({ error: 'Nome do perfil é obrigatório.' });
 
-  const chave = gerarChave(nome);
-  if (!chave) return res.status(400).json({ error: 'Esse nome não gera uma chave válida — use ao menos uma letra ou número.' });
-  if (RESERVADOS.includes(chave)) return res.status(409).json({ error: `"${nome}" colide com um perfil já existente. Escolha outro nome.` });
+    const chave = gerarChave(nome);
+    if (!chave)
+      return res
+        .status(400)
+        .json({ error: 'Esse nome não gera uma chave válida — use ao menos uma letra ou número.' });
+    if (RESERVADOS.includes(chave))
+      return res
+        .status(409)
+        .json({ error: `"${nome}" colide com um perfil já existente. Escolha outro nome.` });
 
-  const [[jaExiste]] = await pool.query('SELECT chave FROM perfis_customizados WHERE id_instituicao = ? AND chave = ?', [idInstituicao, chave]);
-  if (jaExiste) return res.status(409).json({ error: `Já existe um perfil "${nome}" (ou um nome muito parecido) nesta instituição.` });
+    const [[jaExiste]] = await pool.query(
+      'SELECT chave FROM perfis_customizados WHERE id_instituicao = ? AND chave = ?',
+      [idInstituicao, chave],
+    );
+    if (jaExiste)
+      return res
+        .status(409)
+        .json({
+          error: `Já existe um perfil "${nome}" (ou um nome muito parecido) nesta instituição.`,
+        });
 
-  await pool.query(
-    'INSERT INTO perfis_customizados (id_instituicao, chave, nome, criado_por) VALUES (?, ?, ?, ?)',
-    [idInstituicao, chave, nome, req.user.id]
-  );
+    await pool.query(
+      'INSERT INTO perfis_customizados (id_instituicao, chave, nome, criado_por) VALUES (?, ?, ?, ?)',
+      [idInstituicao, chave, nome, req.user.id],
+    );
 
-  await logAuditEvent('PERFIL_CUSTOMIZADO_CRIADO', `Perfil "${nome}" (chave: ${chave})`, idInstituicao);
+    await logAuditEvent(
+      'PERFIL_CUSTOMIZADO_CRIADO',
+      `Perfil "${nome}" (chave: ${chave})`,
+      idInstituicao,
+    );
 
-  res.status(201).json({ chave, nome });
-}));
+    res.status(201).json({ chave, nome });
+  }),
+);
 
-router.delete('/:chave', asyncHandler(async (req, res) => {
-  const idInstituicao = await obterIdInstituicao(req, res);
-  if (idInstituicao === null) return;
-  const { chave } = req.params;
+router.delete(
+  '/:chave',
+  asyncHandler(async (req, res) => {
+    const idInstituicao = await obterIdInstituicao(req, res);
+    if (idInstituicao === null) return;
+    const { chave } = req.params;
 
-  const [[perfil]] = await pool.query('SELECT chave, nome FROM perfis_customizados WHERE id_instituicao = ? AND chave = ?', [idInstituicao, chave]);
-  if (!perfil) return res.status(404).json({ error: 'Perfil não encontrado.' });
+    const [[perfil]] = await pool.query(
+      'SELECT chave, nome FROM perfis_customizados WHERE id_instituicao = ? AND chave = ?',
+      [idInstituicao, chave],
+    );
+    if (!perfil) return res.status(404).json({ error: 'Perfil não encontrado.' });
 
-  // Só bloqueia se algum usuário com esse perfil estiver vinculado A ESTA
-  // instituição — o mesmo nome de perfil pode existir de forma independente
-  // em outra instituição, sem relação nenhuma com este.
-  const [[{ total }]] = await pool.query(
-    `SELECT COUNT(*) AS total FROM usuarios u
+    // Só bloqueia se algum usuário com esse perfil estiver vinculado A ESTA
+    // instituição — o mesmo nome de perfil pode existir de forma independente
+    // em outra instituição, sem relação nenhuma com este.
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) AS total FROM usuarios u
      JOIN usuario_instituicoes ui ON ui.id_usuario = u.id
      WHERE u.perfil = ? AND ui.id_instituicao = ?`,
-    [chave, idInstituicao]
-  );
-  if (total > 0) {
-    return res.status(409).json({ error: `${total} usuário(s) ainda tem esse perfil nesta instituição. Mude o perfil deles antes (em Admin Usuários) de apagar "${perfil.nome}".` });
-  }
+      [chave, idInstituicao],
+    );
+    if (total > 0) {
+      return res
+        .status(409)
+        .json({
+          error: `${total} usuário(s) ainda tem esse perfil nesta instituição. Mude o perfil deles antes (em Admin Usuários) de apagar "${perfil.nome}".`,
+        });
+    }
 
-  await pool.query('DELETE FROM perfis_customizados WHERE id_instituicao = ? AND chave = ?', [idInstituicao, chave]);
-  // Limpa as permissões configuradas pra esse perfil junto — sem isso ficariam
-  // linhas "fantasma" (perfil que não existe mais) nas duas tabelas.
-  await pool.query('DELETE FROM permissoes_perfil WHERE id_instituicao = ? AND perfil = ?', [idInstituicao, chave]);
-  await pool.query('DELETE FROM permissoes_perfil_recurso WHERE id_instituicao = ? AND perfil = ?', [idInstituicao, chave]);
+    await pool.query('DELETE FROM perfis_customizados WHERE id_instituicao = ? AND chave = ?', [
+      idInstituicao,
+      chave,
+    ]);
+    // Limpa as permissões configuradas pra esse perfil junto — sem isso ficariam
+    // linhas "fantasma" (perfil que não existe mais) nas duas tabelas.
+    await pool.query('DELETE FROM permissoes_perfil WHERE id_instituicao = ? AND perfil = ?', [
+      idInstituicao,
+      chave,
+    ]);
+    await pool.query(
+      'DELETE FROM permissoes_perfil_recurso WHERE id_instituicao = ? AND perfil = ?',
+      [idInstituicao, chave],
+    );
 
-  await logAuditEvent('PERFIL_CUSTOMIZADO_APAGADO', `Perfil "${perfil.nome}" (chave: ${chave})`, idInstituicao);
+    await logAuditEvent(
+      'PERFIL_CUSTOMIZADO_APAGADO',
+      `Perfil "${perfil.nome}" (chave: ${chave})`,
+      idInstituicao,
+    );
 
-  res.json({ success: true });
-}));
+    res.json({ success: true });
+  }),
+);
 
 module.exports = router;

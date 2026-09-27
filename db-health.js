@@ -14,7 +14,7 @@ const router = express.Router();
 const pool = require('./db');
 const { agoraBrasil } = require('./data-brasil');
 
-const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 async function medirSaudeBanco() {
   const [[maxConn]] = await pool.query("SHOW VARIABLES LIKE 'max_connections'");
@@ -36,15 +36,18 @@ async function medirSaudeBanco() {
     status,
     // Hora do SERVIDOR (Brasília), não do computador de quem está vendo a
     // tela — mesmo motivo/abordagem de agoraBrasilia() em pontos.js.
-    atualizado_em: agoraBrasil()
+    atualizado_em: agoraBrasil(),
   };
 }
 
-router.get('/', asyncHandler(async (req, res) => {
-  if (req.user.perfil !== 'master') {
-    return res.status(403).json({ error: 'Rota restrita a master.' });
-  }
-  res.json(await medirSaudeBanco());
-}));
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    if (req.user.perfil !== 'master') {
+      return res.status(403).json({ error: 'Rota restrita a master.' });
+    }
+    res.json(await medirSaudeBanco());
+  }),
+);
 
 module.exports = { router, medirSaudeBanco };

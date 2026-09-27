@@ -62,8 +62,10 @@ async function main() {
     if (!APLICAR) {
       console.log('\n[DRY-RUN] Nada foi alterado. Rode com --aplicar para executar de verdade.');
       console.log('\nExemplo de linhas novas que seriam criadas (5 primeiras):');
-      criarNova.slice(0, 5).forEach(c => {
-        console.log(`  "${c.nome}" (prof ${c.idprofessor}) -> ${c.dia_semana} ${c.horario} (${c.turno}) [${c.qtd_matriculas} matrículas a reapontar]`);
+      criarNova.slice(0, 5).forEach((c) => {
+        console.log(
+          `  "${c.nome}" (prof ${c.idprofessor}) -> ${c.dia_semana} ${c.horario} (${c.turno}) [${c.qtd_matriculas} matrículas a reapontar]`,
+        );
       });
       return;
     }
@@ -73,10 +75,16 @@ async function main() {
     // 3. Preenche dia/horario/turno na linha original de cada atividade
     //    (1 UPDATE em massa com CASE, não um loop).
     if (manterNaOriginal.length > 0) {
-      const ids = manterNaOriginal.map(c => c.old_id);
-      const diaCase = manterNaOriginal.map(c => `WHEN ${c.old_id} THEN ${conn.escape(c.dia_semana)}`).join(' ');
-      const horarioCase = manterNaOriginal.map(c => `WHEN ${c.old_id} THEN ${conn.escape(c.horario)}`).join(' ');
-      const turnoCase = manterNaOriginal.map(c => `WHEN ${c.old_id} THEN ${conn.escape(c.turno)}`).join(' ');
+      const ids = manterNaOriginal.map((c) => c.old_id);
+      const diaCase = manterNaOriginal
+        .map((c) => `WHEN ${c.old_id} THEN ${conn.escape(c.dia_semana)}`)
+        .join(' ');
+      const horarioCase = manterNaOriginal
+        .map((c) => `WHEN ${c.old_id} THEN ${conn.escape(c.horario)}`)
+        .join(' ');
+      const turnoCase = manterNaOriginal
+        .map((c) => `WHEN ${c.old_id} THEN ${conn.escape(c.turno)}`)
+        .join(' ');
       await conn.query(`
         UPDATE atividades
         SET dia_semana = CASE idatividades ${diaCase} END,
@@ -84,7 +92,9 @@ async function main() {
             turno = CASE idatividades ${turnoCase} END
         WHERE idatividades IN (${ids.join(',')})
       `);
-      console.log(`OK: ${manterNaOriginal.length} linhas originais atualizadas com dia/horário/turno.`);
+      console.log(
+        `OK: ${manterNaOriginal.length} linhas originais atualizadas com dia/horário/turno.`,
+      );
     }
 
     // 4. Insere as linhas novas em lote e recupera os IDs gerados (MySQL
@@ -92,14 +102,23 @@ async function main() {
     //    lote de conexão única — por isso não precisamos reconsultar).
     let novosIds = [];
     if (criarNova.length > 0) {
-      const values = criarNova.map(c => [c.nome, c.idprofessor, c.id_instituicao, c.dia_semana, c.horario, c.turno]);
+      const values = criarNova.map((c) => [
+        c.nome,
+        c.idprofessor,
+        c.id_instituicao,
+        c.dia_semana,
+        c.horario,
+        c.turno,
+      ]);
       const [insertResult] = await conn.query(
         `INSERT INTO atividades (nome, idprofessor, id_instituicao, dia_semana, horario, turno) VALUES ?`,
-        [values]
+        [values],
       );
       const primeiroId = insertResult.insertId;
       novosIds = criarNova.map((_, idx) => primeiroId + idx);
-      console.log(`OK: ${criarNova.length} linhas novas de atividade inseridas (ids ${primeiroId}..${primeiroId + criarNova.length - 1}).`);
+      console.log(
+        `OK: ${criarNova.length} linhas novas de atividade inseridas (ids ${primeiroId}..${primeiroId + criarNova.length - 1}).`,
+      );
     }
 
     // 5. Reaponta as matrículas de cada combinação extra pra sua linha nova,
@@ -112,8 +131,17 @@ async function main() {
           PRIMARY KEY (old_id, dia_semana, horario, turno)
         )
       `);
-      const linhasTemp = criarNova.map((c, idx) => [c.old_id, c.dia_semana, c.horario, c.turno, novosIds[idx]]);
-      await conn.query(`INSERT INTO _migracao_slots (old_id, dia_semana, horario, turno, new_id) VALUES ?`, [linhasTemp]);
+      const linhasTemp = criarNova.map((c, idx) => [
+        c.old_id,
+        c.dia_semana,
+        c.horario,
+        c.turno,
+        novosIds[idx],
+      ]);
+      await conn.query(
+        `INSERT INTO _migracao_slots (old_id, dia_semana, horario, turno, new_id) VALUES ?`,
+        [linhasTemp],
+      );
 
       const [updateResult] = await conn.query(`
         UPDATE matricula m

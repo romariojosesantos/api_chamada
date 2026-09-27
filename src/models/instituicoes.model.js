@@ -7,7 +7,10 @@ async function listarTodas() {
 
 async function listarPorIds(ids) {
   if (ids.length === 0) return [];
-  const [rows] = await pool.query('SELECT id, nome FROM instituicoes WHERE id IN (?) ORDER BY nome ASC', [ids]);
+  const [rows] = await pool.query(
+    'SELECT id, nome FROM instituicoes WHERE id IN (?) ORDER BY nome ASC',
+    [ids],
+  );
   return rows;
 }
 
@@ -17,8 +20,11 @@ async function buscarPorId(id) {
 }
 
 async function idsVinculadosAoUsuario(idUsuario) {
-  const [rows] = await pool.query('SELECT id_instituicao FROM usuario_instituicoes WHERE id_usuario = ?', [idUsuario]);
-  return rows.map(r => r.id_instituicao);
+  const [rows] = await pool.query(
+    'SELECT id_instituicao FROM usuario_instituicoes WHERE id_usuario = ?',
+    [idUsuario],
+  );
+  return rows.map((r) => r.id_instituicao);
 }
 
 module.exports = { listarTodas, listarPorIds, buscarPorId, idsVinculadosAoUsuario };

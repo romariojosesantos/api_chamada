@@ -25,7 +25,7 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.DB_PORT || 3306
+    port: process.env.DB_PORT || 3306,
   });
 
   try {
@@ -42,13 +42,19 @@ async function main() {
     if (duplicatas.length === 0) {
       console.log('Nenhuma duplicata ativa encontrada.');
     } else {
-      console.log(`${duplicatas.length} slot(s) com matrícula ativa duplicada — resolvendo (mantendo a mais recente de cada)...`);
+      console.log(
+        `${duplicatas.length} slot(s) com matrícula ativa duplicada — resolvendo (mantendo a mais recente de cada)...`,
+      );
       for (const grupo of duplicatas) {
         const ids = grupo.ids.split(',').map(Number);
         const maisRecente = Math.max(...ids);
-        const paraEncerrar = ids.filter(id => id !== maisRecente);
-        await db.query('UPDATE matricula SET data_fim = CURDATE() WHERE idmatricula IN (?)', [paraEncerrar]);
-        console.log(`  aluno ${grupo.idaluno}, ${grupo.dia_semana} ${grupo.horario}: manteve #${maisRecente}, encerrou #${paraEncerrar.join(', #')}`);
+        const paraEncerrar = ids.filter((id) => id !== maisRecente);
+        await db.query('UPDATE matricula SET data_fim = CURDATE() WHERE idmatricula IN (?)', [
+          paraEncerrar,
+        ]);
+        console.log(
+          `  aluno ${grupo.idaluno}, ${grupo.dia_semana} ${grupo.horario}: manteve #${maisRecente}, encerrou #${paraEncerrar.join(', #')}`,
+        );
       }
     }
 
@@ -65,7 +71,9 @@ async function main() {
       console.log('matricula.slot_ativo já existia.');
     }
 
-    const [indiceExiste] = await db.query("SHOW INDEX FROM matricula WHERE Key_name = 'uniq_matricula_slot_ativo'");
+    const [indiceExiste] = await db.query(
+      "SHOW INDEX FROM matricula WHERE Key_name = 'uniq_matricula_slot_ativo'",
+    );
     if (indiceExiste.length === 0) {
       await db.query(`
         ALTER TABLE matricula ADD UNIQUE KEY uniq_matricula_slot_ativo (id_instituicao, idaluno, slot_ativo)
@@ -81,7 +89,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Erro na migração:', err);
   process.exit(1);
 });

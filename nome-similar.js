@@ -4,15 +4,20 @@
 
 // Só acento/maiúscula/espaço — sem isso "Joao Silva" e "João Silva" contam
 // como pessoas diferentes pro UNIQUE do banco, e cria um cadastro duplicado.
-const normalizarTextoComparacao = (s) => String(s || '')
-  .normalize('NFD').replace(/[̀-ͯ]/g, '')
-  .toLowerCase().trim().replace(/\s+/g, ' ');
+const normalizarTextoComparacao = (s) =>
+  String(s || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, ' ');
 
 // Distância de Levenshtein (quantas inserções/remoções/trocas de letra
 // separam duas strings) — sem biblioteca externa, o volume de nomes por
 // import não justifica uma dependência só pra isso.
 function distanciaLevenshtein(a, b) {
-  const m = a.length, n = b.length;
+  const m = a.length,
+    n = b.length;
   if (m === 0) return n;
   if (n === 0) return m;
   const linhaAnterior = Array.from({ length: n + 1 }, (_, j) => j);
@@ -20,9 +25,10 @@ function distanciaLevenshtein(a, b) {
   for (let i = 1; i <= m; i++) {
     linhaAtual[0] = i;
     for (let j = 1; j <= n; j++) {
-      linhaAtual[j] = a[i - 1] === b[j - 1]
-        ? linhaAnterior[j - 1]
-        : 1 + Math.min(linhaAnterior[j], linhaAtual[j - 1], linhaAnterior[j - 1]);
+      linhaAtual[j] =
+        a[i - 1] === b[j - 1]
+          ? linhaAnterior[j - 1]
+          : 1 + Math.min(linhaAnterior[j], linhaAtual[j - 1], linhaAnterior[j - 1]);
     }
     for (let j = 0; j <= n; j++) linhaAnterior[j] = linhaAtual[j];
   }
@@ -63,7 +69,10 @@ function resolverNomeParecido(nomeEnviado, nomesExistentes) {
   let melhorSuspeita = null;
   for (const existente of nomesExistentes) {
     const normExistente = normalizarTextoComparacao(existente);
-    if (normExistente === normEnviado) { corrigido = existente; break; }
+    if (normExistente === normEnviado) {
+      corrigido = existente;
+      break;
+    }
 
     const palavrasExistente = normExistente.split(' ').filter(Boolean);
     if (palavrasExistente.length !== palavrasEnviado.length) continue;
@@ -78,7 +87,8 @@ function resolverNomeParecido(nomeEnviado, nomesExistentes) {
   }
 
   if (corrigido) return { tipo: 'corrigido', nome: corrigido };
-  if (melhorSuspeita) return { tipo: 'suspeita', nome: melhorSuspeita.nome, distancia: melhorSuspeita.distancia };
+  if (melhorSuspeita)
+    return { tipo: 'suspeita', nome: melhorSuspeita.nome, distancia: melhorSuspeita.distancia };
   return { tipo: 'nenhum' };
 }
 

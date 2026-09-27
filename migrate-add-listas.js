@@ -12,7 +12,7 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.DB_PORT || 3306
+    port: process.env.DB_PORT || 3306,
   });
 
   try {
@@ -52,10 +52,12 @@ async function main() {
     }
 
     const [jaTemPermissao] = await db.query(
-      "SELECT 1 FROM permissoes_perfil WHERE perfil = 'coordenador' AND tela = '/listas'"
+      "SELECT 1 FROM permissoes_perfil WHERE perfil = 'coordenador' AND tela = '/listas'",
     );
     if (jaTemPermissao.length === 0) {
-      await db.query("INSERT INTO permissoes_perfil (perfil, tela) VALUES ('coordenador', '/listas')");
+      await db.query(
+        "INSERT INTO permissoes_perfil (perfil, tela) VALUES ('coordenador', '/listas')",
+      );
       console.log('Permissão de coordenador pra /listas inserida.');
     } else {
       console.log('Permissão de coordenador pra /listas já existia.');
@@ -67,7 +69,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Erro na migração:', err);
   process.exit(1);
 });

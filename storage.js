@@ -13,16 +13,24 @@ const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/cl
 const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL;
 
-const configurado = !!(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && R2_BUCKET_NAME && R2_PUBLIC_URL);
+const configurado = !!(
+  process.env.R2_ACCOUNT_ID &&
+  process.env.R2_ACCESS_KEY_ID &&
+  process.env.R2_SECRET_ACCESS_KEY &&
+  R2_BUCKET_NAME &&
+  R2_PUBLIC_URL
+);
 
-const client = configurado ? new S3Client({
-  region: 'auto',
-  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  },
-}) : null;
+const client = configurado
+  ? new S3Client({
+      region: 'auto',
+      endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+      },
+    })
+  : null;
 
 // Envia um buffer (já validado/comprimido pelo chamador) pra uma `key` dentro
 // do bucket e devolve a URL pública final (a que vai salva em
@@ -35,13 +43,15 @@ async function enviarFoto(key, buffer, contentType) {
   if (!configurado) {
     throw new Error('Armazenamento de fotos não configurado (faltam variáveis R2_* no .env).');
   }
-  await client.send(new PutObjectCommand({
-    Bucket: R2_BUCKET_NAME,
-    Key: key,
-    Body: buffer,
-    ContentType: contentType,
-    CacheControl: 'public, max-age=31536000, immutable',
-  }));
+  await client.send(
+    new PutObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: key,
+      Body: buffer,
+      ContentType: contentType,
+      CacheControl: 'public, max-age=31536000, immutable',
+    }),
+  );
   return `${R2_PUBLIC_URL}/${key}`;
 }
 

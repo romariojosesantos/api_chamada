@@ -16,10 +16,22 @@ const SEED = {
   monitor: ['/', '/relatorio-diario', '/gerenciar-matriculas'],
   professor: ['/', '/notificacoes', '/grade', '/carater', '/notas', '/pontos'],
   coordenador: [
-    '/', '/notificacoes', '/relatorio-diario', '/grade', '/ajuste-grade', '/grade-turmas',
-    '/turmas', '/professores', '/gerenciar-matriculas', '/dias-sem-aula', '/meritocracia',
-    '/carater', '/notas', '/pontos', '/vincular-professor'
-  ]
+    '/',
+    '/notificacoes',
+    '/relatorio-diario',
+    '/grade',
+    '/ajuste-grade',
+    '/grade-turmas',
+    '/turmas',
+    '/professores',
+    '/gerenciar-matriculas',
+    '/dias-sem-aula',
+    '/meritocracia',
+    '/carater',
+    '/notas',
+    '/pontos',
+    '/vincular-professor',
+  ],
 };
 
 async function main() {
@@ -28,7 +40,7 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.DB_PORT || 3306
+    port: process.env.DB_PORT || 3306,
   });
 
   try {
@@ -61,7 +73,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Erro na migração:', err);
   process.exit(1);
 });

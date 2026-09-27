@@ -10,7 +10,7 @@ async function setupDatabase() {
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME,
-      port: process.env.DB_PORT || 3306
+      port: process.env.DB_PORT || 3306,
     });
     console.log('Conectado com sucesso ao banco de dados MySQL.');
 
@@ -187,7 +187,9 @@ async function setupDatabase() {
     console.log('Tabela "usuario_instituicoes" pronta.');
 
     try {
-      await db.query("ALTER TABLE usuarios ADD COLUMN perfil VARCHAR(30) NOT NULL DEFAULT 'monitor'");
+      await db.query(
+        "ALTER TABLE usuarios ADD COLUMN perfil VARCHAR(30) NOT NULL DEFAULT 'monitor'",
+      );
       console.log('Coluna "perfil" adicionada em usuarios.');
     } catch (error) {
       if (error.code !== 'ER_DUP_FIELDNAME') throw error;
@@ -222,8 +224,11 @@ async function setupDatabase() {
 
     // Adiciona colunas novas se ainda não existirem (idempotente)
     const alterColumns = [
-      { sql: "ALTER TABLE alunos ADD COLUMN acompanhamento VARCHAR(50) DEFAULT NULL", name: 'acompanhamento' },
-      { sql: "ALTER TABLE alunos ADD COLUMN ponto VARCHAR(150) DEFAULT NULL", name: 'ponto' },
+      {
+        sql: 'ALTER TABLE alunos ADD COLUMN acompanhamento VARCHAR(50) DEFAULT NULL',
+        name: 'acompanhamento',
+      },
+      { sql: 'ALTER TABLE alunos ADD COLUMN ponto VARCHAR(150) DEFAULT NULL', name: 'ponto' },
     ];
     for (const col of alterColumns) {
       try {
@@ -242,13 +247,28 @@ async function setupDatabase() {
     const indexes = [
       // presenca: consultas por data e por instituição são as mais frequentes
       { sql: 'CREATE INDEX idx_presenca_data ON presenca (data)', name: 'idx_presenca_data' },
-      { sql: 'CREATE INDEX idx_presenca_inst_data ON presenca (id_instituicao, data)', name: 'idx_presenca_inst_data' },
-      { sql: 'CREATE INDEX idx_presenca_aluno_data ON presenca (aluno_id, data)', name: 'idx_presenca_aluno_data' },
+      {
+        sql: 'CREATE INDEX idx_presenca_inst_data ON presenca (id_instituicao, data)',
+        name: 'idx_presenca_inst_data',
+      },
+      {
+        sql: 'CREATE INDEX idx_presenca_aluno_data ON presenca (aluno_id, data)',
+        name: 'idx_presenca_aluno_data',
+      },
       // alunos: filtros por instituição e status
-      { sql: 'CREATE INDEX idx_alunos_inst_status ON alunos (id_instituicao, status)', name: 'idx_alunos_inst_status' },
+      {
+        sql: 'CREATE INDEX idx_alunos_inst_status ON alunos (id_instituicao, status)',
+        name: 'idx_alunos_inst_status',
+      },
       // matricula: join com alunos e filtro por dia_semana
-      { sql: 'CREATE INDEX idx_matricula_dia_inst ON matricula (dia_semana, id_instituicao, status)', name: 'idx_matricula_dia_inst' },
-      { sql: 'CREATE INDEX idx_matricula_aluno ON matricula (idaluno)', name: 'idx_matricula_aluno' },
+      {
+        sql: 'CREATE INDEX idx_matricula_dia_inst ON matricula (dia_semana, id_instituicao, status)',
+        name: 'idx_matricula_dia_inst',
+      },
+      {
+        sql: 'CREATE INDEX idx_matricula_aluno ON matricula (idaluno)',
+        name: 'idx_matricula_aluno',
+      },
     ];
     for (const idx of indexes) {
       try {
@@ -266,38 +286,54 @@ async function setupDatabase() {
 
     // 4. Dados de teste - apenas em desenvolvimento se ENABLE_TEST_DATA=true
     const enableTestData = process.env.ENABLE_TEST_DATA === 'true';
-    
+
     if (enableTestData) {
       console.log('Inserindo dados de teste (ENABLE_TEST_DATA=true)...');
-      
+
       // 4.1 Insere ou recupera uma instituição de teste para evitar duplicatas e erros
-      const [instRows] = await db.query('SELECT id FROM instituicoes WHERE nome = ? LIMIT 1', ['Instituição Padrão']);
+      const [instRows] = await db.query('SELECT id FROM instituicoes WHERE nome = ? LIMIT 1', [
+        'Instituição Padrão',
+      ]);
       let instId;
       if (instRows.length > 0) {
         instId = instRows[0].id;
         console.log('Instituição "Instituição Padrão" já existe. ID:', instId);
       } else {
-        const [instResult] = await db.query('INSERT INTO instituicoes (nome) VALUES (?)', ['Instituição Padrão']);
+        const [instResult] = await db.query('INSERT INTO instituicoes (nome) VALUES (?)', [
+          'Instituição Padrão',
+        ]);
         instId = instResult.insertId;
         console.log('Instituição "Instituição Padrão" criada com sucesso.');
       }
 
       // 4.2 Insere Professor e Atividade de teste para que a Grade funcione corretamente
-      const [profRows] = await db.query('SELECT id FROM professores WHERE nome = ? AND id_instituicao = ?', ['Professor de Teste', instId]);
+      const [profRows] = await db.query(
+        'SELECT id FROM professores WHERE nome = ? AND id_instituicao = ?',
+        ['Professor de Teste', instId],
+      );
       let profId;
       if (profRows.length > 0) {
         profId = profRows[0].id;
       } else {
-        const [profResult] = await db.query('INSERT INTO professores (nome, id_instituicao) VALUES (?, ?)', ['Professor de Teste', instId]);
+        const [profResult] = await db.query(
+          'INSERT INTO professores (nome, id_instituicao) VALUES (?, ?)',
+          ['Professor de Teste', instId],
+        );
         profId = profResult.insertId;
       }
 
-      const [atvRows] = await db.query('SELECT idatividades FROM atividades WHERE nome = ? AND id_instituicao = ?', ['Atividade Padrão', instId]);
+      const [atvRows] = await db.query(
+        'SELECT idatividades FROM atividades WHERE nome = ? AND id_instituicao = ?',
+        ['Atividade Padrão', instId],
+      );
       let atvId;
       if (atvRows.length > 0) {
         atvId = atvRows[0].idatividades;
       } else {
-        const [atvResult] = await db.query('INSERT INTO atividades (nome, idprofessor, id_instituicao) VALUES (?, ?, ?)', ['Atividade Padrão', profId, instId]);
+        const [atvResult] = await db.query(
+          'INSERT INTO atividades (nome, idprofessor, id_instituicao) VALUES (?, ?, ?)',
+          ['Atividade Padrão', profId, instId],
+        );
         atvId = atvResult.insertId;
       }
 
@@ -312,30 +348,37 @@ async function setupDatabase() {
       `;
       const alunosValues = [
         ['Ana Silva', '123456789', 'Manhã', 'Onibus Branco', instId],
-        ['Bruno Costa', '987654321', 'Tarde', 'Onibus Amarelo', instId]
+        ['Bruno Costa', '987654321', 'Tarde', 'Onibus Amarelo', instId],
       ];
 
       await db.query(insertAlunosSQL, [alunosValues]);
       console.log('Dados iniciais de alunos sincronizados.');
 
       // 4.4 Insere matrículas de teste APENAS para os alunos padrão (para não sujar dados reais)
-      const [alunosRows] = await db.query('SELECT id FROM alunos WHERE nome IN (?, ?) AND id_instituicao = ?', ['Ana Silva', 'Bruno Costa', instId]);
+      const [alunosRows] = await db.query(
+        'SELECT id FROM alunos WHERE nome IN (?, ?) AND id_instituicao = ?',
+        ['Ana Silva', 'Bruno Costa', instId],
+      );
       if (alunosRows.length > 0) {
-        const matriculasValues = alunosRows.map(aluno => [
-          aluno.id, 
+        const matriculasValues = alunosRows.map((aluno) => [
+          aluno.id,
           atvId, // Usa o ID da atividade real criada acima
           aluno.id % 2 === 0 ? 'Tarde' : 'Manhã',
           '08:00',
-          'Segunda,Terça,Quarta,Quinta,Sexta', 
-          instId
+          'Segunda,Terça,Quarta,Quinta,Sexta',
+          instId,
         ]);
-        await db.query('INSERT IGNORE INTO matricula (idaluno, idatividades, turno, horario, dia_semana, id_instituicao) VALUES ?', [matriculasValues]);
+        await db.query(
+          'INSERT IGNORE INTO matricula (idaluno, idatividades, turno, horario, dia_semana, id_instituicao) VALUES ?',
+          [matriculasValues],
+        );
         console.log('Matrículas de teste criadas.');
       }
     } else {
-      console.log('Pulando inserção de dados de teste (defina ENABLE_TEST_DATA=true para habilitar).');
+      console.log(
+        'Pulando inserção de dados de teste (defina ENABLE_TEST_DATA=true para habilitar).',
+      );
     }
-
   } catch (error) {
     console.error('Ocorreu um erro durante a configuração do banco de dados:', error);
   } finally {

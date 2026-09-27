@@ -15,7 +15,7 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.DB_PORT || 3306
+    port: process.env.DB_PORT || 3306,
   });
 
   try {
@@ -26,11 +26,13 @@ async function main() {
     for (const inst of instituicoes) {
       const [result] = await db.query(
         'INSERT IGNORE INTO permissoes_perfil (id_instituicao, perfil, tela) VALUES (?, ?, ?)',
-        [inst.id, 'coordenador', '/estatisticas-comparativas']
+        [inst.id, 'coordenador', '/estatisticas-comparativas'],
       );
       inseridos += result.affectedRows;
     }
-    console.log(`Acesso padrão à tela /estatisticas-comparativas concedido a coordenador: ${inseridos} linha(s) nova(s) em permissoes_perfil (${instituicoes.length} instituição(ões)).`);
+    console.log(
+      `Acesso padrão à tela /estatisticas-comparativas concedido a coordenador: ${inseridos} linha(s) nova(s) em permissoes_perfil (${instituicoes.length} instituição(ões)).`,
+    );
 
     console.log('Migração concluída com sucesso.');
   } finally {
@@ -38,7 +40,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Erro na migração:', err);
   process.exit(1);
 });

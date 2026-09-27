@@ -10,7 +10,7 @@ const { criarNotificacao } = require('./notificacoes-service');
 const { hojeBrasil } = require('./data-brasil');
 const { exigirRecurso } = require('./permissoes-middleware');
 
-const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // Cláusula SQL pra "presença desse período" — um registro SEM período (de
 // antes da coluna `periodo` existir, ver migrate-add-periodo-presenca.js)
@@ -38,9 +38,11 @@ function condicaoPeriodo(periodo) {
 // `data_fim`), mas os dois chamavam essa rota sem filtro nenhum — cada poll de
 // 15s da Chamada baixando TODO o histórico da instituição (17 mil+ linhas já
 // na instituição 1), pra usar só o dia de hoje.
-router.get('/', asyncHandler(async (req, res) => {
-  const { data, data_inicio, data_fim, aluno_id } = req.query;
-  let sql = `
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const { data, data_inicio, data_fim, aluno_id } = req.query;
+    let sql = `
     SELECT p.aluno_id, a.nome, p.data, p.status, p.periodo, p.observacao
     FROM presenca p
     JOIN alunos a ON p.aluno_id = a.id
@@ -50,24 +52,25 @@ router.get('/', asyncHandler(async (req, res) => {
         WHERE d.data = DATE(p.data) AND d.id_instituicao = ?
       )
   `;
-  const params = [req.id_instituicao, req.id_instituicao];
-  if (data) {
-    sql += ' AND DATE(p.data) = ?';
-    params.push(data);
-  } else if (data_inicio && data_fim) {
-    sql += ' AND DATE(p.data) BETWEEN ? AND ?';
-    params.push(data_inicio, data_fim);
-  }
-  // Opcional — usado pela escala semanal de um aluno específico (Grade.js),
-  // pra não baixar a instituição inteira só pra mostrar a presença de um.
-  if (aluno_id) {
-    sql += ' AND p.aluno_id = ?';
-    params.push(aluno_id);
-  }
-  sql += ' ORDER BY a.nome ASC, p.data DESC';
-  const [results] = await pool.query(sql, params);
-  res.json(results);
-}));
+    const params = [req.id_instituicao, req.id_instituicao];
+    if (data) {
+      sql += ' AND DATE(p.data) = ?';
+      params.push(data);
+    } else if (data_inicio && data_fim) {
+      sql += ' AND DATE(p.data) BETWEEN ? AND ?';
+      params.push(data_inicio, data_fim);
+    }
+    // Opcional — usado pela escala semanal de um aluno específico (Grade.js),
+    // pra não baixar a instituição inteira só pra mostrar a presença de um.
+    if (aluno_id) {
+      sql += ' AND p.aluno_id = ?';
+      params.push(aluno_id);
+    }
+    sql += ' ORDER BY a.nome ASC, p.data DESC';
+    const [results] = await pool.query(sql, params);
+    res.json(results);
+  }),
+);
 
 // Salvar chamada em lote (upsert): grava presença de vários alunos para uma
 // mesma data numa única transação. Se um aluno já tem registro para a data,
@@ -78,87 +81,109 @@ router.get('/', asyncHandler(async (req, res) => {
 // "Presente" para tirar a marcação — ver handleTogglePresence em AttendanceList.jsx).
 // Como a coluna `status` é NOT NULL, esse caso não é um upsert: é tratado como
 // pedido para APAGAR o registro de presença existente daquele aluno na data.
-router.post('/', exigirRecurso('/', 'editar'), validate('presenca'), asyncHandler(async (req, res) => {
-  const { data, chamadas } = req.body;
-  // Sem `periodo` (chamada antiga/turno não mapeado): grava NULL, mesmo
-  // comportamento de antes da coluna existir — nunca bloqueia o salvamento
-  // por causa disso.
-  const periodo = req.body.periodo || null;
-  const connection = await pool.getConnection();
+router.post(
+  '/',
+  exigirRecurso('/', 'editar'),
+  validate('presenca'),
+  asyncHandler(async (req, res) => {
+    const { data, chamadas } = req.body;
+    // Sem `periodo` (chamada antiga/turno não mapeado): grava NULL, mesmo
+    // comportamento de antes da coluna existir — nunca bloqueia o salvamento
+    // por causa disso.
+    const periodo = req.body.periodo || null;
+    const connection = await pool.getConnection();
 
-  try {
-    if (chamadas.length === 0) return res.status(200).json({ message: 'Sem dados para salvar.' });
+    try {
+      if (chamadas.length === 0) return res.status(200).json({ message: 'Sem dados para salvar.' });
 
-    // Verificar se a data é um dia sem aula
-    const [diaSemAula] = await connection.query(
-      `SELECT id, motivo FROM dias_sem_aula WHERE data = ? AND id_instituicao = ?`,
-      [data, req.id_instituicao]
-    );
+      // Verificar se a data é um dia sem aula
+      const [diaSemAula] = await connection.query(
+        `SELECT id, motivo FROM dias_sem_aula WHERE data = ? AND id_instituicao = ?`,
+        [data, req.id_instituicao],
+      );
 
-    if (diaSemAula.length > 0) {
-      return res.status(400).json({
-        error: 'Não é possível registrar presença neste dia',
-        motivo: diaSemAula[0].motivo || 'Dia sem aula',
-        isDiaSemAula: true
-      });
-    }
+      if (diaSemAula.length > 0) {
+        return res.status(400).json({
+          error: 'Não é possível registrar presença neste dia',
+          motivo: diaSemAula[0].motivo || 'Dia sem aula',
+          isDiaSemAula: true,
+        });
+      }
 
-    await connection.beginTransaction();
+      await connection.beginTransaction();
 
-    // Separar chamadas para deletar (status null) e para inserir/atualizar (status não null)
-    const chamadasParaDeletar = chamadas.filter(c => c.status === null);
-    const chamadasParaInserir = chamadas.filter(c => c.status !== null);
+      // Separar chamadas para deletar (status null) e para inserir/atualizar (status não null)
+      const chamadasParaDeletar = chamadas.filter((c) => c.status === null);
+      const chamadasParaInserir = chamadas.filter((c) => c.status !== null);
 
-    // Deletar registros onde status é null (desmarcar presença). Ver
-    // condicaoPeriodo() no topo do arquivo.
-    if (chamadasParaDeletar.length > 0) {
-      const { sql: condPeriodo, params: paramsPeriodo } = condicaoPeriodo(periodo);
-      const deleteSql = `
+      // Deletar registros onde status é null (desmarcar presença). Ver
+      // condicaoPeriodo() no topo do arquivo.
+      if (chamadasParaDeletar.length > 0) {
+        const { sql: condPeriodo, params: paramsPeriodo } = condicaoPeriodo(periodo);
+        const deleteSql = `
         DELETE FROM presenca
         WHERE aluno_id IN (${chamadasParaDeletar.map(() => '?').join(',')})
         AND data = ?
         AND id_instituicao = ?
         AND ${condPeriodo}
       `;
-      const alunoIds = chamadasParaDeletar.map(c => c.aluno_id);
-      await connection.query(deleteSql, [...alunoIds, data, req.id_instituicao, ...paramsPeriodo]);
-    }
+        const alunoIds = chamadasParaDeletar.map((c) => c.aluno_id);
+        await connection.query(deleteSql, [
+          ...alunoIds,
+          data,
+          req.id_instituicao,
+          ...paramsPeriodo,
+        ]);
+      }
 
-    // Inserir/atualizar registros onde status não é null. A chave única agora
-    // inclui `periodo` (ver migrate-add-periodo-presenca.js) — o mesmo aluno
-    // pode ter uma linha pro turno do dia e outra pro ensaio da noite, sem
-    // uma sobrescrever a outra.
-    let afetados = chamadasParaDeletar.length;
-    if (chamadasParaInserir.length > 0) {
-      const sql = `
+      // Inserir/atualizar registros onde status não é null. A chave única agora
+      // inclui `periodo` (ver migrate-add-periodo-presenca.js) — o mesmo aluno
+      // pode ter uma linha pro turno do dia e outra pro ensaio da noite, sem
+      // uma sobrescrever a outra.
+      let afetados = chamadasParaDeletar.length;
+      if (chamadasParaInserir.length > 0) {
+        const sql = `
         INSERT INTO presenca (aluno_id, data, status, id_instituicao, observacao, periodo)
         VALUES ?
         ON DUPLICATE KEY UPDATE
           status = VALUES(status),
           observacao = VALUES(observacao)
       `;
-      const values = chamadasParaInserir.map(c => [c.aluno_id, data, c.status, req.id_instituicao, c.observacao || null, periodo]);
+        const values = chamadasParaInserir.map((c) => [
+          c.aluno_id,
+          data,
+          c.status,
+          req.id_instituicao,
+          c.observacao || null,
+          periodo,
+        ]);
 
-      const [result] = await connection.query(sql, [values]);
-      afetados += result.affectedRows;
+        const [result] = await connection.query(sql, [values]);
+        afetados += result.affectedRows;
+      }
+
+      // Registrar evento na tabela de conexões/auditoria
+      await logAuditEvent(
+        'SALVAR_CHAMADA_LOTE',
+        `Data: ${data}, Alunos: ${chamadas.length}, Afetados: ${afetados}`,
+        req.id_instituicao,
+        connection,
+      );
+
+      await connection.commit();
+
+      res.status(201).json({
+        message: 'Presenças processadas com sucesso!',
+        detalhes: { total: chamadas.length, registros_afetados: afetados },
+      });
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
     }
-
-    // Registrar evento na tabela de conexões/auditoria
-    await logAuditEvent('SALVAR_CHAMADA_LOTE', `Data: ${data}, Alunos: ${chamadas.length}, Afetados: ${afetados}`, req.id_instituicao, connection);
-
-    await connection.commit();
-
-    res.status(201).json({
-      message: 'Presenças processadas com sucesso!',
-      detalhes: { total: chamadas.length, registros_afetados: afetados }
-    });
-  } catch (err) {
-    await connection.rollback();
-    throw err;
-  } finally {
-    connection.release();
-  }
-}));
+  }),
+);
 
 // Registra quando um aluno precisou ser adicionado manualmente (via busca) na
 // chamada, por não ter aparecido na lista automática (/api/alunos/por-dia) do
@@ -171,93 +196,120 @@ router.post('/', exigirRecurso('/', 'editar'), validate('presenca'), asyncHandle
 // além do log de auditoria + notificação de sempre. Chamado pelo frontend
 // assim que o professor seleciona o aluno na busca (ver addManualStudent em
 // AttendanceList.jsx), independente de ele marcar presença.
-router.post('/adicao-manual', exigirRecurso('/', 'criar'), asyncHandler(async (req, res) => {
-  const { aluno_id, data, turno, transporte } = req.body;
+router.post(
+  '/adicao-manual',
+  exigirRecurso('/', 'criar'),
+  asyncHandler(async (req, res) => {
+    const { aluno_id, data, turno, transporte } = req.body;
 
-  if (!aluno_id || !data || !turno) {
-    return res.status(400).json({ error: 'aluno_id, data e turno são obrigatórios.' });
-  }
+    if (!aluno_id || !data || !turno) {
+      return res.status(400).json({ error: 'aluno_id, data e turno são obrigatórios.' });
+    }
 
-  const [[aluno]] = await pool.query(
-    'SELECT nome, transporte FROM alunos WHERE id = ? AND id_instituicao = ?',
-    [aluno_id, req.id_instituicao]
-  );
-  if (!aluno) return res.status(404).json({ error: 'Aluno não encontrado.' });
+    const [[aluno]] = await pool.query(
+      'SELECT nome, transporte FROM alunos WHERE id = ? AND id_instituicao = ?',
+      [aluno_id, req.id_instituicao],
+    );
+    if (!aluno) return res.status(404).json({ error: 'Aluno não encontrado.' });
 
-  const norm = (s) => String(s || '').toLowerCase().trim();
-  const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-  const diaDaSemana = dias[new Date(`${data}T12:00:00`).getDay()];
+    const norm = (s) =>
+      String(s || '')
+        .toLowerCase()
+        .trim();
+    const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+    const diaDaSemana = dias[new Date(`${data}T12:00:00`).getDay()];
 
-  // Turno: existe ALGUMA matrícula ativa dele pra esse dia da semana com
-  // turno igual ao selecionado na Chamada? (turno vem da MATRÍCULA, não do
-  // atributo fixo `alunos.turno` — um aluno pode ter mais de uma).
-  const [matriculasDoDia] = await pool.query(
-    `SELECT turno FROM matricula
+    // Turno: existe ALGUMA matrícula ativa dele pra esse dia da semana com
+    // turno igual ao selecionado na Chamada? (turno vem da MATRÍCULA, não do
+    // atributo fixo `alunos.turno` — um aluno pode ter mais de uma).
+    const [matriculasDoDia] = await pool.query(
+      `SELECT turno FROM matricula
      WHERE idaluno = ? AND id_instituicao = ? AND status = 'matriculado' AND data_fim IS NULL
        AND TRIM(dia_semana) = ? AND data_inicio <= ?`,
-    [aluno_id, req.id_instituicao, diaDaSemana, data]
-  );
-  const turnoOk = matriculasDoDia.some(m => norm(m.turno) === norm(turno));
+      [aluno_id, req.id_instituicao, diaDaSemana, data],
+    );
+    const turnoOk = matriculasDoDia.some((m) => norm(m.turno) === norm(turno));
 
-  // Transporte: só é um problema se havia de fato um filtro de transporte
-  // selecionado na tela (mesmo fallback "Sem transporte definido" usado em
-  // AttendanceList.jsx pra aluno sem transporte cadastrado).
-  const alunoTransporte = (aluno.transporte && aluno.transporte.trim()) ? aluno.transporte : 'Sem transporte definido';
-  const transporteOk = !transporte || !transporte.trim() || norm(alunoTransporte) === norm(transporte);
+    // Transporte: só é um problema se havia de fato um filtro de transporte
+    // selecionado na tela (mesmo fallback "Sem transporte definido" usado em
+    // AttendanceList.jsx pra aluno sem transporte cadastrado).
+    const alunoTransporte =
+      aluno.transporte && aluno.transporte.trim() ? aluno.transporte : 'Sem transporte definido';
+    const transporteOk =
+      !transporte || !transporte.trim() || norm(alunoTransporte) === norm(transporte);
 
-  const motivoProvavel = !turnoOk && !transporteOk ? 'ambos'
-    : !turnoOk ? 'turno'
-    : !transporteOk ? 'transporte'
-    : 'indefinido';
+    const motivoProvavel =
+      !turnoOk && !transporteOk
+        ? 'ambos'
+        : !turnoOk
+          ? 'turno'
+          : !transporteOk
+            ? 'transporte'
+            : 'indefinido';
 
-  const motivoTexto = {
-    turno: `o turno cadastrado na matrícula não bate com "${turno}"`,
-    transporte: `o transporte cadastrado ("${alunoTransporte}") não bate com o filtro selecionado ("${transporte}")`,
-    ambos: `nem o turno da matrícula nem o transporte cadastrado batem com o que estava selecionado (turno "${turno}", transporte "${transporte}")`,
-    indefinido: 'turno e transporte batem — motivo não identificado, vale conferir o cadastro mesmo assim'
-  }[motivoProvavel];
+    const motivoTexto = {
+      turno: `o turno cadastrado na matrícula não bate com "${turno}"`,
+      transporte: `o transporte cadastrado ("${alunoTransporte}") não bate com o filtro selecionado ("${transporte}")`,
+      ambos: `nem o turno da matrícula nem o transporte cadastrado batem com o que estava selecionado (turno "${turno}", transporte "${transporte}")`,
+      indefinido:
+        'turno e transporte batem — motivo não identificado, vale conferir o cadastro mesmo assim',
+    }[motivoProvavel];
 
-  await pool.query(
-    `INSERT INTO adicoes_manuais_chamada
+    await pool.query(
+      `INSERT INTO adicoes_manuais_chamada
        (id_instituicao, aluno_id, data, turno_selecionado, transporte_selecionado, aluno_transporte, motivo_provavel)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [req.id_instituicao, aluno_id, data, turno, transporte || null, alunoTransporte, motivoProvavel]
-  );
+      [
+        req.id_instituicao,
+        aluno_id,
+        data,
+        turno,
+        transporte || null,
+        alunoTransporte,
+        motivoProvavel,
+      ],
+    );
 
-  await logAuditEvent(
-    'ALUNO_ADICIONADO_MANUALMENTE_CHAMADA',
-    `Aluno ID: ${aluno_id} (${aluno.nome}) adicionado manualmente na chamada de ${data} (turno: ${turno}, transporte: ${transporte || '-'}) — não apareceu na lista automática. Motivo provável: ${motivoTexto}.`,
-    req.id_instituicao
-  );
+    await logAuditEvent(
+      'ALUNO_ADICIONADO_MANUALMENTE_CHAMADA',
+      `Aluno ID: ${aluno_id} (${aluno.nome}) adicionado manualmente na chamada de ${data} (turno: ${turno}, transporte: ${transporte || '-'}) — não apareceu na lista automática. Motivo provável: ${motivoTexto}.`,
+      req.id_instituicao,
+    );
 
-  await criarNotificacao({
-    tipo: 'sistema',
-    titulo: 'Aluno adicionado manualmente à chamada',
-    mensagem: `${aluno.nome} não apareceu automaticamente na lista de chamada de ${data} e precisou ser adicionado via busca — ${motivoTexto}.`,
-    id_instituicao: req.id_instituicao,
-    id_aluno: aluno_id
-  });
+    await criarNotificacao({
+      tipo: 'sistema',
+      titulo: 'Aluno adicionado manualmente à chamada',
+      mensagem: `${aluno.nome} não apareceu automaticamente na lista de chamada de ${data} e precisou ser adicionado via busca — ${motivoTexto}.`,
+      id_instituicao: req.id_instituicao,
+      id_aluno: aluno_id,
+    });
 
-  res.status(201).json({ success: true });
-}));
+    res.status(201).json({ success: true });
+  }),
+);
 
 // Relatório "Alunos adicionados manualmente" — lista pra um mês (?mes=YYYY-MM,
 // padrão o mês atual), com o motivo provável (turno/transporte/ambos/
 // indefinido) de cada caso. Serve pra limpar cadastro errado em lote em vez
 // de depender de alguém lembrar de cada notificação avulsa.
-router.get('/adicoes-manuais', asyncHandler(async (req, res) => {
-  const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '') ? req.query.mes : hojeBrasil().slice(0, 7);
-  const [rows] = await pool.query(
-    `SELECT am.id, am.aluno_id, a.nome AS aluno_nome, am.data, am.turno_selecionado,
+router.get(
+  '/adicoes-manuais',
+  asyncHandler(async (req, res) => {
+    const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '')
+      ? req.query.mes
+      : hojeBrasil().slice(0, 7);
+    const [rows] = await pool.query(
+      `SELECT am.id, am.aluno_id, a.nome AS aluno_nome, am.data, am.turno_selecionado,
        am.transporte_selecionado, am.aluno_transporte, am.motivo_provavel, am.criado_em
      FROM adicoes_manuais_chamada am
      JOIN alunos a ON a.id = am.aluno_id
      WHERE am.id_instituicao = ? AND DATE_FORMAT(am.data, '%Y-%m') = ?
      ORDER BY am.data DESC, a.nome ASC`,
-    [req.id_instituicao, mes]
-  );
-  res.json({ mes, adicoes: rows });
-}));
+      [req.id_instituicao, mes],
+    );
+    res.json({ mes, adicoes: rows });
+  }),
+);
 
 // Finalizar chamada: para a data+turno informados, registra 'ausente' para todo
 // aluno esperado (matriculado ativo, com aula nesse dia da semana, DAQUELE
@@ -281,7 +333,7 @@ router.get('/adicoes-manuais', asyncHandler(async (req, res) => {
 async function finalizarChamadaTurno(inst, data, turno) {
   const [diaSemAula] = await pool.query(
     `SELECT id, motivo FROM dias_sem_aula WHERE data = ? AND id_instituicao = ?`,
-    [data, inst]
+    [data, inst],
   );
   if (diaSemAula.length > 0) {
     return { diaSemAula: true, motivo: diaSemAula[0].motivo || 'Dia sem aula' };
@@ -308,17 +360,26 @@ async function finalizarChamadaTurno(inst, data, turno) {
        AND a.id_instituicao = ?
        AND a.status = 'ativo'
        AND LOWER(TRIM(m.turno)) = LOWER(TRIM(?))`,
-    [diaDaSemana, data, inst, turno]
+    [diaDaSemana, data, inst, turno],
   );
 
   // Período correspondente ao turno desta chamada (ver migrate-add-periodo-
   // presenca.js) — "finalizar" só deve considerar "já tem registro" o
   // registro DESSE período; um aluno já presente de manhã não pode contar
   // como "já registrado" pra fins de finalizar a chamada da noite.
-  const periodo = String(turno || '').toLowerCase().includes('manh') ? 'manha'
-    : String(turno || '').toLowerCase().includes('tard') ? 'tarde'
-    : String(turno || '').toLowerCase().includes('noit') ? 'noite'
-    : null;
+  const periodo = String(turno || '')
+    .toLowerCase()
+    .includes('manh')
+    ? 'manha'
+    : String(turno || '')
+          .toLowerCase()
+          .includes('tard')
+      ? 'tarde'
+      : String(turno || '')
+            .toLowerCase()
+            .includes('noit')
+        ? 'noite'
+        : null;
 
   // Buscar alunos que já têm registro na data, NESSE período. Ver
   // condicaoPeriodo() no topo do arquivo — pra "manha"/"tarde" também conta
@@ -329,13 +390,13 @@ async function finalizarChamadaTurno(inst, data, turno) {
   const { sql: condPeriodo, params: paramsPeriodo } = condicaoPeriodo(periodo);
   const [comRegistro] = await pool.query(
     `SELECT DISTINCT aluno_id FROM presenca WHERE data = ? AND id_instituicao = ? AND ${condPeriodo}`,
-    [data, inst, ...paramsPeriodo]
+    [data, inst, ...paramsPeriodo],
   );
 
-  const idsComRegistro = new Set(comRegistro.map(r => r.aluno_id));
+  const idsComRegistro = new Set(comRegistro.map((r) => r.aluno_id));
   const ausentesParaInserir = esperados
-    .filter(a => !idsComRegistro.has(a.id))
-    .map(a => [a.id, data, 'ausente', null, inst, periodo]);
+    .filter((a) => !idsComRegistro.has(a.id))
+    .map((a) => [a.id, data, 'ausente', null, inst, periodo]);
 
   // Inserir ausências. IGNORE é proposital: se duas pessoas clicarem em
   // "Finalizar Chamada" quase ao mesmo tempo, as duas leem o mesmo retrato de
@@ -350,7 +411,7 @@ async function finalizarChamadaTurno(inst, data, turno) {
   if (ausentesParaInserir.length > 0) {
     const [result] = await pool.query(
       `INSERT IGNORE INTO presenca (aluno_id, data, status, observacao, id_instituicao, periodo) VALUES ?`,
-      [ausentesParaInserir]
+      [ausentesParaInserir],
     );
     ausentesRegistrados = result.affectedRows;
   }
@@ -358,25 +419,32 @@ async function finalizarChamadaTurno(inst, data, turno) {
   return { ausentesRegistrados };
 }
 
-router.post('/finalizar', exigirRecurso('/', 'editar'), asyncHandler(async (req, res) => {
-  const { data, turno } = req.body;
-  if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
-  if (!turno) return res.status(400).json({ error: 'Turno é obrigatório.' });
+router.post(
+  '/finalizar',
+  exigirRecurso('/', 'editar'),
+  asyncHandler(async (req, res) => {
+    const { data, turno } = req.body;
+    if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
+    if (!turno) return res.status(400).json({ error: 'Turno é obrigatório.' });
 
-  const resultado = await finalizarChamadaTurno(req.id_instituicao, data, turno);
-  if (resultado.diaSemAula) {
-    return res.status(400).json({
-      error: 'Não é possível finalizar chamada neste dia',
-      motivo: resultado.motivo,
-      isDiaSemAula: true
+    const resultado = await finalizarChamadaTurno(req.id_instituicao, data, turno);
+    if (resultado.diaSemAula) {
+      return res.status(400).json({
+        error: 'Não é possível finalizar chamada neste dia',
+        motivo: resultado.motivo,
+        isDiaSemAula: true,
+      });
+    }
+
+    res.json({
+      message:
+        resultado.ausentesRegistrados > 0
+          ? 'Chamada finalizada com sucesso'
+          : 'Chamada já estava finalizada',
+      ausentes_registrados: resultado.ausentesRegistrados,
     });
-  }
-
-  res.json({
-    message: resultado.ausentesRegistrados > 0 ? 'Chamada finalizada com sucesso' : 'Chamada já estava finalizada',
-    ausentes_registrados: resultado.ausentesRegistrados
-  });
-}));
+  }),
+);
 
 // Finalizar TODOS os turnos pendentes de um dia, de uma vez (botão "Finalizar"
 // da lista de pendências do Painel do Gestor — ver GET /pendencias-mes) — em
@@ -385,33 +453,40 @@ router.post('/finalizar', exigirRecurso('/', 'editar'), asyncHandler(async (req,
 // da Chamada); um turno sem ninguém esperado naquele dia simplesmente não
 // insere nada (ver finalizarChamadaTurno), não é erro.
 const TURNOS_CANONICOS = ['Manhã', 'Tarde', 'Noite'];
-router.post('/finalizar-dia', exigirRecurso('/relatorio-diario', 'editar'), asyncHandler(async (req, res) => {
-  const { data } = req.body;
-  if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
+router.post(
+  '/finalizar-dia',
+  exigirRecurso('/relatorio-diario', 'editar'),
+  asyncHandler(async (req, res) => {
+    const { data } = req.body;
+    if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
 
-  const porTurno = [];
-  let totalAusentesRegistrados = 0;
-  for (const turno of TURNOS_CANONICOS) {
-    const resultado = await finalizarChamadaTurno(req.id_instituicao, data, turno);
-    if (resultado.diaSemAula) {
-      return res.status(400).json({
-        error: 'Não é possível finalizar chamada neste dia',
-        motivo: resultado.motivo,
-        isDiaSemAula: true
-      });
+    const porTurno = [];
+    let totalAusentesRegistrados = 0;
+    for (const turno of TURNOS_CANONICOS) {
+      const resultado = await finalizarChamadaTurno(req.id_instituicao, data, turno);
+      if (resultado.diaSemAula) {
+        return res.status(400).json({
+          error: 'Não é possível finalizar chamada neste dia',
+          motivo: resultado.motivo,
+          isDiaSemAula: true,
+        });
+      }
+      if (resultado.ausentesRegistrados > 0) {
+        totalAusentesRegistrados += resultado.ausentesRegistrados;
+        porTurno.push({ turno, ausentes_registrados: resultado.ausentesRegistrados });
+      }
     }
-    if (resultado.ausentesRegistrados > 0) {
-      totalAusentesRegistrados += resultado.ausentesRegistrados;
-      porTurno.push({ turno, ausentes_registrados: resultado.ausentesRegistrados });
-    }
-  }
 
-  res.json({
-    message: totalAusentesRegistrados > 0 ? 'Chamada do dia finalizada com sucesso' : 'Chamada já estava finalizada',
-    ausentes_registrados: totalAusentesRegistrados,
-    por_turno: porTurno
-  });
-}));
+    res.json({
+      message:
+        totalAusentesRegistrados > 0
+          ? 'Chamada do dia finalizada com sucesso'
+          : 'Chamada já estava finalizada',
+      ausentes_registrados: totalAusentesRegistrados,
+      por_turno: porTurno,
+    });
+  }),
+);
 
 // Lista, pra um mês (?mes=YYYY-MM, padrão o mês atual), quais DIAS já
 // passaram e ainda têm turno com aluno esperado sem nenhum registro de
@@ -419,29 +494,33 @@ router.post('/finalizar-dia', exigirRecurso('/relatorio-diario', 'editar'), asyn
 // na Chamada. Só considera até hoje (dia futuro não tem "pendência", só
 // ainda não aconteceu) e ignora dias marcados como "sem aula". Mesma condição
 // de período (NULL só cobre manhã/tarde) do resto do sistema.
-router.get('/pendencias-mes', asyncHandler(async (req, res) => {
-  const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '') ? req.query.mes : hojeBrasil().slice(0, 7);
-  const inst = req.id_instituicao;
-  const hoje = hojeBrasil();
-  const primeiroDiaMes = `${mes}-01`;
-  if (primeiroDiaMes > hoje) return res.json({ mes, dias: [] });
-  const [ano, mesNum] = mes.split('-').map(Number);
-  const ultimoDiaCalendario = `${mes}-${String(new Date(ano, mesNum, 0).getDate()).padStart(2, '0')}`;
-  const dataFim = ultimoDiaCalendario > hoje ? hoje : ultimoDiaCalendario;
+router.get(
+  '/pendencias-mes',
+  asyncHandler(async (req, res) => {
+    const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '')
+      ? req.query.mes
+      : hojeBrasil().slice(0, 7);
+    const inst = req.id_instituicao;
+    const hoje = hojeBrasil();
+    const primeiroDiaMes = `${mes}-01`;
+    if (primeiroDiaMes > hoje) return res.json({ mes, dias: [] });
+    const [ano, mesNum] = mes.split('-').map(Number);
+    const ultimoDiaCalendario = `${mes}-${String(new Date(ano, mesNum, 0).getDate()).padStart(2, '0')}`;
+    const dataFim = ultimoDiaCalendario > hoje ? hoje : ultimoDiaCalendario;
 
-  const PERIODO_LABEL_SQL = `CASE
+    const PERIODO_LABEL_SQL = `CASE
     WHEN LOWER(m.turno) LIKE '%manh%' THEN 'Manhã'
     WHEN LOWER(m.turno) LIKE '%tard%' THEN 'Tarde'
     WHEN LOWER(m.turno) LIKE '%noit%' THEN 'Noite'
   END`;
-  const PERIODO_SQL = `CASE
+    const PERIODO_SQL = `CASE
     WHEN LOWER(m.turno) LIKE '%manh%' THEN 'manha'
     WHEN LOWER(m.turno) LIKE '%tard%' THEN 'tarde'
     WHEN LOWER(m.turno) LIKE '%noit%' THEN 'noite'
   END`;
 
-  const [rows] = await pool.query(
-    `WITH RECURSIVE datas AS (
+    const [rows] = await pool.query(
+      `WITH RECURSIVE datas AS (
        SELECT ? as data
        UNION ALL
        SELECT DATE_ADD(data, INTERVAL 1 DAY) FROM datas WHERE data < ?
@@ -470,20 +549,21 @@ router.get('/pendencias-mes', asyncHandler(async (req, res) => {
        )
      GROUP BY e.data, e.turno
      ORDER BY e.data DESC, e.turno`,
-    [primeiroDiaMes, dataFim, inst, inst, inst]
-  );
+      [primeiroDiaMes, dataFim, inst, inst, inst],
+    );
 
-  const porDia = new Map();
-  rows.forEach(r => {
-    const dataStr = r.data instanceof Date ? r.data.toISOString().split('T')[0] : r.data;
-    if (!porDia.has(dataStr)) porDia.set(dataStr, []);
-    porDia.get(dataStr).push({ turno: r.turno, pendentes: r.pendentes });
-  });
-  const dias = [...porDia.entries()]
-    .map(([data, turnos]) => ({ data, turnos }))
-    .sort((a, b) => b.data.localeCompare(a.data));
+    const porDia = new Map();
+    rows.forEach((r) => {
+      const dataStr = r.data instanceof Date ? r.data.toISOString().split('T')[0] : r.data;
+      if (!porDia.has(dataStr)) porDia.set(dataStr, []);
+      porDia.get(dataStr).push({ turno: r.turno, pendentes: r.pendentes });
+    });
+    const dias = [...porDia.entries()]
+      .map(([data, turnos]) => ({ data, turnos }))
+      .sort((a, b) => b.data.localeCompare(a.data));
 
-  res.json({ mes, dias });
-}));
+    res.json({ mes, dias });
+  }),
+);
 
 module.exports = router;

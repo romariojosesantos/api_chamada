@@ -21,9 +21,15 @@ const router = express.Router();
 const pool = require('./db');
 const { authMiddleware, masterMiddleware } = require('./auth');
 const { logAuditEvent } = require('./audit');
-const { TELAS, TELAS_VALIDAS, carregarPerfisEditaveis, RECURSOS, RECURSOS_VALIDOS } = require('./telas');
+const {
+  TELAS,
+  TELAS_VALIDAS,
+  carregarPerfisEditaveis,
+  RECURSOS,
+  RECURSOS_VALIDOS,
+} = require('./telas');
 
-const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 router.use(authMiddleware, masterMiddleware);
 
@@ -51,92 +57,121 @@ router.get('/recursos', (req, res) => {
   res.json(RECURSOS);
 });
 
-router.get('/:perfil', asyncHandler(async (req, res) => {
-  const { perfil } = req.params;
-  const idInstituicao = await obterIdInstituicao(req, res);
-  if (idInstituicao === null) return;
-  const perfisEditaveis = await carregarPerfisEditaveis(idInstituicao);
-  if (!perfisEditaveis.includes(perfil)) {
-    return res.status(400).json({ error: 'Perfil inválido. Use: ' + perfisEditaveis.join(', ') });
-  }
-  const [telasRows] = await pool.query('SELECT tela FROM permissoes_perfil WHERE id_instituicao = ? AND perfil = ?', [idInstituicao, perfil]);
-  const [bloqueiosRows] = await pool.query('SELECT tela, recurso FROM permissoes_perfil_recurso WHERE id_instituicao = ? AND perfil = ?', [idInstituicao, perfil]);
-
-  const bloqueadosPorTela = {};
-  for (const b of bloqueiosRows) {
-    if (!bloqueadosPorTela[b.tela]) bloqueadosPorTela[b.tela] = [];
-    bloqueadosPorTela[b.tela].push(b.recurso);
-  }
-
-  // Default = tudo liberado; só tira o que estiver explicitamente bloqueado.
-  const recursos = {};
-  for (const tela of telasRows.map(r => r.tela)) {
-    const bloqueados = bloqueadosPorTela[tela] || [];
-    recursos[tela] = RECURSOS_VALIDOS.filter(r => !bloqueados.includes(r));
-  }
-
-  res.json({ telas: telasRows.map(r => r.tela), recursos });
-}));
-
-router.put('/:perfil', asyncHandler(async (req, res) => {
-  const { perfil } = req.params;
-  const idInstituicao = await obterIdInstituicao(req, res);
-  if (idInstituicao === null) return;
-  const perfisEditaveis = await carregarPerfisEditaveis(idInstituicao);
-  if (!perfisEditaveis.includes(perfil)) {
-    return res.status(400).json({ error: 'Perfil inválido. Use: ' + perfisEditaveis.join(', ') });
-  }
-  const telas = Array.isArray(req.body.telas) ? req.body.telas : [];
-  const telasInvalidas = telas.filter(t => !TELAS_VALIDAS.includes(t));
-  if (telasInvalidas.length > 0) {
-    return res.status(400).json({ error: 'Tela(s) inválida(s): ' + telasInvalidas.join(', ') });
-  }
-
-  // `recursos` que chega do front é a lista de ações LIBERADAS marcadas na tela
-  // (default: todas as 5, se o master não mexeu). Guarda-se o inverso — só o
-  // que ficou de fora (bloqueado) — pra tela nunca antes tocada continuar 100%
-  // liberada (ver comentário no topo do arquivo).
-  const recursosPorTela = req.body.recursos && typeof req.body.recursos === 'object' ? req.body.recursos : {};
-  const paresBloqueio = [];
-  for (const tela of telas) {
-    const liberados = Array.isArray(recursosPorTela[tela]) ? recursosPorTela[tela] : RECURSOS_VALIDOS;
-    const recursosInvalidos = liberados.filter(r => !RECURSOS_VALIDOS.includes(r));
-    if (recursosInvalidos.length > 0) {
-      return res.status(400).json({ error: `Recurso(s) inválido(s) em "${tela}": ${recursosInvalidos.join(', ')}` });
+router.get(
+  '/:perfil',
+  asyncHandler(async (req, res) => {
+    const { perfil } = req.params;
+    const idInstituicao = await obterIdInstituicao(req, res);
+    if (idInstituicao === null) return;
+    const perfisEditaveis = await carregarPerfisEditaveis(idInstituicao);
+    if (!perfisEditaveis.includes(perfil)) {
+      return res.status(400).json({ error: 'Perfil inválido. Use: ' + perfisEditaveis.join(', ') });
     }
-    const bloqueados = RECURSOS_VALIDOS.filter(r => !liberados.includes(r));
-    for (const recurso of bloqueados) paresBloqueio.push([idInstituicao, perfil, tela, recurso]);
-  }
-
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-    await connection.query('DELETE FROM permissoes_perfil WHERE id_instituicao = ? AND perfil = ?', [idInstituicao, perfil]);
-    if (telas.length > 0) {
-      await connection.query('INSERT INTO permissoes_perfil (id_instituicao, perfil, tela) VALUES ?', [telas.map(t => [idInstituicao, perfil, t])]);
-    }
-    await connection.query('DELETE FROM permissoes_perfil_recurso WHERE id_instituicao = ? AND perfil = ?', [idInstituicao, perfil]);
-    if (paresBloqueio.length > 0) {
-      await connection.query('INSERT INTO permissoes_perfil_recurso (id_instituicao, perfil, tela, recurso) VALUES ?', [paresBloqueio]);
-    }
-    // Esta rota é montada ANTES do middleware que popula req.id_instituicao
-    // (ver _server.js), por isso usa idInstituicao lido diretamente do header
-    // (ver obterIdInstituicao acima).
-    await logAuditEvent(
-      'PERMISSOES_PERFIL_ATUALIZADAS',
-      `Perfil "${perfil}": ${telas.length} tela(s) permitida(s): ${telas.join(', ') || '(nenhuma)'}; ${paresBloqueio.length} ação(ões) bloqueada(s)`,
-      idInstituicao,
-      connection
+    const [telasRows] = await pool.query(
+      'SELECT tela FROM permissoes_perfil WHERE id_instituicao = ? AND perfil = ?',
+      [idInstituicao, perfil],
     );
-    await connection.commit();
-  } catch (err) {
-    await connection.rollback();
-    throw err;
-  } finally {
-    connection.release();
-  }
+    const [bloqueiosRows] = await pool.query(
+      'SELECT tela, recurso FROM permissoes_perfil_recurso WHERE id_instituicao = ? AND perfil = ?',
+      [idInstituicao, perfil],
+    );
 
-  res.json({ perfil, telas, recursos: recursosPorTela });
-}));
+    const bloqueadosPorTela = {};
+    for (const b of bloqueiosRows) {
+      if (!bloqueadosPorTela[b.tela]) bloqueadosPorTela[b.tela] = [];
+      bloqueadosPorTela[b.tela].push(b.recurso);
+    }
+
+    // Default = tudo liberado; só tira o que estiver explicitamente bloqueado.
+    const recursos = {};
+    for (const tela of telasRows.map((r) => r.tela)) {
+      const bloqueados = bloqueadosPorTela[tela] || [];
+      recursos[tela] = RECURSOS_VALIDOS.filter((r) => !bloqueados.includes(r));
+    }
+
+    res.json({ telas: telasRows.map((r) => r.tela), recursos });
+  }),
+);
+
+router.put(
+  '/:perfil',
+  asyncHandler(async (req, res) => {
+    const { perfil } = req.params;
+    const idInstituicao = await obterIdInstituicao(req, res);
+    if (idInstituicao === null) return;
+    const perfisEditaveis = await carregarPerfisEditaveis(idInstituicao);
+    if (!perfisEditaveis.includes(perfil)) {
+      return res.status(400).json({ error: 'Perfil inválido. Use: ' + perfisEditaveis.join(', ') });
+    }
+    const telas = Array.isArray(req.body.telas) ? req.body.telas : [];
+    const telasInvalidas = telas.filter((t) => !TELAS_VALIDAS.includes(t));
+    if (telasInvalidas.length > 0) {
+      return res.status(400).json({ error: 'Tela(s) inválida(s): ' + telasInvalidas.join(', ') });
+    }
+
+    // `recursos` que chega do front é a lista de ações LIBERADAS marcadas na tela
+    // (default: todas as 5, se o master não mexeu). Guarda-se o inverso — só o
+    // que ficou de fora (bloqueado) — pra tela nunca antes tocada continuar 100%
+    // liberada (ver comentário no topo do arquivo).
+    const recursosPorTela =
+      req.body.recursos && typeof req.body.recursos === 'object' ? req.body.recursos : {};
+    const paresBloqueio = [];
+    for (const tela of telas) {
+      const liberados = Array.isArray(recursosPorTela[tela])
+        ? recursosPorTela[tela]
+        : RECURSOS_VALIDOS;
+      const recursosInvalidos = liberados.filter((r) => !RECURSOS_VALIDOS.includes(r));
+      if (recursosInvalidos.length > 0) {
+        return res
+          .status(400)
+          .json({ error: `Recurso(s) inválido(s) em "${tela}": ${recursosInvalidos.join(', ')}` });
+      }
+      const bloqueados = RECURSOS_VALIDOS.filter((r) => !liberados.includes(r));
+      for (const recurso of bloqueados) paresBloqueio.push([idInstituicao, perfil, tela, recurso]);
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.query(
+        'DELETE FROM permissoes_perfil WHERE id_instituicao = ? AND perfil = ?',
+        [idInstituicao, perfil],
+      );
+      if (telas.length > 0) {
+        await connection.query(
+          'INSERT INTO permissoes_perfil (id_instituicao, perfil, tela) VALUES ?',
+          [telas.map((t) => [idInstituicao, perfil, t])],
+        );
+      }
+      await connection.query(
+        'DELETE FROM permissoes_perfil_recurso WHERE id_instituicao = ? AND perfil = ?',
+        [idInstituicao, perfil],
+      );
+      if (paresBloqueio.length > 0) {
+        await connection.query(
+          'INSERT INTO permissoes_perfil_recurso (id_instituicao, perfil, tela, recurso) VALUES ?',
+          [paresBloqueio],
+        );
+      }
+      // Esta rota é montada ANTES do middleware que popula req.id_instituicao
+      // (ver _server.js), por isso usa idInstituicao lido diretamente do header
+      // (ver obterIdInstituicao acima).
+      await logAuditEvent(
+        'PERMISSOES_PERFIL_ATUALIZADAS',
+        `Perfil "${perfil}": ${telas.length} tela(s) permitida(s): ${telas.join(', ') || '(nenhuma)'}; ${paresBloqueio.length} ação(ões) bloqueada(s)`,
+        idInstituicao,
+        connection,
+      );
+      await connection.commit();
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
+
+    res.json({ perfil, telas, recursos: recursosPorTela });
+  }),
+);
 
 module.exports = router;

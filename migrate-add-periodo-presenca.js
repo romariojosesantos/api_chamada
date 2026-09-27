@@ -30,7 +30,7 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.DB_PORT || 3306
+    port: process.env.DB_PORT || 3306,
   });
 
   try {
@@ -38,20 +38,26 @@ async function main() {
 
     const [colunas] = await db.query("SHOW COLUMNS FROM presenca LIKE 'periodo'");
     if (colunas.length === 0) {
-      await db.query("ALTER TABLE presenca ADD COLUMN periodo ENUM('manha','tarde','noite') NULL AFTER status");
+      await db.query(
+        "ALTER TABLE presenca ADD COLUMN periodo ENUM('manha','tarde','noite') NULL AFTER status",
+      );
       console.log('Coluna presenca.periodo criada.');
     } else {
       console.log('Coluna presenca.periodo já existia.');
     }
 
-    const [indices] = await db.query("SHOW INDEX FROM presenca WHERE Key_name = 'idx_aluno_inst_data_periodo'");
+    const [indices] = await db.query(
+      "SHOW INDEX FROM presenca WHERE Key_name = 'idx_aluno_inst_data_periodo'",
+    );
     if (indices.length === 0) {
       // Cria o índice novo ANTES de apagar o antigo: `idx_aluno_inst_data`
       // sustenta as FKs de aluno_id e id_instituicao (presenca_ibfk_1/2), e o
       // MySQL recusa apagar um índice enquanto for o único suporte de uma FK
       // — como o índice novo começa pelas mesmas colunas, ele assume esse
       // papel assim que existir, liberando o antigo pra ser removido.
-      await db.query('ALTER TABLE presenca ADD UNIQUE INDEX idx_aluno_inst_data_periodo (aluno_id, id_instituicao, data, periodo)');
+      await db.query(
+        'ALTER TABLE presenca ADD UNIQUE INDEX idx_aluno_inst_data_periodo (aluno_id, id_instituicao, data, periodo)',
+      );
       await db.query('ALTER TABLE presenca DROP INDEX idx_aluno_inst_data');
       console.log('Chave única atualizada pra incluir periodo.');
     } else {
@@ -73,7 +79,9 @@ async function main() {
           SELECT DISTINCT idaluno FROM matricula WHERE turno = 'Noite'
         )
     `);
-    console.log(`Grupo 1 (turno de dia, sem ambiguidade): ${g1.affectedRows} registro(s) preenchido(s).`);
+    console.log(
+      `Grupo 1 (turno de dia, sem ambiguidade): ${g1.affectedRows} registro(s) preenchido(s).`,
+    );
 
     // Grupo 2: só teve matrícula de turno Noite, nunca de dia — sem ambiguidade.
     const [g2] = await db.query(`
@@ -83,10 +91,16 @@ async function main() {
         AND p.aluno_id IN (SELECT DISTINCT idaluno FROM matricula WHERE turno = 'Noite')
         AND p.aluno_id NOT IN (SELECT DISTINCT idaluno FROM matricula WHERE turno IN ('Manhã', 'Tarde'))
     `);
-    console.log(`Grupo 2 (só noite, sem ambiguidade): ${g2.affectedRows} registro(s) preenchido(s).`);
+    console.log(
+      `Grupo 2 (só noite, sem ambiguidade): ${g2.affectedRows} registro(s) preenchido(s).`,
+    );
 
-    const [restantes] = await db.query('SELECT COUNT(*) as qtd FROM presenca WHERE periodo IS NULL');
-    console.log(`Restam ${restantes[0].qtd} registro(s) sem período (matrícula dupla dia+noite — ambíguo, deixado em branco de propósito).`);
+    const [restantes] = await db.query(
+      'SELECT COUNT(*) as qtd FROM presenca WHERE periodo IS NULL',
+    );
+    console.log(
+      `Restam ${restantes[0].qtd} registro(s) sem período (matrícula dupla dia+noite — ambíguo, deixado em branco de propósito).`,
+    );
 
     console.log('Migração concluída com sucesso.');
   } finally {
@@ -94,7 +108,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Erro na migração:', err);
   process.exit(1);
 });

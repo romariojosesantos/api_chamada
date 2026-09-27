@@ -30,7 +30,20 @@ const COR_DOMINGO = '#DC2626';
 const COR_FIM_DE_SEMANA_BG = '#F3F4F6';
 const COR_ZEBRA = '#FAFAF7';
 
-const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+const MESES = [
+  'Janeiro',
+  'Fevereiro',
+  'Março',
+  'Abril',
+  'Maio',
+  'Junho',
+  'Julho',
+  'Agosto',
+  'Setembro',
+  'Outubro',
+  'Novembro',
+  'Dezembro',
+];
 const DIAS_SEMANA = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 
 // Cor por tipo de marcação — vermelho pra dia sem aula/feriado (mesmo tom do
@@ -101,7 +114,11 @@ function formatarPeriodo(dataInicio, dataFim) {
 // legenda com uma linha por fim de semana. Feriados e recessos de verdade
 // (qualquer outro motivo) continuam tratados normalmente.
 function ehMarcacaoDeFimDeSemana(motivo) {
-  return String(motivo || '').trim().toLowerCase() === 'fim de semana';
+  return (
+    String(motivo || '')
+      .trim()
+      .toLowerCase() === 'fim de semana'
+  );
 }
 
 // Todas as datas "YYYY-MM-DD" entre início e fim (inclusive), em UTC explícito
@@ -157,7 +174,10 @@ const LARGURA_CONTEUDO = MARGEM_DIREITA - MARGEM_ESQUERDA;
 // `eventos` = linhas de agenda_eventos (tipo, titulo, area, data_inicio,
 // data_fim, nome_atividade), ambas já filtradas pro ano pedido.
 function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, eventos }) {
-  const doc = new PDFDocument({ size: 'A4', margins: { top: 40, bottom: 20, left: MARGEM_ESQUERDA, right: 40 } });
+  const doc = new PDFDocument({
+    size: 'A4',
+    margins: { top: 40, bottom: 20, left: MARGEM_ESQUERDA, right: 40 },
+  });
   doc.registerFont(F_REGULAR, path.join(FONT_DIR, 'Lato-Regular.ttf'));
   doc.registerFont(F_BOLD, path.join(FONT_DIR, 'Lato-Bold.ttf'));
   doc.registerFont(F_ITALIC, path.join(FONT_DIR, 'Lato-Italic.ttf'));
@@ -180,18 +200,40 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
     } catch (e) {
       // Sem logo não trava o relatório.
     }
-    doc.fillColor(COR_TEXTO).font(F_BOLD).fontSize(12).text('Instituto', MARGEM_ESQUERDA + 42, 38);
-    doc.fillColor(COR_AMBAR).font(F_ITALIC).fontSize(12).text('novas histórias', MARGEM_ESQUERDA + 42, 53);
+    doc
+      .fillColor(COR_TEXTO)
+      .font(F_BOLD)
+      .fontSize(12)
+      .text('Instituto', MARGEM_ESQUERDA + 42, 38);
+    doc
+      .fillColor(COR_AMBAR)
+      .font(F_ITALIC)
+      .fontSize(12)
+      .text('novas histórias', MARGEM_ESQUERDA + 42, 53);
 
-    doc.fillColor(COR_TEXTO_CLARO).font(F_REGULAR).fontSize(8)
+    doc
+      .fillColor(COR_TEXTO_CLARO)
+      .font(F_REGULAR)
+      .fontSize(8)
       .text(`Calendário Anual · ${ano}`, 0, 38, { align: 'right', width: MARGEM_DIREITA });
     doc.text(`Página ${numeroPagina}`, 0, 50, { align: 'right', width: MARGEM_DIREITA });
 
     const yRodape = 800;
-    doc.moveTo(MARGEM_ESQUERDA, yRodape).lineTo(MARGEM_DIREITA, yRodape).strokeColor(COR_AMBAR).lineWidth(1.5).stroke();
-    doc.fillColor(COR_TEXTO).font(F_BOLD).fontSize(9)
+    doc
+      .moveTo(MARGEM_ESQUERDA, yRodape)
+      .lineTo(MARGEM_DIREITA, yRodape)
+      .strokeColor(COR_AMBAR)
+      .lineWidth(1.5)
+      .stroke();
+    doc
+      .fillColor(COR_TEXTO)
+      .font(F_BOLD)
+      .fontSize(9)
       .text('institutonovashistorias.com.br', MARGEM_ESQUERDA, yRodape + 8);
-    doc.fillColor(COR_AMBAR).font(F_ITALIC).fontSize(9)
+    doc
+      .fillColor(COR_AMBAR)
+      .font(F_ITALIC)
+      .fontSize(9)
       .text('Nós confiamos em Deus', 0, yRodape + 8, { align: 'right', width: MARGEM_DIREITA });
   }
 
@@ -204,17 +246,25 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
 
   // --- Prepara os dados: tira "fim de semana" do meio (ver comentário da
   // função), monta o mapa dia -> eventos (pra grade) e a legenda agrupada. ---
-  const diasSemAulaReais = diasSemAula.filter(d => !ehMarcacaoDeFimDeSemana(d.motivo));
+  const diasSemAulaReais = diasSemAula.filter((d) => !ehMarcacaoDeFimDeSemana(d.motivo));
 
   const eventosPorDia = new Map();
   function registrarDia(dataStr, evento) {
     if (!eventosPorDia.has(dataStr)) eventosPorDia.set(dataStr, []);
     eventosPorDia.get(dataStr).push(evento);
   }
-  diasSemAulaReais.forEach(d => registrarDia(d.data, { origem: 'dia_sem_aula', titulo: d.motivo || 'Dia sem aula' }));
-  eventos.forEach(e => {
-    datasNoIntervalo(e.data_inicio, e.data_fim).forEach(dataStr => {
-      registrarDia(dataStr, { origem: 'agenda', tipo: e.tipo, titulo: e.titulo, area: e.area, nome_atividade: e.nome_atividade });
+  diasSemAulaReais.forEach((d) =>
+    registrarDia(d.data, { origem: 'dia_sem_aula', titulo: d.motivo || 'Dia sem aula' }),
+  );
+  eventos.forEach((e) => {
+    datasNoIntervalo(e.data_inicio, e.data_fim).forEach((dataStr) => {
+      registrarDia(dataStr, {
+        origem: 'agenda',
+        tipo: e.tipo,
+        titulo: e.titulo,
+        area: e.area,
+        nome_atividade: e.nome_atividade,
+      });
     });
   });
 
@@ -222,15 +272,21 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
   // + agenda) — usada tanto no resumo dentro de cada card do mês quanto na
   // legenda detalhada nas páginas seguintes, pra nunca divergir uma da outra.
   const linhasLegenda = [
-    ...agruparDiasConsecutivos(diasSemAulaReais.map(d => ({ data: d.data, motivo: d.motivo || 'Dia sem aula' })))
-      .map(g => ({ origem: 'dia_sem_aula', data_inicio: g.data_inicio, data_fim: g.data_fim, titulo: g.motivo })),
-    ...eventos.map(e => ({ ...e, origem: 'agenda' })),
+    ...agruparDiasConsecutivos(
+      diasSemAulaReais.map((d) => ({ data: d.data, motivo: d.motivo || 'Dia sem aula' })),
+    ).map((g) => ({
+      origem: 'dia_sem_aula',
+      data_inicio: g.data_inicio,
+      data_fim: g.data_fim,
+      titulo: g.motivo,
+    })),
+    ...eventos.map((e) => ({ ...e, origem: 'agenda' })),
   ].sort((a, b) => a.data_inicio.localeCompare(b.data_inicio));
 
   // Mesma lista, dividida por mês (mês de `data_inicio`) — pro resumo dentro
   // de cada card do ano-a-vista.
   const eventosPorMes = Array.from({ length: 12 }, () => []);
-  linhasLegenda.forEach(item => {
+  linhasLegenda.forEach((item) => {
     eventosPorMes[Number(item.data_inicio.split('-')[1]) - 1].push(item);
   });
 
@@ -256,13 +312,23 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
     const ALTURA_RESUMO = 26;
     doc.roundedRect(x, y, largura, altura, 3).fillAndStroke('#FFFFFF', COR_BORDA);
     doc.rect(x, y, largura, ALTURA_CABECALHO).fill(COR_AMBAR);
-    doc.fillColor('#FFFFFF').font(F_BOLD).fontSize(8.5)
-      .text(MESES[mes].toUpperCase(), x, y + 4, { width: largura, align: 'center', characterSpacing: 0.5 });
+    doc
+      .fillColor('#FFFFFF')
+      .font(F_BOLD)
+      .fontSize(8.5)
+      .text(MESES[mes].toUpperCase(), x, y + 4, {
+        width: largura,
+        align: 'center',
+        characterSpacing: 0.5,
+      });
 
     const yWeek = y + ALTURA_CABECALHO + 3;
     const larguraCel = largura / 7;
     DIAS_SEMANA.forEach((d, i) => {
-      doc.fillColor(i === 0 ? COR_DOMINGO : COR_TEXTO_CLARO).font(F_BOLD).fontSize(6.5)
+      doc
+        .fillColor(i === 0 ? COR_DOMINGO : COR_TEXTO_CLARO)
+        .font(F_BOLD)
+        .fontSize(6.5)
         .text(d, x + i * larguraCel, yWeek, { width: larguraCel, align: 'center' });
     });
 
@@ -292,13 +358,18 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
         const cor = corDoEvento(eventosDoDia[0]);
         doc.roundedRect(cx + 1, cy - 1, larguraCel - 2, alturaLinha - 2, 1.5).fill(cor.clara);
       } else if (ehFimDeSemana(diaSemana)) {
-        doc.roundedRect(cx + 1, cy - 1, larguraCel - 2, alturaLinha - 2, 1.5).fill(COR_FIM_DE_SEMANA_BG);
+        doc
+          .roundedRect(cx + 1, cy - 1, larguraCel - 2, alturaLinha - 2, 1.5)
+          .fill(COR_FIM_DE_SEMANA_BG);
       }
 
       // Negrito em vez de regular: traço mais grosso imprime muito mais
       // nítido num tamanho pequeno feito esse (a versão anterior usava peso
       // regular a 7pt e ficava fraca/borrada no papel).
-      doc.fillColor(diaSemana === 0 ? COR_DOMINGO : COR_TEXTO).font(F_BOLD).fontSize(7)
+      doc
+        .fillColor(diaSemana === 0 ? COR_DOMINGO : COR_TEXTO)
+        .font(F_BOLD)
+        .fontSize(7)
         .text(String(dia), cx, cy + 2, { width: larguraCel, align: 'center' });
 
       // Até 3 pontinhos coloridos (um por evento do dia) — sinaliza "tem mais
@@ -315,7 +386,12 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
 
     // --- Resumo do mês, na faixa reservada abaixo da grade ---
     if (eventosDoMes.length > 0) {
-      doc.moveTo(x + 4, yFimGrid + 2).lineTo(x + largura - 4, yFimGrid + 2).strokeColor(COR_BORDA).lineWidth(0.5).stroke();
+      doc
+        .moveTo(x + 4, yFimGrid + 2)
+        .lineTo(x + largura - 4, yFimGrid + 2)
+        .strokeColor(COR_BORDA)
+        .lineWidth(0.5)
+        .stroke();
 
       const ALTURA_LINHA_RESUMO = 7.4;
       const maxLinhas = Math.max(1, Math.floor((ALTURA_RESUMO - 4) / ALTURA_LINHA_RESUMO));
@@ -323,16 +399,29 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
       const visiveis = cabemTodos ? eventosDoMes : eventosDoMes.slice(0, maxLinhas - 1);
 
       let yLinha = yFimGrid + 5;
-      visiveis.forEach(item => {
+      visiveis.forEach((item) => {
         doc.circle(x + 6, yLinha + 2.6, 1.3).fill(corDoEvento(item).solida);
-        doc.fillColor(COR_TEXTO).font(F_REGULAR).fontSize(6)
-          .text(tituloResumo(item), x + 10, yLinha, { width: largura - 13, height: ALTURA_LINHA_RESUMO, ellipsis: true, lineBreak: false });
+        doc
+          .fillColor(COR_TEXTO)
+          .font(F_REGULAR)
+          .fontSize(6)
+          .text(tituloResumo(item), x + 10, yLinha, {
+            width: largura - 13,
+            height: ALTURA_LINHA_RESUMO,
+            ellipsis: true,
+            lineBreak: false,
+          });
         yLinha += ALTURA_LINHA_RESUMO;
       });
       if (!cabemTodos) {
         const restantes = eventosDoMes.length - visiveis.length;
-        doc.fillColor(COR_TEXTO_CLARO).font(F_ITALIC).fontSize(6)
-          .text(`+${restantes} evento${restantes > 1 ? 's' : ''}`, x + 10, yLinha, { width: largura - 13 });
+        doc
+          .fillColor(COR_TEXTO_CLARO)
+          .font(F_ITALIC)
+          .fontSize(6)
+          .text(`+${restantes} evento${restantes > 1 ? 's' : ''}`, x + 10, yLinha, {
+            width: largura - 13,
+          });
       }
     }
   }
@@ -340,14 +429,27 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
   // --- Página 1: o ano inteiro numa grade 4 colunas x 3 linhas ---
   desenharCabecalhoRodape();
   doc.y = 90;
-  doc.fillColor(COR_TEXTO).font(F_BOLD).fontSize(19)
-    .text(`CALENDÁRIO ${ano}`, MARGEM_ESQUERDA, doc.y, { align: 'center', width: LARGURA_CONTEUDO, characterSpacing: 0.5 });
+  doc
+    .fillColor(COR_TEXTO)
+    .font(F_BOLD)
+    .fontSize(19)
+    .text(`CALENDÁRIO ${ano}`, MARGEM_ESQUERDA, doc.y, {
+      align: 'center',
+      width: LARGURA_CONTEUDO,
+      characterSpacing: 0.5,
+    });
   doc.moveDown(0.15);
-  doc.fillColor(COR_TEXTO_CLARO).font(F_ITALIC).fontSize(9.5)
+  doc
+    .fillColor(COR_TEXTO_CLARO)
+    .font(F_ITALIC)
+    .fontSize(9.5)
     .text(instituicaoNome, MARGEM_ESQUERDA, doc.y, { align: 'center', width: LARGURA_CONTEUDO });
   doc.moveDown(0.6);
 
-  const COLS = 4, ROWS = 3, GAP_X = 10, GAP_Y = 12;
+  const COLS = 4,
+    ROWS = 3,
+    GAP_X = 10,
+    GAP_Y = 12;
   const Y_LEGENDA_CORES = 758;
   const yTopoGrade = doc.y + 4;
   const larguraMes = (LARGURA_CONTEUDO - (COLS - 1) * GAP_X) / COLS;
@@ -372,16 +474,32 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
   itensLegendaCores.forEach((item, i) => {
     const x = MARGEM_ESQUERDA + i * larguraItemLegenda;
     doc.circle(x + 5, Y_LEGENDA_CORES + 5, 3.5).fill(item.cor);
-    doc.fillColor(COR_TEXTO_CLARO).text(item.label, x + 12, Y_LEGENDA_CORES + 1, { width: larguraItemLegenda - 14, ellipsis: true });
+    doc
+      .fillColor(COR_TEXTO_CLARO)
+      .text(item.label, x + 12, Y_LEGENDA_CORES + 1, {
+        width: larguraItemLegenda - 14,
+        ellipsis: true,
+      });
   });
 
   // --- Legenda cronológica (páginas seguintes): explica cada dia marcado,
   // agrupada por mês pra ficar fácil de folhear. ---
   novaPagina();
-  doc.fillColor(COR_TEXTO).font(F_BOLD).fontSize(16)
-    .text('LEGENDA DOS EVENTOS', MARGEM_ESQUERDA, doc.y, { width: LARGURA_CONTEUDO, characterSpacing: 0.3 });
-  doc.fillColor(COR_TEXTO_CLARO).font(F_REGULAR).fontSize(9)
-    .text('O que cada dia marcado no calendário representa', MARGEM_ESQUERDA, doc.y + 2, { width: LARGURA_CONTEUDO });
+  doc
+    .fillColor(COR_TEXTO)
+    .font(F_BOLD)
+    .fontSize(16)
+    .text('LEGENDA DOS EVENTOS', MARGEM_ESQUERDA, doc.y, {
+      width: LARGURA_CONTEUDO,
+      characterSpacing: 0.3,
+    });
+  doc
+    .fillColor(COR_TEXTO_CLARO)
+    .font(F_REGULAR)
+    .fontSize(9)
+    .text('O que cada dia marcado no calendário representa', MARGEM_ESQUERDA, doc.y + 2, {
+      width: LARGURA_CONTEUDO,
+    });
   doc.moveDown(1.4);
 
   // `linhasLegenda` já foi montada mais acima (reaproveitada no resumo de
@@ -391,20 +509,27 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
   }
 
   if (linhasLegenda.length === 0) {
-    doc.fillColor(COR_TEXTO_CLARO).font(F_ITALIC).fontSize(10).text('Nenhum evento cadastrado neste ano.', MARGEM_ESQUERDA, doc.y);
+    doc
+      .fillColor(COR_TEXTO_CLARO)
+      .font(F_ITALIC)
+      .fontSize(10)
+      .text('Nenhum evento cadastrado neste ano.', MARGEM_ESQUERDA, doc.y);
   }
 
   function desenharCabecalhoMes(mesDoItem) {
     const y = doc.y;
     doc.roundedRect(MARGEM_ESQUERDA, y, LARGURA_CONTEUDO, 18, 3).fill(COR_AMBAR);
-    doc.fillColor('#FFFFFF').font(F_BOLD).fontSize(9.5)
+    doc
+      .fillColor('#FFFFFF')
+      .font(F_BOLD)
+      .fontSize(9.5)
       .text(MESES[mesDoItem].toUpperCase(), MARGEM_ESQUERDA + 10, y + 4, { characterSpacing: 0.4 });
     doc.y = y + 24;
   }
 
   let mesAtualAberto = -1;
   let indiceZebra = 0;
-  linhasLegenda.forEach(item => {
+  linhasLegenda.forEach((item) => {
     const mesDoItem = Number(item.data_inicio.split('-')[1]) - 1;
 
     if (mesDoItem !== mesAtualAberto) {
@@ -434,8 +559,16 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
 
     const periodo = formatarPeriodo(item.data_inicio, item.data_fim);
 
-    doc.fillColor(COR_TEXTO).font(F_BOLD).fontSize(9).text(periodo, MARGEM_ESQUERDA + 12, y + 5, { width: 118, lineBreak: false });
-    doc.fillColor(COR_TEXTO).font(F_REGULAR).fontSize(9.5).text(item.titulo, MARGEM_ESQUERDA + 132, y + 5, { width: 210, ellipsis: true });
+    doc
+      .fillColor(COR_TEXTO)
+      .font(F_BOLD)
+      .fontSize(9)
+      .text(periodo, MARGEM_ESQUERDA + 12, y + 5, { width: 118, lineBreak: false });
+    doc
+      .fillColor(COR_TEXTO)
+      .font(F_REGULAR)
+      .fontSize(9.5)
+      .text(item.titulo, MARGEM_ESQUERDA + 132, y + 5, { width: 210, ellipsis: true });
 
     const rotulo = rotuloTipo(item);
     // `widthOfString` mede com a fonte/tamanho ATUAIS do doc (não aceita
@@ -445,7 +578,9 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
     const larguraPill = Math.min(155, doc.widthOfString(rotulo) + 16);
     const xPill = MARGEM_DIREITA - larguraPill;
     doc.roundedRect(xPill, y + 3, larguraPill, 14, 7).fill(cor.clara);
-    doc.fillColor(cor.escura).text(rotulo, xPill, y + 6.5, { width: larguraPill, align: 'center', ellipsis: true });
+    doc
+      .fillColor(cor.escura)
+      .text(rotulo, xPill, y + 6.5, { width: larguraPill, align: 'center', ellipsis: true });
 
     doc.y = y + 20;
   });

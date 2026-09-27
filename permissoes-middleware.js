@@ -38,25 +38,28 @@ function exigirRecurso(tela, recurso) {
       if (!req.user) return res.status(401).json({ error: 'Sessão inválida ou expirada.' });
       if (req.user.perfil === 'master') return next();
 
-      const idsInstituicao = req.id_instituicao != null
-        ? [req.id_instituicao]
-        : (Array.isArray(req.user.instituicoes) ? req.user.instituicoes : []);
+      const idsInstituicao =
+        req.id_instituicao != null
+          ? [req.id_instituicao]
+          : Array.isArray(req.user.instituicoes)
+            ? req.user.instituicoes
+            : [];
       if (idsInstituicao.length === 0) {
         return res.status(403).json({ error: `Seu perfil não tem acesso à tela "${tela}".` });
       }
 
       const [telaRows] = await pool.query(
         'SELECT DISTINCT id_instituicao FROM permissoes_perfil WHERE id_instituicao IN (?) AND perfil = ? AND tela = ?',
-        [idsInstituicao, req.user.perfil, tela]
+        [idsInstituicao, req.user.perfil, tela],
       );
       if (telaRows.length === 0) {
         return res.status(403).json({ error: `Seu perfil não tem acesso à tela "${tela}".` });
       }
-      const idsComTela = telaRows.map(r => r.id_instituicao);
+      const idsComTela = telaRows.map((r) => r.id_instituicao);
 
       const [bloqueioRows] = await pool.query(
         'SELECT DISTINCT id_instituicao FROM permissoes_perfil_recurso WHERE id_instituicao IN (?) AND perfil = ? AND tela = ? AND recurso = ?',
-        [idsComTela, req.user.perfil, tela, recurso]
+        [idsComTela, req.user.perfil, tela, recurso],
       );
       // Só bloqueia se TODAS as instituições com acesso à tela também bloquearem
       // o recurso — no caso comum (uma só instituição ativa) isso é só "está

@@ -31,7 +31,20 @@ const COR_FUNDO_ALT = '#FAFAFA';
 const COR_BARRA_TOTAL = '#33302B';
 const COR_BORDA = '#E5DFD3';
 
-const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+const MESES = [
+  'Janeiro',
+  'Fevereiro',
+  'Março',
+  'Abril',
+  'Maio',
+  'Junho',
+  'Julho',
+  'Agosto',
+  'Setembro',
+  'Outubro',
+  'Novembro',
+  'Dezembro',
+];
 
 function formatarDataBR(dataStr) {
   const [ano, mes, dia] = String(dataStr).split('-');
@@ -86,13 +99,24 @@ const LARGURA_TABELA = COLS.horas.x + COLS.horas.w - COLS.data.x;
 // Monta e envia o PDF direto no `res` (a rota já seta os headers de
 // content-type/disposition antes de chamar isso). `rows` no mesmo formato
 // devolvido por GET /api/pontos (um professor só, já filtrado pela rota).
-function gerarRelatorioPontoPDF({ res, instituicaoNome, professorNome, professorEmail, dataInicio, dataFim, rows }) {
+function gerarRelatorioPontoPDF({
+  res,
+  instituicaoNome,
+  professorNome,
+  professorEmail,
+  dataInicio,
+  dataFim,
+  rows,
+}) {
   // Margem inferior menor que a superior/laterais de propósito: o rodapé
   // (linha do site, y=808) fica LOGO abaixo do limite padrão de 40pt — sem
   // isso, o próprio PDFKit acha que o texto do rodapé não coube na página e
   // insere uma página em branco sozinho antes de continuar (paginação
   // automática dele, disparada em QUALQUER `.text()`, mesmo com y explícito).
-  const doc = new PDFDocument({ size: 'A4', margins: { top: 40, bottom: 20, left: MARGEM_ESQUERDA, right: 40 } });
+  const doc = new PDFDocument({
+    size: 'A4',
+    margins: { top: 40, bottom: 20, left: MARGEM_ESQUERDA, right: 40 },
+  });
   doc.registerFont(F_REGULAR, path.join(FONT_DIR, 'Lato-Regular.ttf'));
   doc.registerFont(F_BOLD, path.join(FONT_DIR, 'Lato-Bold.ttf'));
   doc.registerFont(F_ITALIC, path.join(FONT_DIR, 'Lato-Italic.ttf'));
@@ -131,20 +155,42 @@ function gerarRelatorioPontoPDF({ res, instituicaoNome, professorNome, professor
       // Sem a imagem (ex.: ambiente sem o arquivo) não trava o relatório —
       // só sai sem a logo.
     }
-    doc.fillColor(COR_TEXTO).font(F_BOLD).fontSize(12).text('Instituto', MARGEM_ESQUERDA + 42, 38);
-    doc.fillColor(COR_AMBAR).font(F_ITALIC).fontSize(12).text('novas histórias', MARGEM_ESQUERDA + 42, 53);
+    doc
+      .fillColor(COR_TEXTO)
+      .font(F_BOLD)
+      .fontSize(12)
+      .text('Instituto', MARGEM_ESQUERDA + 42, 38);
+    doc
+      .fillColor(COR_AMBAR)
+      .font(F_ITALIC)
+      .fontSize(12)
+      .text('novas histórias', MARGEM_ESQUERDA + 42, 53);
 
-    doc.fillColor(COR_TEXTO_CLARO).font(F_REGULAR).fontSize(8)
+    doc
+      .fillColor(COR_TEXTO_CLARO)
+      .font(F_REGULAR)
+      .fontSize(8)
       .text(rotuloTopo, 0, 38, { align: 'right', width: MARGEM_DIREITA });
     doc.text(`Página ${numeroPagina}`, 0, 50, { align: 'right', width: MARGEM_DIREITA });
 
     // Rodapé: site à esquerda, assinatura de marca à direita — mesma linha
     // em todas as páginas (papel timbrado).
     const yRodape = 800;
-    doc.moveTo(MARGEM_ESQUERDA, yRodape).lineTo(MARGEM_DIREITA, yRodape).strokeColor(COR_AMBAR).lineWidth(1.5).stroke();
-    doc.fillColor(COR_TEXTO).font(F_BOLD).fontSize(9)
+    doc
+      .moveTo(MARGEM_ESQUERDA, yRodape)
+      .lineTo(MARGEM_DIREITA, yRodape)
+      .strokeColor(COR_AMBAR)
+      .lineWidth(1.5)
+      .stroke();
+    doc
+      .fillColor(COR_TEXTO)
+      .font(F_BOLD)
+      .fontSize(9)
       .text('institutonovashistorias.com.br', MARGEM_ESQUERDA, yRodape + 8);
-    doc.fillColor(COR_AMBAR).font(F_ITALIC).fontSize(9)
+    doc
+      .fillColor(COR_AMBAR)
+      .font(F_ITALIC)
+      .fontSize(9)
       .text('Nós confiamos em Deus', 0, yRodape + 8, { align: 'right', width: MARGEM_DIREITA });
   }
 
@@ -168,37 +214,67 @@ function gerarRelatorioPontoPDF({ res, instituicaoNome, professorNome, professor
   doc.y = 90;
 
   // --- Título + subtítulo ---
-  doc.fillColor(COR_TEXTO).font(F_BOLD).fontSize(21)
-    .text('RELATÓRIO DE ATIVIDADES', MARGEM_ESQUERDA, doc.y, { align: 'center', width: LARGURA_TABELA, characterSpacing: 0.4 });
+  doc
+    .fillColor(COR_TEXTO)
+    .font(F_BOLD)
+    .fontSize(21)
+    .text('RELATÓRIO DE ATIVIDADES', MARGEM_ESQUERDA, doc.y, {
+      align: 'center',
+      width: LARGURA_TABELA,
+      characterSpacing: 0.4,
+    });
   doc.moveDown(0.2);
-  doc.fillColor(COR_TEXTO_CLARO).font(F_REGULAR).fontSize(10)
-    .text(`${instituicaoNome} · Período de ${formatarDataBR(dataInicio)} a ${formatarDataBR(dataFim)}`, MARGEM_ESQUERDA, doc.y, { align: 'center', width: LARGURA_TABELA });
+  doc
+    .fillColor(COR_TEXTO_CLARO)
+    .font(F_REGULAR)
+    .fontSize(10)
+    .text(
+      `${instituicaoNome} · Período de ${formatarDataBR(dataInicio)} a ${formatarDataBR(dataFim)}`,
+      MARGEM_ESQUERDA,
+      doc.y,
+      { align: 'center', width: LARGURA_TABELA },
+    );
   doc.moveDown(1);
 
   // --- Caixa PRESTADOR / E-MAIL / PROJETO ---
   const yInfo = doc.y;
   const alturaInfo = 46;
-  doc.roundedRect(MARGEM_ESQUERDA, yInfo, LARGURA_TABELA, alturaInfo, 6).fillAndStroke('#FFFFFF', COR_BORDA);
+  doc
+    .roundedRect(MARGEM_ESQUERDA, yInfo, LARGURA_TABELA, alturaInfo, 6)
+    .fillAndStroke('#FFFFFF', COR_BORDA);
   const colsInfo = [
     { label: 'PRESTADOR', valor: professorNome, x: MARGEM_ESQUERDA + 14, w: 220 },
     { label: 'E-MAIL', valor: professorEmail || '—', x: MARGEM_ESQUERDA + 250, w: 155 },
     { label: 'PROJETO', valor: instituicaoNome, x: MARGEM_ESQUERDA + 415, w: 85 },
   ];
-  colsInfo.forEach(c => {
-    doc.fillColor(COR_TEXTO_CLARO).font(F_BOLD).fontSize(7).text(c.label, c.x, yInfo + 10, { width: c.w, characterSpacing: 0.3 });
-    doc.fillColor(COR_TEXTO).font(F_REGULAR).fontSize(10).text(c.valor, c.x, yInfo + 22, { width: c.w, ellipsis: true });
+  colsInfo.forEach((c) => {
+    doc
+      .fillColor(COR_TEXTO_CLARO)
+      .font(F_BOLD)
+      .fontSize(7)
+      .text(c.label, c.x, yInfo + 10, { width: c.w, characterSpacing: 0.3 });
+    doc
+      .fillColor(COR_TEXTO)
+      .font(F_REGULAR)
+      .fontSize(10)
+      .text(c.valor, c.x, yInfo + 22, { width: c.w, ellipsis: true });
   });
   doc.y = yInfo + alturaInfo + 14;
 
   // --- KPIs (calculados aqui, direto dos registros do período) ---
-  const totalSegundos = rows.reduce((soma, r) => soma + duracaoSegundos(r.hora_entrada, r.hora_saida), 0);
-  const diasTrabalhados = new Set(rows.map(r => r.data)).size;
+  const totalSegundos = rows.reduce(
+    (soma, r) => soma + duracaoSegundos(r.hora_entrada, r.hora_saida),
+    0,
+  );
+  const diasTrabalhados = new Set(rows.map((r) => r.data)).size;
   const registros = rows.length;
   const mediaSegundosPorDia = diasTrabalhados > 0 ? Math.round(totalSegundos / diasTrabalhados) : 0;
 
   const yKpi = doc.y;
   const alturaKpi = 50;
-  doc.roundedRect(MARGEM_ESQUERDA, yKpi, LARGURA_TABELA, alturaKpi, 6).fillAndStroke('#FFFFFF', COR_BORDA);
+  doc
+    .roundedRect(MARGEM_ESQUERDA, yKpi, LARGURA_TABELA, alturaKpi, 6)
+    .fillAndStroke('#FFFFFF', COR_BORDA);
   const larguraKpi = LARGURA_TABELA / 4;
   const kpis = [
     { label: 'TOTAL DE HORAS', valor: formatarDuracao(totalSegundos) },
@@ -208,9 +284,23 @@ function gerarRelatorioPontoPDF({ res, instituicaoNome, professorNome, professor
   ];
   kpis.forEach((k, i) => {
     const x = MARGEM_ESQUERDA + i * larguraKpi;
-    if (i > 0) doc.moveTo(x, yKpi + 8).lineTo(x, yKpi + alturaKpi - 8).strokeColor(COR_BORDA).lineWidth(1).stroke();
-    doc.fillColor(COR_TEXTO_CLARO).font(F_BOLD).fontSize(7).text(k.label, x, yKpi + 12, { width: larguraKpi, align: 'center', characterSpacing: 0.3 });
-    doc.fillColor(COR_AMBAR).font(F_BOLD).fontSize(16).text(k.valor, x, yKpi + 24, { width: larguraKpi, align: 'center' });
+    if (i > 0)
+      doc
+        .moveTo(x, yKpi + 8)
+        .lineTo(x, yKpi + alturaKpi - 8)
+        .strokeColor(COR_BORDA)
+        .lineWidth(1)
+        .stroke();
+    doc
+      .fillColor(COR_TEXTO_CLARO)
+      .font(F_BOLD)
+      .fontSize(7)
+      .text(k.label, x, yKpi + 12, { width: larguraKpi, align: 'center', characterSpacing: 0.3 });
+    doc
+      .fillColor(COR_AMBAR)
+      .font(F_BOLD)
+      .fontSize(16)
+      .text(k.valor, x, yKpi + 24, { width: larguraKpi, align: 'center' });
   });
   doc.y = yKpi + alturaKpi + 16;
 
@@ -231,7 +321,7 @@ function gerarRelatorioPontoPDF({ res, instituicaoNome, professorNome, professor
   // --- Linhas, agrupadas por dia (mesma ordem cronológica de uma folha de
   // ponto: mais antigo primeiro) ---
   const porDia = new Map();
-  rows.forEach(r => {
+  rows.forEach((r) => {
     if (!porDia.has(r.data)) porDia.set(r.data, []);
     porDia.get(r.data).push(r);
   });
@@ -247,25 +337,58 @@ function gerarRelatorioPontoPDF({ res, instituicaoNome, professorNome, professor
       doc.rect(COLS.data.x, y, LARGURA_TABELA, 18).fill(corFundoGrupo);
 
       if (indiceLinha === 0) {
-        doc.fillColor(COR_TEXTO).font(F_BOLD).fontSize(8).text(formatarDataBR(data), COLS.data.x + 8, y + 4);
+        doc
+          .fillColor(COR_TEXTO)
+          .font(F_BOLD)
+          .fontSize(8)
+          .text(formatarDataBR(data), COLS.data.x + 8, y + 4);
       }
       doc.fillColor(COR_TEXTO).font(F_REGULAR).fontSize(8);
-      doc.text(r.nome_turma || '—', COLS.atividade.x + 4, y + 4, { width: COLS.atividade.w - 8, ellipsis: true });
-      doc.text(formatarHora(r.hora_entrada), COLS.entrada.x, y + 4, { width: COLS.entrada.w, align: 'center' });
-      doc.text(formatarHora(r.hora_saida), COLS.saida.x, y + 4, { width: COLS.saida.w, align: 'center' });
-      doc.text(formatarDuracao(duracaoSegundos(r.hora_entrada, r.hora_saida)), COLS.horas.x, y + 4, { width: COLS.horas.w - 8, align: 'right' });
+      doc.text(r.nome_turma || '—', COLS.atividade.x + 4, y + 4, {
+        width: COLS.atividade.w - 8,
+        ellipsis: true,
+      });
+      doc.text(formatarHora(r.hora_entrada), COLS.entrada.x, y + 4, {
+        width: COLS.entrada.w,
+        align: 'center',
+      });
+      doc.text(formatarHora(r.hora_saida), COLS.saida.x, y + 4, {
+        width: COLS.saida.w,
+        align: 'center',
+      });
+      doc.text(
+        formatarDuracao(duracaoSegundos(r.hora_entrada, r.hora_saida)),
+        COLS.horas.x,
+        y + 4,
+        { width: COLS.horas.w - 8, align: 'right' },
+      );
       doc.y = y + 18;
     });
 
     // Subtotal do dia
     garantirEspaco(20);
     const ySub = doc.y;
-    const subtotalSegundos = linhasDoDia.reduce((s, r) => s + duracaoSegundos(r.hora_entrada, r.hora_saida), 0);
+    const subtotalSegundos = linhasDoDia.reduce(
+      (s, r) => s + duracaoSegundos(r.hora_entrada, r.hora_saida),
+      0,
+    );
     doc.rect(COLS.data.x, ySub, LARGURA_TABELA, 20).fill(COR_FUNDO_CLARO);
-    doc.fillColor(COR_TEXTO_CLARO).font(F_ITALIC).fontSize(8)
-      .text('Subtotal do dia', COLS.data.x, ySub + 6, { width: COLS.saida.x + COLS.saida.w - COLS.data.x, align: 'right' });
-    doc.fillColor(COR_TEXTO).font(F_BOLD).fontSize(8)
-      .text(formatarDuracao(subtotalSegundos), COLS.horas.x, ySub + 6, { width: COLS.horas.w - 8, align: 'right' });
+    doc
+      .fillColor(COR_TEXTO_CLARO)
+      .font(F_ITALIC)
+      .fontSize(8)
+      .text('Subtotal do dia', COLS.data.x, ySub + 6, {
+        width: COLS.saida.x + COLS.saida.w - COLS.data.x,
+        align: 'right',
+      });
+    doc
+      .fillColor(COR_TEXTO)
+      .font(F_BOLD)
+      .fontSize(8)
+      .text(formatarDuracao(subtotalSegundos), COLS.horas.x, ySub + 6, {
+        width: COLS.horas.w - 8,
+        align: 'right',
+      });
     doc.y = ySub + 20;
   });
 
@@ -273,19 +396,36 @@ function gerarRelatorioPontoPDF({ res, instituicaoNome, professorNome, professor
   garantirEspaco(24);
   const yTotal = doc.y;
   doc.rect(COLS.data.x, yTotal, LARGURA_TABELA, 24).fill(COR_BARRA_TOTAL);
-  doc.fillColor('#FFFFFF').font(F_BOLD).fontSize(9)
+  doc
+    .fillColor('#FFFFFF')
+    .font(F_BOLD)
+    .fontSize(9)
     .text('TOTAL DO PERÍODO', COLS.data.x + 10, yTotal + 7, { characterSpacing: 0.3 });
-  doc.text(formatarDuracao(totalSegundos), COLS.horas.x, yTotal + 7, { width: COLS.horas.w - 10, align: 'right' });
+  doc.text(formatarDuracao(totalSegundos), COLS.horas.x, yTotal + 7, {
+    width: COLS.horas.w - 10,
+    align: 'right',
+  });
   doc.y = yTotal + 24;
 
   // --- Assinatura do prestador ---
   garantirEspaco(70);
   const yAssinatura = doc.y + 40;
   const xLinha = MARGEM_ESQUERDA + (LARGURA_TABELA - 220) / 2;
-  doc.moveTo(xLinha, yAssinatura).lineTo(xLinha + 220, yAssinatura).strokeColor(COR_TEXTO_CLARO).lineWidth(1).stroke();
-  doc.fillColor(COR_TEXTO).font(F_REGULAR).fontSize(9)
+  doc
+    .moveTo(xLinha, yAssinatura)
+    .lineTo(xLinha + 220, yAssinatura)
+    .strokeColor(COR_TEXTO_CLARO)
+    .lineWidth(1)
+    .stroke();
+  doc
+    .fillColor(COR_TEXTO)
+    .font(F_REGULAR)
+    .fontSize(9)
     .text(professorNome, xLinha, yAssinatura + 6, { width: 220, align: 'center' });
-  doc.fillColor(COR_TEXTO_CLARO).font(F_REGULAR).fontSize(8)
+  doc
+    .fillColor(COR_TEXTO_CLARO)
+    .font(F_REGULAR)
+    .fontSize(8)
     .text('Prestador', xLinha, yAssinatura + 18, { width: 220, align: 'center' });
 
   doc.end();

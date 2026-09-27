@@ -34,18 +34,18 @@ async function encerrarMatriculasForaDoTurno(connection, idAluno, novoTurno, idI
      FROM matricula m
      JOIN atividades atv ON atv.idatividades = m.idatividades
      WHERE m.idaluno = ? AND m.id_instituicao = ? AND m.status = 'matriculado' AND m.data_fim IS NULL`,
-    [idAluno, idInstituicao]
+    [idAluno, idInstituicao],
   );
 
-  const incompativeis = ativas.filter(m => !podeMatricular(novoTurno, m.turno_turma));
+  const incompativeis = ativas.filter((m) => !podeMatricular(novoTurno, m.turno_turma));
   if (incompativeis.length === 0) return { encerradas: 0, turmas: [] };
 
   await connection.query(
     `UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula IN (?)`,
-    [incompativeis.map(m => m.idmatricula)]
+    [incompativeis.map((m) => m.idmatricula)],
   );
 
-  return { encerradas: incompativeis.length, turmas: incompativeis.map(m => m.nome_turma) };
+  return { encerradas: incompativeis.length, turmas: incompativeis.map((m) => m.nome_turma) };
 }
 
 // Encerra TODAS as matrículas ativas do aluno quando o status dele deixa de
@@ -53,7 +53,9 @@ async function encerrarMatriculasForaDoTurno(connection, idAluno, novoTurno, idI
 // ativo. Diferente de `encerrarMatriculasForaDoTurno`, aqui não há filtro por
 // turno: se o status não é ativo, toda matrícula corrente é encerrada.
 async function encerrarMatriculasSeNaoAtivo(connection, idAluno, novoStatus, idInstituicao) {
-  const statusNormalizado = String(novoStatus || '').trim().toLowerCase();
+  const statusNormalizado = String(novoStatus || '')
+    .trim()
+    .toLowerCase();
   if (statusNormalizado === 'ativo') return { encerradas: 0, turmas: [] };
 
   const [ativas] = await connection.query(
@@ -61,26 +63,28 @@ async function encerrarMatriculasSeNaoAtivo(connection, idAluno, novoStatus, idI
      FROM matricula m
      JOIN atividades atv ON atv.idatividades = m.idatividades
      WHERE m.idaluno = ? AND m.id_instituicao = ? AND m.status = 'matriculado' AND m.data_fim IS NULL`,
-    [idAluno, idInstituicao]
+    [idAluno, idInstituicao],
   );
 
   if (ativas.length === 0) return { encerradas: 0, turmas: [] };
 
   await connection.query(
     `UPDATE matricula SET data_fim = CURDATE(), status = 'cancelada' WHERE idmatricula IN (?)`,
-    [ativas.map(m => m.idmatricula)]
+    [ativas.map((m) => m.idmatricula)],
   );
 
-  return { encerradas: ativas.length, turmas: ativas.map(m => m.nome_turma) };
+  return { encerradas: ativas.length, turmas: ativas.map((m) => m.nome_turma) };
 }
 
 // Recalcula e grava o status de cada aluno em `alunoIds` com base em suas
 // matrículas atuais. Roda dentro da mesma transação/conexão de quem chama, para
 // que a sincronização faça parte da mesma operação atômica.
 async function syncAlunoStatusFromMatriculas(connection, alunoIds, idInstituicao) {
-  const uniqueAlunoIds = [...new Set((alunoIds || [])
-    .map(id => Number(id))
-    .filter(id => Number.isInteger(id) && id > 0))];
+  const uniqueAlunoIds = [
+    ...new Set(
+      (alunoIds || []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  ];
 
   if (uniqueAlunoIds.length === 0) {
     return { atualizado: 0, ids: [] };
@@ -106,17 +110,17 @@ async function syncAlunoStatusFromMatriculas(connection, alunoIds, idInstituicao
       WHERE a.id IN (${placeholders})
         AND a.id_instituicao = ?
     `,
-    [...uniqueAlunoIds, idInstituicao]
+    [...uniqueAlunoIds, idInstituicao],
   );
 
   if (!rows.length) {
     return { atualizado: 0, ids: [] };
   }
 
-  const ids = rows.map(row => row.id);
-  const valoresStatus = rows.map(row => row.novo_status);
+  const ids = rows.map((row) => row.id);
+  const valoresStatus = rows.map((row) => row.novo_status);
   // Bulk update via CASE WHEN em vez de um UPDATE por aluno, para não fazer N idas ao banco.
-  const caseWhen = rows.map(row => `WHEN ${row.id} THEN ?`).join(' ');
+  const caseWhen = rows.map((row) => `WHEN ${row.id} THEN ?`).join(' ');
 
   if (!caseWhen) {
     return { atualizado: 0, ids: [] };
@@ -129,12 +133,12 @@ async function syncAlunoStatusFromMatriculas(connection, alunoIds, idInstituicao
       WHERE id IN (${ids.map(() => '?').join(',')})
         AND id_instituicao = ?
     `,
-    [...valoresStatus, ...ids, idInstituicao]
+    [...valoresStatus, ...ids, idInstituicao],
   );
 
   return {
     atualizado: rows.length,
-    ids
+    ids,
   };
 }
 
@@ -142,5 +146,5 @@ module.exports = {
   resolveAlunoStatus,
   syncAlunoStatusFromMatriculas,
   encerrarMatriculasForaDoTurno,
-  encerrarMatriculasSeNaoAtivo
+  encerrarMatriculasSeNaoAtivo,
 };

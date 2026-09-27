@@ -6,7 +6,7 @@ const schemas = {
   aluno: Joi.object({
     nome: Joi.string().trim().min(3).required().messages({
       'string.empty': 'O nome do aluno é obrigatório.',
-      'string.min': 'O nome deve ter pelo menos 3 caracteres.'
+      'string.min': 'O nome deve ter pelo menos 3 caracteres.',
     }),
     data_nascimento: Joi.date().iso().allow(null, ''),
     sexo: Joi.string().max(1).uppercase().allow(null, ''),
@@ -15,7 +15,7 @@ const schemas = {
     turno: Joi.string().allow(null, ''),
     transporte: Joi.string().allow(null, ''),
     Inf: Joi.string().allow(null, ''),
-    status: Joi.string().valid('ativo', 'inativo', 'espera').default('ativo')
+    status: Joi.string().valid('ativo', 'inativo', 'espera').default('ativo'),
   }).unknown(true), // permite campos extras no payload (ex.: acompanhamento/ponto, tratados fora do schema)
 
   presenca: Joi.object({
@@ -25,16 +25,22 @@ const schemas = {
     // lista (ver AttendanceList.jsx). Opcional só por compatibilidade: quando
     // ausente, presenca.js mantém o comportamento antigo (sem período).
     periodo: Joi.string().valid('manha', 'tarde', 'noite').allow(null),
-    chamadas: Joi.array().items(
-      Joi.object({
-        aluno_id: Joi.number().required(),
-        // null é um valor válido e intencional: sinaliza "desmarcar" (apagar o
-        // registro de presença existente) — ver o tratamento em presenca.js.
-        status: Joi.string().valid('presente', 'falta', 'justificado', 'ausente').allow(null).required(),
-        observacao: Joi.string().allow(null, '')
-      })
-    ).min(1).required()
-  })
+    chamadas: Joi.array()
+      .items(
+        Joi.object({
+          aluno_id: Joi.number().required(),
+          // null é um valor válido e intencional: sinaliza "desmarcar" (apagar o
+          // registro de presença existente) — ver o tratamento em presenca.js.
+          status: Joi.string()
+            .valid('presente', 'falta', 'justificado', 'ausente')
+            .allow(null)
+            .required(),
+          observacao: Joi.string().allow(null, ''),
+        }),
+      )
+      .min(1)
+      .required(),
+  }),
 };
 
 // Middleware de validação: valida req.body contra o schema `schemaName` e
@@ -56,7 +62,7 @@ const validate = (schemaName) => (req, res, next) => {
   if (error) {
     return res.status(400).json({
       error: 'Falha na validação dos dados',
-      details: error.details.map(d => d.message)
+      details: error.details.map((d) => d.message),
     });
   }
   next();

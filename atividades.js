@@ -12,7 +12,7 @@ const { AREAS_VALIDAS } = require('./areas');
 const { hojeBrasil } = require('./data-brasil');
 const { exigirRecurso } = require('./permissoes-middleware');
 
-const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const exigir = (recurso) => exigirRecurso('/turmas', recurso);
 
 const DIAS_VALIDOS = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
@@ -27,18 +27,19 @@ const TURNOS_VALIDOS = ['Manhã', 'Tarde', 'Noite'];
 // abaixo) quanto pelos co-professores (POST /:id/professores).
 async function resolverProfessor(req, idprofessor, professor_nome) {
   const idProfessorFinal = idprofessor ? Number(idprofessor) : null;
-  if (idProfessorFinal || !professor_nome || !String(professor_nome).trim()) return idProfessorFinal;
+  if (idProfessorFinal || !professor_nome || !String(professor_nome).trim())
+    return idProfessorFinal;
 
   const nomeProf = String(professor_nome).trim();
   const [existente] = await pool.query(
     'SELECT id FROM professores WHERE nome = ? AND id_instituicao = ?',
-    [nomeProf, req.id_instituicao]
+    [nomeProf, req.id_instituicao],
   );
   if (existente.length > 0) return existente[0].id;
 
   const [criado] = await pool.query(
     'INSERT INTO professores (nome, ativo, id_instituicao) VALUES (?, 1, ?)',
-    [nomeProf, req.id_instituicao]
+    [nomeProf, req.id_instituicao],
   );
   return criado.insertId;
 }
@@ -80,8 +81,10 @@ async function validarECresolverProfessor(req, res, body) {
 // Inclui as encerradas também — quem decide esconder ou não é o front (ver
 // GradeTurmas.js, que tira as encerradas da grade semanal, e Turmas.js, que
 // mostra as duas com um filtro).
-router.get('/', asyncHandler(async (req, res) => {
-  const sql = `
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const sql = `
     SELECT atv.idatividades AS id, atv.nome, atv.dia_semana, atv.horario, atv.turno, atv.idprofessor,
            atv.area, atv.data_inicio, atv.data_fim,
            p.nome AS nome_professor,
@@ -92,293 +95,397 @@ router.get('/', asyncHandler(async (req, res) => {
     WHERE atv.id_instituicao = ?
     ORDER BY atv.nome ASC, atv.dia_semana ASC, atv.turno ASC, atv.horario ASC
   `;
-  const [results] = await pool.query(sql, [req.id_instituicao]);
+    const [results] = await pool.query(sql, [req.id_instituicao]);
 
-  // Professores ADICIONAIS (co-docência) — consulta separada + Map em JS
-  // (mesmo padrão de "duas queries + Map" já usado em alunos.js), em vez de
-  // agregar em SQL, pra não complicar a query principal.
-  const [coProfessores] = await pool.query(
-    `SELECT ap.idatividades, p.id, p.nome
+    // Professores ADICIONAIS (co-docência) — consulta separada + Map em JS
+    // (mesmo padrão de "duas queries + Map" já usado em alunos.js), em vez de
+    // agregar em SQL, pra não complicar a query principal.
+    const [coProfessores] = await pool.query(
+      `SELECT ap.idatividades, p.id, p.nome
      FROM atividade_professores ap
      JOIN professores p ON p.id = ap.idprofessor
      WHERE ap.id_instituicao = ?`,
-    [req.id_instituicao]
-  );
-  const adicionaisPorTurma = new Map();
-  for (const row of coProfessores) {
-    if (!adicionaisPorTurma.has(row.idatividades)) adicionaisPorTurma.set(row.idatividades, []);
-    adicionaisPorTurma.get(row.idatividades).push({ id: row.id, nome: row.nome });
-  }
-  results.forEach(t => { t.professores_adicionais = adicionaisPorTurma.get(t.id) || []; });
+      [req.id_instituicao],
+    );
+    const adicionaisPorTurma = new Map();
+    for (const row of coProfessores) {
+      if (!adicionaisPorTurma.has(row.idatividades)) adicionaisPorTurma.set(row.idatividades, []);
+      adicionaisPorTurma.get(row.idatividades).push({ id: row.id, nome: row.nome });
+    }
+    results.forEach((t) => {
+      t.professores_adicionais = adicionaisPorTurma.get(t.id) || [];
+    });
 
-  res.json(results);
-}));
+    res.json(results);
+  }),
+);
 
 // Criar turma nova. data_inicio começa hoje por padrão (pode vir informada
 // explicitamente no corpo, ex.: pra registrar uma turma que já existia antes).
-router.post('/', exigir('criar'), asyncHandler(async (req, res) => {
-  const dados = await validarECresolverProfessor(req, res, req.body);
-  if (!dados) return; // validarECresolverProfessor já respondeu o erro
+router.post(
+  '/',
+  exigir('criar'),
+  asyncHandler(async (req, res) => {
+    const dados = await validarECresolverProfessor(req, res, req.body);
+    if (!dados) return; // validarECresolverProfessor já respondeu o erro
 
-  // Evita criar duas turmas idênticas (mesmo nome+professor+dia+horário+turno)
-  // por duplo clique ou reenvio do formulário.
-  const [duplicada] = await pool.query(
-    `SELECT idatividades FROM atividades
+    // Evita criar duas turmas idênticas (mesmo nome+professor+dia+horário+turno)
+    // por duplo clique ou reenvio do formulário.
+    const [duplicada] = await pool.query(
+      `SELECT idatividades FROM atividades
      WHERE nome = ? AND dia_semana = ? AND horario = ? AND turno = ? AND id_instituicao = ?
        AND idprofessor <=> ? AND data_fim IS NULL`,
-    [dados.nomeLimpo, dados.dia_semana, dados.horario, dados.turno, req.id_instituicao, dados.idProfessorFinal]
-  );
-  if (duplicada.length > 0) {
-    return res.status(409).json({ error: 'Já existe uma turma ativa com esse nome, professor, dia e horário.' });
-  }
+      [
+        dados.nomeLimpo,
+        dados.dia_semana,
+        dados.horario,
+        dados.turno,
+        req.id_instituicao,
+        dados.idProfessorFinal,
+      ],
+    );
+    if (duplicada.length > 0) {
+      return res
+        .status(409)
+        .json({ error: 'Já existe uma turma ativa com esse nome, professor, dia e horário.' });
+    }
 
-  const dataInicio = req.body.data_inicio || hojeBrasil();
+    const dataInicio = req.body.data_inicio || hojeBrasil();
 
-  const [result] = await pool.query(
-    'INSERT INTO atividades (nome, idprofessor, id_instituicao, dia_semana, horario, turno, area, data_inicio) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [dados.nomeLimpo, dados.idProfessorFinal, req.id_instituicao, dados.dia_semana, dados.horario, dados.turno, dados.area, dataInicio]
-  );
+    const [result] = await pool.query(
+      'INSERT INTO atividades (nome, idprofessor, id_instituicao, dia_semana, horario, turno, area, data_inicio) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        dados.nomeLimpo,
+        dados.idProfessorFinal,
+        req.id_instituicao,
+        dados.dia_semana,
+        dados.horario,
+        dados.turno,
+        dados.area,
+        dataInicio,
+      ],
+    );
 
-  await logAuditEvent('TURMA_CRIADA', `Turma "${dados.nomeLimpo}" (${dados.dia_semana} ${dados.horario} ${dados.turno})`, req.id_instituicao);
+    await logAuditEvent(
+      'TURMA_CRIADA',
+      `Turma "${dados.nomeLimpo}" (${dados.dia_semana} ${dados.horario} ${dados.turno})`,
+      req.id_instituicao,
+    );
 
-  res.status(201).json({
-    id: result.insertId,
-    nome: dados.nomeLimpo,
-    dia_semana: dados.dia_semana,
-    horario: dados.horario,
-    turno: dados.turno,
-    area: dados.area,
-    idprofessor: dados.idProfessorFinal,
-    data_inicio: dataInicio,
-    data_fim: null
-  });
-}));
+    res.status(201).json({
+      id: result.insertId,
+      nome: dados.nomeLimpo,
+      dia_semana: dados.dia_semana,
+      horario: dados.horario,
+      turno: dados.turno,
+      area: dados.area,
+      idprofessor: dados.idProfessorFinal,
+      data_inicio: dataInicio,
+      data_fim: null,
+    });
+  }),
+);
 
 // Editar turma (nome, professor, dia/horário/turno).
-router.put('/:id', exigir('editar'), asyncHandler(async (req, res) => {
-  const { id } = req.params;
+router.put(
+  '/:id',
+  exigir('editar'),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
 
-  const [existentes] = await pool.query(
-    'SELECT idatividades FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
-    [id, req.id_instituicao]
-  );
-  if (existentes.length === 0) return res.status(404).json({ error: 'Turma não encontrada.' });
+    const [existentes] = await pool.query(
+      'SELECT idatividades FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
+      [id, req.id_instituicao],
+    );
+    if (existentes.length === 0) return res.status(404).json({ error: 'Turma não encontrada.' });
 
-  const dados = await validarECresolverProfessor(req, res, req.body);
-  if (!dados) return;
+    const dados = await validarECresolverProfessor(req, res, req.body);
+    if (!dados) return;
 
-  await pool.query(
-    'UPDATE atividades SET nome = ?, idprofessor = ?, dia_semana = ?, horario = ?, turno = ?, area = ? WHERE idatividades = ? AND id_instituicao = ?',
-    [dados.nomeLimpo, dados.idProfessorFinal, dados.dia_semana, dados.horario, dados.turno, dados.area, id, req.id_instituicao]
-  );
+    await pool.query(
+      'UPDATE atividades SET nome = ?, idprofessor = ?, dia_semana = ?, horario = ?, turno = ?, area = ? WHERE idatividades = ? AND id_instituicao = ?',
+      [
+        dados.nomeLimpo,
+        dados.idProfessorFinal,
+        dados.dia_semana,
+        dados.horario,
+        dados.turno,
+        dados.area,
+        id,
+        req.id_instituicao,
+      ],
+    );
 
-  // Mantém as matrículas da turma consistentes com o horário dela — a mesma
-  // regra que a migração que separou atividades por horário garantiu (ver
-  // migrate-split-atividades-por-horario.js): toda matrícula de uma turma tem
-  // que ter o mesmo dia/horário/turno da turma.
-  await pool.query(
-    'UPDATE matricula SET dia_semana = ?, horario = ?, turno = ? WHERE idatividades = ? AND id_instituicao = ?',
-    [dados.dia_semana, dados.horario, dados.turno, id, req.id_instituicao]
-  );
+    // Mantém as matrículas da turma consistentes com o horário dela — a mesma
+    // regra que a migração que separou atividades por horário garantiu (ver
+    // migrate-split-atividades-por-horario.js): toda matrícula de uma turma tem
+    // que ter o mesmo dia/horário/turno da turma.
+    await pool.query(
+      'UPDATE matricula SET dia_semana = ?, horario = ?, turno = ? WHERE idatividades = ? AND id_instituicao = ?',
+      [dados.dia_semana, dados.horario, dados.turno, id, req.id_instituicao],
+    );
 
-  await logAuditEvent('TURMA_EDITADA', `Turma #${id} -> "${dados.nomeLimpo}" (${dados.dia_semana} ${dados.horario} ${dados.turno})`, req.id_instituicao);
+    await logAuditEvent(
+      'TURMA_EDITADA',
+      `Turma #${id} -> "${dados.nomeLimpo}" (${dados.dia_semana} ${dados.horario} ${dados.turno})`,
+      req.id_instituicao,
+    );
 
-  res.json({ success: true });
-}));
+    res.json({ success: true });
+  }),
+);
 
 // Adiciona um co-professor (professor ADICIONAL, além do principal) numa
 // turma — co-docência: os dois passam a poder bater ponto e lançar nota dela
 // (ver backend/pontos.js e backend/notas.js). Não afeta o principal, que só
 // troca editando a turma (PUT acima).
-router.post('/:id/professores', exigir('editar'), asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { idprofessor, professor_nome } = req.body;
+router.post(
+  '/:id/professores',
+  exigir('editar'),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { idprofessor, professor_nome } = req.body;
 
-  const [[turma]] = await pool.query(
-    'SELECT idatividades, idprofessor FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
-    [id, req.id_instituicao]
-  );
-  if (!turma) return res.status(404).json({ error: 'Turma não encontrada.' });
+    const [[turma]] = await pool.query(
+      'SELECT idatividades, idprofessor FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
+      [id, req.id_instituicao],
+    );
+    if (!turma) return res.status(404).json({ error: 'Turma não encontrada.' });
 
-  const idProfessorFinal = await resolverProfessor(req, idprofessor, professor_nome);
-  if (!idProfessorFinal) return res.status(400).json({ error: 'Informe idprofessor ou professor_nome.' });
+    const idProfessorFinal = await resolverProfessor(req, idprofessor, professor_nome);
+    if (!idProfessorFinal)
+      return res.status(400).json({ error: 'Informe idprofessor ou professor_nome.' });
 
-  if (idProfessorFinal === turma.idprofessor) {
-    return res.status(409).json({ error: 'Esse professor já é o principal dessa turma.' });
-  }
+    if (idProfessorFinal === turma.idprofessor) {
+      return res.status(409).json({ error: 'Esse professor já é o principal dessa turma.' });
+    }
 
-  const [[jaAdicional]] = await pool.query(
-    'SELECT 1 FROM atividade_professores WHERE idatividades = ? AND idprofessor = ?',
-    [id, idProfessorFinal]
-  );
-  if (jaAdicional) return res.status(409).json({ error: 'Esse professor já está nessa turma.' });
+    const [[jaAdicional]] = await pool.query(
+      'SELECT 1 FROM atividade_professores WHERE idatividades = ? AND idprofessor = ?',
+      [id, idProfessorFinal],
+    );
+    if (jaAdicional) return res.status(409).json({ error: 'Esse professor já está nessa turma.' });
 
-  await pool.query(
-    'INSERT INTO atividade_professores (idatividades, idprofessor, id_instituicao) VALUES (?, ?, ?)',
-    [id, idProfessorFinal, req.id_instituicao]
-  );
+    await pool.query(
+      'INSERT INTO atividade_professores (idatividades, idprofessor, id_instituicao) VALUES (?, ?, ?)',
+      [id, idProfessorFinal, req.id_instituicao],
+    );
 
-  const [[professor]] = await pool.query('SELECT id, nome FROM professores WHERE id = ?', [idProfessorFinal]);
+    const [[professor]] = await pool.query('SELECT id, nome FROM professores WHERE id = ?', [
+      idProfessorFinal,
+    ]);
 
-  await logAuditEvent('TURMA_CO_PROFESSOR_ADICIONADO', `Turma #${id}: adicionado "${professor.nome}" (#${idProfessorFinal})`, req.id_instituicao);
+    await logAuditEvent(
+      'TURMA_CO_PROFESSOR_ADICIONADO',
+      `Turma #${id}: adicionado "${professor.nome}" (#${idProfessorFinal})`,
+      req.id_instituicao,
+    );
 
-  res.status(201).json(professor);
-}));
+    res.status(201).json(professor);
+  }),
+);
 
 // Remove um co-professor da turma (o principal não é afetado — pra trocar o
 // principal, edite a turma).
-router.delete('/:id/professores/:idprofessor', exigir('editar'), asyncHandler(async (req, res) => {
-  const { id, idprofessor } = req.params;
+router.delete(
+  '/:id/professores/:idprofessor',
+  exigir('editar'),
+  asyncHandler(async (req, res) => {
+    const { id, idprofessor } = req.params;
 
-  const [result] = await pool.query(
-    'DELETE FROM atividade_professores WHERE idatividades = ? AND idprofessor = ? AND id_instituicao = ?',
-    [id, idprofessor, req.id_instituicao]
-  );
-  if (result.affectedRows === 0) return res.status(404).json({ error: 'Esse professor não está nessa turma como adicional.' });
+    const [result] = await pool.query(
+      'DELETE FROM atividade_professores WHERE idatividades = ? AND idprofessor = ? AND id_instituicao = ?',
+      [id, idprofessor, req.id_instituicao],
+    );
+    if (result.affectedRows === 0)
+      return res.status(404).json({ error: 'Esse professor não está nessa turma como adicional.' });
 
-  await logAuditEvent('TURMA_CO_PROFESSOR_REMOVIDO', `Turma #${id}: removido professor #${idprofessor}`, req.id_instituicao);
+    await logAuditEvent(
+      'TURMA_CO_PROFESSOR_REMOVIDO',
+      `Turma #${id}: removido professor #${idprofessor}`,
+      req.id_instituicao,
+    );
 
-  res.json({ success: true });
-}));
+    res.json({ success: true });
+  }),
+);
 
 // Encerrar turma (soft-close): marca data_fim = hoje na própria turma E
 // encerra (soft-delete, mesmo padrão do resto do sistema) todas as matrículas
 // ativas dela. Diferente de apagar: a turma continua existindo, só marcada
 // como encerrada — o histórico de quem passou por ela fica intacto e
 // consultável (ver GET '/:id/alunos-historico' abaixo).
-router.post('/:id/encerrar', exigir('editar'), asyncHandler(async (req, res) => {
-  const { id } = req.params;
+router.post(
+  '/:id/encerrar',
+  exigir('editar'),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
 
-  const [turmas] = await pool.query(
-    'SELECT idatividades, nome, data_fim FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
-    [id, req.id_instituicao]
-  );
-  if (turmas.length === 0) return res.status(404).json({ error: 'Turma não encontrada.' });
-  if (turmas[0].data_fim) return res.status(409).json({ error: 'Essa turma já está encerrada.' });
-
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-
-    const hoje = hojeBrasil();
-
-    await connection.query('UPDATE atividades SET data_fim = ? WHERE idatividades = ?', [hoje, id]);
-
-    const [alunosAtivos] = await connection.query(
-      `SELECT idmatricula, idaluno FROM matricula WHERE idatividades = ? AND status = 'matriculado' AND data_fim IS NULL`,
-      [id]
+    const [turmas] = await pool.query(
+      'SELECT idatividades, nome, data_fim FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
+      [id, req.id_instituicao],
     );
+    if (turmas.length === 0) return res.status(404).json({ error: 'Turma não encontrada.' });
+    if (turmas[0].data_fim) return res.status(409).json({ error: 'Essa turma já está encerrada.' });
 
-    if (alunosAtivos.length > 0) {
-      const idsMatricula = alunosAtivos.map(m => m.idmatricula);
-      await connection.query(
-        `UPDATE matricula SET data_fim = ?, status = 'cancelada' WHERE idmatricula IN (?)`,
-        [hoje, idsMatricula]
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const hoje = hojeBrasil();
+
+      await connection.query('UPDATE atividades SET data_fim = ? WHERE idatividades = ?', [
+        hoje,
+        id,
+      ]);
+
+      const [alunosAtivos] = await connection.query(
+        `SELECT idmatricula, idaluno FROM matricula WHERE idatividades = ? AND status = 'matriculado' AND data_fim IS NULL`,
+        [id],
       );
-      await syncAlunoStatusFromMatriculas(connection, alunosAtivos.map(m => m.idaluno), req.id_instituicao);
+
+      if (alunosAtivos.length > 0) {
+        const idsMatricula = alunosAtivos.map((m) => m.idmatricula);
+        await connection.query(
+          `UPDATE matricula SET data_fim = ?, status = 'cancelada' WHERE idmatricula IN (?)`,
+          [hoje, idsMatricula],
+        );
+        await syncAlunoStatusFromMatriculas(
+          connection,
+          alunosAtivos.map((m) => m.idaluno),
+          req.id_instituicao,
+        );
+      }
+
+      // Passa `connection` (mesma transação, ainda não commitada) — logAuditEvent
+      // nunca lança erro por conta própria (ver audit.js), e em produção
+      // (connectionLimit: 1, ver db.js) abrir uma 2a conexão do `pool`
+      // compartilhado enquanto essa ainda está em uso travaria pra sempre
+      // esperando ela ser liberada, o que só aconteceria depois desta mesma
+      // chamada terminar.
+      await logAuditEvent(
+        'TURMA_ENCERRADA',
+        `Turma #${id} "${turmas[0].nome}" — ${alunosAtivos.length} aluno(s) desmatriculado(s) junto`,
+        req.id_instituicao,
+        connection,
+      );
+
+      await connection.commit();
+
+      res.json({ success: true, alunos_desmatriculados: alunosAtivos.length });
+    } catch (error) {
+      await connection.rollback();
+      console.error('Erro ao encerrar turma:', error);
+      res.status(500).json({ error: 'Erro ao encerrar turma: ' + error.message });
+    } finally {
+      connection.release();
     }
-
-    // Passa `connection` (mesma transação, ainda não commitada) — logAuditEvent
-    // nunca lança erro por conta própria (ver audit.js), e em produção
-    // (connectionLimit: 1, ver db.js) abrir uma 2a conexão do `pool`
-    // compartilhado enquanto essa ainda está em uso travaria pra sempre
-    // esperando ela ser liberada, o que só aconteceria depois desta mesma
-    // chamada terminar.
-    await logAuditEvent('TURMA_ENCERRADA', `Turma #${id} "${turmas[0].nome}" — ${alunosAtivos.length} aluno(s) desmatriculado(s) junto`, req.id_instituicao, connection);
-
-    await connection.commit();
-
-    res.json({ success: true, alunos_desmatriculados: alunosAtivos.length });
-  } catch (error) {
-    await connection.rollback();
-    console.error('Erro ao encerrar turma:', error);
-    res.status(500).json({ error: 'Erro ao encerrar turma: ' + error.message });
-  } finally {
-    connection.release();
-  }
-}));
+  }),
+);
 
 // Reabrir turma encerrada: só limpa data_fim da turma — NÃO rematricula
 // automaticamente quem foi desmatriculado no encerramento (isso teria que ser
 // uma decisão manual, matricular de novo quem for o caso).
-router.post('/:id/reabrir', exigir('editar'), asyncHandler(async (req, res) => {
-  const { id } = req.params;
+router.post(
+  '/:id/reabrir',
+  exigir('editar'),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
 
-  const [turmas] = await pool.query(
-    'SELECT idatividades, nome, data_fim FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
-    [id, req.id_instituicao]
-  );
-  if (turmas.length === 0) return res.status(404).json({ error: 'Turma não encontrada.' });
-  if (!turmas[0].data_fim) return res.status(409).json({ error: 'Essa turma já está ativa.' });
+    const [turmas] = await pool.query(
+      'SELECT idatividades, nome, data_fim FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
+      [id, req.id_instituicao],
+    );
+    if (turmas.length === 0) return res.status(404).json({ error: 'Turma não encontrada.' });
+    if (!turmas[0].data_fim) return res.status(409).json({ error: 'Essa turma já está ativa.' });
 
-  await pool.query('UPDATE atividades SET data_fim = NULL WHERE idatividades = ?', [id]);
+    await pool.query('UPDATE atividades SET data_fim = NULL WHERE idatividades = ?', [id]);
 
-  await logAuditEvent('TURMA_REABERTA', `Turma #${id} "${turmas[0].nome}"`, req.id_instituicao);
+    await logAuditEvent('TURMA_REABERTA', `Turma #${id} "${turmas[0].nome}"`, req.id_instituicao);
 
-  res.json({ success: true });
-}));
+    res.json({ success: true });
+  }),
+);
 
 // Histórico de quem já passou por essa turma (matrículas encerradas) — o
 // modal "Matricular" da tela de Turmas usa isso pra mostrar uma aba de
 // histórico ao lado dos alunos ativos.
-router.get('/:id/alunos-historico', asyncHandler(async (req, res) => {
-  const { id } = req.params;
+router.get(
+  '/:id/alunos-historico',
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
 
-  const [turmas] = await pool.query(
-    'SELECT idatividades FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
-    [id, req.id_instituicao]
-  );
-  if (turmas.length === 0) return res.status(404).json({ error: 'Turma não encontrada.' });
+    const [turmas] = await pool.query(
+      'SELECT idatividades FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
+      [id, req.id_instituicao],
+    );
+    if (turmas.length === 0) return res.status(404).json({ error: 'Turma não encontrada.' });
 
-  const [historico] = await pool.query(
-    `SELECT m.idmatricula AS id, m.idaluno AS aluno_id, a.nome AS nome_aluno,
+    const [historico] = await pool.query(
+      `SELECT m.idmatricula AS id, m.idaluno AS aluno_id, a.nome AS nome_aluno,
             m.data_inicio, m.data_fim, m.status
      FROM matricula m
      JOIN alunos a ON a.id = m.idaluno
      WHERE m.idatividades = ? AND m.data_fim IS NOT NULL
      ORDER BY m.data_fim DESC`,
-    [id]
-  );
+      [id],
+    );
 
-  res.json(historico);
-}));
+    res.json(historico);
+  }),
+);
 
 // Apagar turma — bloqueado se houver QUALQUER matrícula vinculada (ativa ou
 // já encerrada). Não é só "sem aluno matriculado hoje": apagar uma turma que
 // tem histórico de matrícula deixaria esse histórico com uma atividade
 // "fantasma" (sem nome, sem professor) nos relatórios — por isso o bloqueio é
 // mais rígido que só "matrícula ativa".
-router.delete('/:id', exigir('excluir'), asyncHandler(async (req, res) => {
-  const { id } = req.params;
+router.delete(
+  '/:id',
+  exigir('excluir'),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
 
-  const [existentes] = await pool.query(
-    'SELECT idatividades, nome FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
-    [id, req.id_instituicao]
-  );
-  if (existentes.length === 0) return res.status(404).json({ error: 'Turma não encontrada.' });
+    const [existentes] = await pool.query(
+      'SELECT idatividades, nome FROM atividades WHERE idatividades = ? AND id_instituicao = ?',
+      [id, req.id_instituicao],
+    );
+    if (existentes.length === 0) return res.status(404).json({ error: 'Turma não encontrada.' });
 
-  const [contagem] = await pool.query(
-    `SELECT
+    const [contagem] = await pool.query(
+      `SELECT
        SUM(CASE WHEN status = 'matriculado' AND data_fim IS NULL THEN 1 ELSE 0 END) AS ativas,
        COUNT(*) AS total
      FROM matricula WHERE idatividades = ?`,
-    [id]
-  );
-  const { ativas, total } = contagem[0];
+      [id],
+    );
+    const { ativas, total } = contagem[0];
 
-  if (total > 0) {
-    const detalheAtivas = ativas > 0 ? `${ativas} aluno(s) matriculado(s) agora` : 'nenhum aluno matriculado agora, mas';
-    const detalheHistorico = total > ativas ? ` e ${total - ativas} matrícula(s) encerrada(s) no histórico` : '';
-    return res.status(409).json({
-      error: `Essa turma tem ${detalheAtivas}${detalheHistorico}. Remova os alunos primeiro (ou mantenha a turma, mesmo vazia, para preservar o histórico).`
-    });
-  }
+    if (total > 0) {
+      const detalheAtivas =
+        ativas > 0
+          ? `${ativas} aluno(s) matriculado(s) agora`
+          : 'nenhum aluno matriculado agora, mas';
+      const detalheHistorico =
+        total > ativas ? ` e ${total - ativas} matrícula(s) encerrada(s) no histórico` : '';
+      return res.status(409).json({
+        error: `Essa turma tem ${detalheAtivas}${detalheHistorico}. Remova os alunos primeiro (ou mantenha a turma, mesmo vazia, para preservar o histórico).`,
+      });
+    }
 
-  await pool.query('DELETE FROM atividades WHERE idatividades = ? AND id_instituicao = ?', [id, req.id_instituicao]);
+    await pool.query('DELETE FROM atividades WHERE idatividades = ? AND id_instituicao = ?', [
+      id,
+      req.id_instituicao,
+    ]);
 
-  await logAuditEvent('TURMA_APAGADA', `Turma #${id} "${existentes[0].nome}"`, req.id_instituicao);
+    await logAuditEvent(
+      'TURMA_APAGADA',
+      `Turma #${id} "${existentes[0].nome}"`,
+      req.id_instituicao,
+    );
 
-  res.json({ success: true });
-}));
+    res.json({ success: true });
+  }),
+);
 
 module.exports = router;

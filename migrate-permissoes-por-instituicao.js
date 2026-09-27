@@ -17,7 +17,7 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.DB_PORT || 3306
+    port: process.env.DB_PORT || 3306,
   });
 
   try {
@@ -31,9 +31,11 @@ async function main() {
 
     const [instituicoes] = await db.query('SELECT id FROM instituicoes');
     if (instituicoes.length === 0) {
-      throw new Error('Nenhuma instituição cadastrada — abortando (não há como replicar as permissões).');
+      throw new Error(
+        'Nenhuma instituição cadastrada — abortando (não há como replicar as permissões).',
+      );
     }
-    console.log(`Instituições encontradas: ${instituicoes.map(i => i.id).join(', ')}`);
+    console.log(`Instituições encontradas: ${instituicoes.map((i) => i.id).join(', ')}`);
 
     // --- permissoes_perfil ---
     await db.query('RENAME TABLE permissoes_perfil TO permissoes_perfil_pre_instituicao');
@@ -49,10 +51,14 @@ async function main() {
       INSERT INTO permissoes_perfil (id_instituicao, perfil, tela)
       SELECT i.id, o.perfil, o.tela FROM permissoes_perfil_pre_instituicao o CROSS JOIN instituicoes i
     `);
-    console.log(`permissoes_perfil: ${ppInsert.affectedRows} linha(s) criada(s) (replicadas por instituição).`);
+    console.log(
+      `permissoes_perfil: ${ppInsert.affectedRows} linha(s) criada(s) (replicadas por instituição).`,
+    );
 
     // --- permissoes_perfil_recurso ---
-    await db.query('RENAME TABLE permissoes_perfil_recurso TO permissoes_perfil_recurso_pre_instituicao');
+    await db.query(
+      'RENAME TABLE permissoes_perfil_recurso TO permissoes_perfil_recurso_pre_instituicao',
+    );
     await db.query(`
       CREATE TABLE permissoes_perfil_recurso (
         id_instituicao INT NOT NULL,
@@ -66,7 +72,9 @@ async function main() {
       INSERT INTO permissoes_perfil_recurso (id_instituicao, perfil, tela, recurso)
       SELECT i.id, o.perfil, o.tela, o.recurso FROM permissoes_perfil_recurso_pre_instituicao o CROSS JOIN instituicoes i
     `);
-    console.log(`permissoes_perfil_recurso: ${pprInsert.affectedRows} linha(s) criada(s) (replicadas por instituição).`);
+    console.log(
+      `permissoes_perfil_recurso: ${pprInsert.affectedRows} linha(s) criada(s) (replicadas por instituição).`,
+    );
 
     // --- perfis_customizados ---
     await db.query('RENAME TABLE perfis_customizados TO perfis_customizados_pre_instituicao');
@@ -84,15 +92,19 @@ async function main() {
       INSERT INTO perfis_customizados (id_instituicao, chave, nome, criado_em, criado_por)
       SELECT i.id, o.chave, o.nome, o.criado_em, o.criado_por FROM perfis_customizados_pre_instituicao o CROSS JOIN instituicoes i
     `);
-    console.log(`perfis_customizados: ${pcInsert.affectedRows} linha(s) criada(s) (replicadas por instituição).`);
+    console.log(
+      `perfis_customizados: ${pcInsert.affectedRows} linha(s) criada(s) (replicadas por instituição).`,
+    );
 
-    console.log('Migração concluída com sucesso. As tabelas antigas ficaram guardadas como "*_pre_instituicao" — pode apagá-las manualmente depois de confirmar que está tudo certo.');
+    console.log(
+      'Migração concluída com sucesso. As tabelas antigas ficaram guardadas como "*_pre_instituicao" — pode apagá-las manualmente depois de confirmar que está tudo certo.',
+    );
   } finally {
     await db.end();
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Erro na migração:', err);
   process.exit(1);
 });

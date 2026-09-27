@@ -15,7 +15,7 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.DB_PORT || 3306
+    port: process.env.DB_PORT || 3306,
   });
 
   try {
@@ -24,7 +24,9 @@ async function main() {
     const [colunas] = await db.query("SHOW COLUMNS FROM professores LIKE 'area_responsavel'");
     if (colunas.length === 0) {
       await db.query('ALTER TABLE professores ADD COLUMN area_responsavel VARCHAR(20) NULL');
-      await db.query('ALTER TABLE professores ADD UNIQUE KEY uniq_area_responsavel (id_instituicao, area_responsavel)');
+      await db.query(
+        'ALTER TABLE professores ADD UNIQUE KEY uniq_area_responsavel (id_instituicao, area_responsavel)',
+      );
       console.log('Coluna e índice único criados.');
     } else {
       console.log('Coluna já existia — nada a fazer.');
@@ -36,7 +38,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Erro na migração:', err);
   process.exit(1);
 });

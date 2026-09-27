@@ -35,7 +35,7 @@ const TELAS = [
   { tela: '/estatisticas-comparativas', label: 'Estatísticas' },
 ];
 
-const TELAS_VALIDAS = TELAS.map(t => t.tela);
+const TELAS_VALIDAS = TELAS.map((t) => t.tela);
 
 // Perfis fixos no código, sempre editáveis pela tela de Permissões. Além
 // desses, o master pode criar perfis novos "genéricos" direto pela tela (ver
@@ -54,8 +54,11 @@ const PERFIS_EDITAVEIS_BASE = ['monitor', 'professor', 'coordenador'];
 // Customizados são POR INSTITUIÇÃO (cada instituição cria os seus, ver
 // perfis-customizados.js) — os fixos continuam valendo em qualquer uma.
 async function carregarPerfisEditaveis(idInstituicao) {
-  const [rows] = await pool.query('SELECT chave FROM perfis_customizados WHERE id_instituicao = ? ORDER BY chave', [idInstituicao]);
-  return [...PERFIS_EDITAVEIS_BASE, ...rows.map(r => r.chave)];
+  const [rows] = await pool.query(
+    'SELECT chave FROM perfis_customizados WHERE id_instituicao = ? ORDER BY chave',
+    [idInstituicao],
+  );
+  return [...PERFIS_EDITAVEIS_BASE, ...rows.map((r) => r.chave)];
 }
 
 // Ações genéricas dentro de uma tela (ver permissoes_perfil_recurso em
@@ -70,6 +73,13 @@ const RECURSOS = [
   { recurso: 'exportar', label: 'Exportar' },
 ];
 
-const RECURSOS_VALIDOS = RECURSOS.map(r => r.recurso);
+const RECURSOS_VALIDOS = RECURSOS.map((r) => r.recurso);
 
-module.exports = { TELAS, TELAS_VALIDAS, PERFIS_EDITAVEIS_BASE, carregarPerfisEditaveis, RECURSOS, RECURSOS_VALIDOS };
+module.exports = {
+  TELAS,
+  TELAS_VALIDAS,
+  PERFIS_EDITAVEIS_BASE,
+  carregarPerfisEditaveis,
+  RECURSOS,
+  RECURSOS_VALIDOS,
+};

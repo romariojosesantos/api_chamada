@@ -14,7 +14,7 @@ async function logAuditEvent(evento, detalhes, id_instituicao, connection = null
     const db = connection || pool;
     await db.query(
       'INSERT INTO chamada_conexao (evento, detalhes, id_instituicao) VALUES (?, ?, ?)',
-      [evento, detalhes, id_instituicao]
+      [evento, detalhes, id_instituicao],
     );
   } catch (error) {
     console.error('Erro ao registrar evento de auditoria:', error);

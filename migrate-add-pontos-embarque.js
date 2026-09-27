@@ -11,7 +11,7 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.DB_PORT || 3306
+    port: process.env.DB_PORT || 3306,
   });
 
   try {
@@ -39,13 +39,13 @@ async function main() {
     const [existentes] = await db.query(
       `SELECT DISTINCT id_instituicao, TRIM(ponto) AS ponto
        FROM alunos
-       WHERE ponto IS NOT NULL AND TRIM(ponto) != '' AND excluido_em IS NULL`
+       WHERE ponto IS NOT NULL AND TRIM(ponto) != '' AND excluido_em IS NULL`,
     );
     let inseridos = 0;
     for (const row of existentes) {
       const [result] = await db.query(
         'INSERT IGNORE INTO pontos_embarque (id_instituicao, nome) VALUES (?, ?)',
-        [row.id_instituicao, row.ponto]
+        [row.id_instituicao, row.ponto],
       );
       inseridos += result.affectedRows;
     }
@@ -57,7 +57,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Erro na migração:', err);
   process.exit(1);
 });

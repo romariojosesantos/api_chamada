@@ -15,13 +15,15 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.DB_PORT || 3306
+    port: process.env.DB_PORT || 3306,
   });
 
   try {
     console.log('Conectado ao banco.');
 
-    const [indice] = await db.query("SHOW INDEX FROM pontos WHERE Key_name = 'uniq_ponto_professor_interno_data'");
+    const [indice] = await db.query(
+      "SHOW INDEX FROM pontos WHERE Key_name = 'uniq_ponto_professor_interno_data'",
+    );
     if (indice.length > 0) {
       await db.query('ALTER TABLE pontos DROP INDEX uniq_ponto_professor_interno_data');
       console.log('Índice uniq_ponto_professor_interno_data removido.');
@@ -35,7 +37,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Erro na migração:', err);
   process.exit(1);
 });

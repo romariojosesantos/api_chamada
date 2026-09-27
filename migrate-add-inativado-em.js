@@ -13,7 +13,7 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.DB_PORT || 3306
+    port: process.env.DB_PORT || 3306,
   });
 
   try {
@@ -21,7 +21,7 @@ async function main() {
 
     const [colunas] = await db.query("SHOW COLUMNS FROM alunos LIKE 'inativado_em'");
     if (colunas.length === 0) {
-      await db.query("ALTER TABLE alunos ADD COLUMN inativado_em DATE NULL AFTER status");
+      await db.query('ALTER TABLE alunos ADD COLUMN inativado_em DATE NULL AFTER status');
       console.log('Coluna alunos.inativado_em criada.');
     } else {
       console.log('Coluna alunos.inativado_em já existia.');
@@ -33,7 +33,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Erro na migração:', err);
   process.exit(1);
 });

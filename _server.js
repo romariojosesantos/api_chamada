@@ -56,13 +56,28 @@ const filtrosRouter = require('./src/routes/filtros.routes');
 const AppError = require('./src/utils/AppError');
 
 // Middlewares
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? ['https://controle-de-presenca-ten.vercel.app', 'https://api-chamada.vercel.app', 'https://atoson.com.br', 'https://www.atoson.com.br'] // Domínios permitidos em produção
-    : '*',
-  allowedHeaders: ['Content-Type', 'x-institution-id', 'Authorization', 'Pragma', 'Cache-Control', 'Expires'],
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
-}));
+app.use(
+  cors({
+    origin:
+      process.env.NODE_ENV === 'production'
+        ? [
+            'https://controle-de-presenca-ten.vercel.app',
+            'https://api-chamada.vercel.app',
+            'https://atoson.com.br',
+            'https://www.atoson.com.br',
+          ] // Domínios permitidos em produção
+        : '*',
+    allowedHeaders: [
+      'Content-Type',
+      'x-institution-id',
+      'Authorization',
+      'Pragma',
+      'Cache-Control',
+      'Expires',
+    ],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  }),
+);
 
 // Middleware para desativar o cache do navegador (Crucial para iPhone/Safari)
 // Isso garante que o celular sempre busque a informação mais recente do banco de dados.
@@ -82,7 +97,9 @@ app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   const userAgent = req.headers['user-agent'];
-  console.log(`[AUDIT] ${timestamp} - ${req.method} ${req.originalUrl} - IP: ${ip} - UA: ${userAgent}`);
+  console.log(
+    `[AUDIT] ${timestamp} - ${req.method} ${req.originalUrl} - IP: ${ip} - UA: ${userAgent}`,
+  );
   next();
 });
 
@@ -154,19 +171,25 @@ app.use('/api', async (req, res, next) => {
     const parsedId = parseInt(institutionId);
     if (!institutionId) {
       console.warn(`Tentativa de acesso sem header x-institution-id em: ${req.originalUrl}`);
-      return res.status(401).json({ error: 'Acesso negado. O cabeçalho "x-institution-id" é obrigatório.' });
+      return res
+        .status(401)
+        .json({ error: 'Acesso negado. O cabeçalho "x-institution-id" é obrigatório.' });
     }
     if (isNaN(parsedId)) {
-      return res.status(401).json({ error: 'Acesso negado. ID da instituição deve ser um número válido.' });
+      return res
+        .status(401)
+        .json({ error: 'Acesso negado. ID da instituição deve ser um número válido.' });
     }
 
     if (req.user.perfil !== 'master') {
       const [vinculo] = await pool.query(
         'SELECT 1 FROM usuario_instituicoes WHERE id_usuario = ? AND id_instituicao = ? LIMIT 1',
-        [req.user.id, parsedId]
+        [req.user.id, parsedId],
       );
       if (vinculo.length === 0) {
-        return res.status(403).json({ error: 'Acesso negado. Usuário não vinculado a esta instituição.' });
+        return res
+          .status(403)
+          .json({ error: 'Acesso negado. Usuário não vinculado a esta instituição.' });
       }
     }
 
@@ -214,7 +237,7 @@ app.use((err, req, res, next) => {
   if (err.isJoi || err.name === 'ValidationError') {
     return res.status(400).json({
       error: 'Erro de validação nos dados enviados.',
-      details: err.details ? err.details.map(i => i.message) : err.message
+      details: err.details ? err.details.map((i) => i.message) : err.message,
     });
   }
 
@@ -222,7 +245,7 @@ app.use((err, req, res, next) => {
   // o resto nunca expõe detalhes internos (ex.: mensagens do banco).
   res.status(err.status || 500).json({
     error: err instanceof AppError ? err.message : 'Ocorreu um erro interno no servidor.',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined
+    message: process.env.NODE_ENV === 'development' ? err.message : undefined,
   });
 });
 

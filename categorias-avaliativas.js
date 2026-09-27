@@ -12,7 +12,7 @@ const CATEGORIA_LABEL = {
   esportivo: 'Esporte',
   cul_teoria: 'Cultura/Teoria',
   cul_pratica: 'Cultura/Prática',
-  danca: 'Dança'
+  danca: 'Dança',
 };
 
 // Deriva a categoria avaliativa de uma turma a partir da área (já populada
