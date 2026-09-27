@@ -16,7 +16,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { authMiddleware } = require('./auth');
-const { hojeBrasil } = require('./data-brasil');
+const { hojeBrasil } = require('./src/utils/data-brasil');
 const { exigirRecurso } = require('./permissoes-middleware');
 
 // Redundante com o `app.use('/api', authMiddleware)` de _server.js (que já roda

@@ -13,7 +13,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { criarNotificacao } = require('./notificacoes-service');
-const { hojeBrasil } = require('./data-brasil');
+const { hojeBrasil } = require('./src/utils/data-brasil');
 
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 

@@ -6,8 +6,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node _server.js",
-    "setup-db": "node setup-mysql.js",
-    "migrate-indexes": "node migrate-add-indexes.js",
+    "setup-db": "node scripts/setup-mysql.js",
+    "migrate-indexes": "node migrations/migrate-add-indexes.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

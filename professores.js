@@ -7,7 +7,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { logAuditEvent } = require('./audit');
-const { resolverNomeParecido } = require('./nome-similar');
+const { resolverNomeParecido } = require('./src/utils/nome-similar');
 const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);

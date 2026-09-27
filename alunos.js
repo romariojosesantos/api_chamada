@@ -12,13 +12,13 @@ const {
   encerrarMatriculasSeNaoAtivo,
 } = require('./status-sync');
 const { criarNotificacao } = require('./notificacoes-service');
-const { hojeBrasil, agoraBrasil } = require('./data-brasil');
+const { hojeBrasil, agoraBrasil } = require('./src/utils/data-brasil');
 const { podeMatricular } = require('./regras-matricula');
 const { AREAS_VALIDAS } = require('./areas');
-const { resolverNomeParecido } = require('./nome-similar');
+const { resolverNomeParecido } = require('./src/utils/nome-similar');
 const { exigirRecurso } = require('./permissoes-middleware');
 const { calcularFrequenciaPorAluno } = require('./relatorios');
-const { enviarFoto, removerFoto, configurado: storageConfigurado } = require('./storage');
+const { enviarFoto, removerFoto, configurado: storageConfigurado } = require('./src/utils/storage');
 
 // Helper para envolver rotas assíncronas e capturar erros
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);

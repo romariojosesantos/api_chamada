@@ -7,7 +7,7 @@ const pool = require('./db');
 const { validate } = require('./validation');
 const { logAuditEvent } = require('./audit');
 const { criarNotificacao } = require('./notificacoes-service');
-const { hojeBrasil } = require('./data-brasil');
+const { hojeBrasil } = require('./src/utils/data-brasil');
 const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);

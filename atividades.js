@@ -9,7 +9,7 @@ const pool = require('./db');
 const { logAuditEvent } = require('./audit');
 const { syncAlunoStatusFromMatriculas } = require('./status-sync');
 const { AREAS_VALIDAS } = require('./areas');
-const { hojeBrasil } = require('./data-brasil');
+const { hojeBrasil } = require('./src/utils/data-brasil');
 const { exigirRecurso } = require('./permissoes-middleware');
 
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);

@@ -1,4 +1,4 @@
-const { hojeBrasil } = require('../../data-brasil');
+const { hojeBrasil } = require('../utils/data-brasil');
 
 // Data de "hoje" no fuso de Brasília segundo o servidor — nunca o relógio do
 // aparelho (ver data-brasil.js).
