@@ -1,70 +1,91 @@
-// Armazenamento de arquivos (hoje só foto de aluno) no Cloudflare R2 — nunca
-// no MySQL (bloat) nem em disco local (o backend roda como função serverless
-// na Vercel, ver vercel.json: sem disco persistente entre execuções). R2 tem
-// API compatível com S3 (por isso o SDK da AWS funciona normal), sem cobrar
-// banda de saída — importante porque a foto é baixada toda vez que alguém
-// abre a tela de Chamada.
+// Armazenamento das fotos de aluno — nunca no MySQL. Dois modos:
 //
-// Variáveis de ambiente necessárias (ver .env.example):
-//   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME,
-//   R2_PUBLIC_URL (domínio público do bucket, sem barra no final)
+//  - Cloudflare R2 (produção na Vercel, que não tem disco persistente). API
+//    compatível com S3 e sem custo de banda de saída, importante porque a foto
+//    é baixada toda vez que alguém abre a Chamada. Variáveis:
+//      R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME,
+//      R2_PUBLIC_URL (domínio público do bucket, sem barra no final)
+//
+//  - Disco (Docker, ver infra/): grava numa pasta que o nginx publica. Variáveis:
+//      FOTOS_DIR (pasta, ex.: /data/fotos) e FOTOS_PUBLIC_URL (ex.: http://localhost:8080/fotos)
+//    Tem prioridade sobre o R2 quando FOTOS_DIR está definida.
+const fs = require('fs/promises');
+const path = require('path');
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
-const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
-const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL;
+const FOTOS_DIR = process.env.FOTOS_DIR ? path.resolve(process.env.FOTOS_DIR) : null;
+const emDisco = !!(FOTOS_DIR && process.env.FOTOS_PUBLIC_URL);
 
-const configurado = !!(
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
+const PUBLIC_URL = emDisco ? process.env.FOTOS_PUBLIC_URL : process.env.R2_PUBLIC_URL;
+
+const r2Configurado = !!(
   process.env.R2_ACCOUNT_ID &&
   process.env.R2_ACCESS_KEY_ID &&
   process.env.R2_SECRET_ACCESS_KEY &&
   R2_BUCKET_NAME &&
-  R2_PUBLIC_URL
+  PUBLIC_URL
 );
+const configurado = emDisco || r2Configurado;
 
-const client = configurado
-  ? new S3Client({
-      region: 'auto',
-      endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-      credentials: {
-        accessKeyId: process.env.R2_ACCESS_KEY_ID,
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-      },
-    })
-  : null;
+const client =
+  !emDisco && r2Configurado
+    ? new S3Client({
+        region: 'auto',
+        endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+        credentials: {
+          accessKeyId: process.env.R2_ACCESS_KEY_ID,
+          secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+        },
+      })
+    : null;
 
-// Envia um buffer (já validado/comprimido pelo chamador) pra uma `key` dentro
-// do bucket e devolve a URL pública final (a que vai salva em
-// alunos.foto_url). `key` inclui o caminho completo, ex.:
-// "alunos/3/1234567890.jpg" — instituição + aluno + timestamp, pra nunca
-// colidir entre instituições nem sobrescrever sem querer uma foto antiga
-// (troca de foto sempre gera uma key nova; a antiga é apagada à parte, ver
-// removerFoto).
-async function enviarFoto(key, buffer, contentType) {
-  if (!configurado) {
-    throw new Error('Armazenamento de fotos não configurado (faltam variáveis R2_* no .env).');
-  }
-  await client.send(
-    new PutObjectCommand({
-      Bucket: R2_BUCKET_NAME,
-      Key: key,
-      Body: buffer,
-      ContentType: contentType,
-      CacheControl: 'public, max-age=31536000, immutable',
-    }),
-  );
-  return `${R2_PUBLIC_URL}/${key}`;
+// Caminho no disco para a `key`, sem deixar escapar da pasta de fotos.
+function caminhoNoDisco(key) {
+  const destino = path.resolve(FOTOS_DIR, key);
+  if (!destino.startsWith(FOTOS_DIR + path.sep))
+    throw new Error(`Caminho de foto inválido: ${key}`);
+  return destino;
 }
 
-// Apaga a foto antiga ao trocar — recebe a URL salva no banco e extrai a key
-// de volta (tudo depois de R2_PUBLIC_URL/). Silencioso em erro: uma falha aqui
-// não pode impedir a troca da foto nova, só deixa um arquivo órfão no bucket.
+// Grava a foto (já validada e comprimida pelo chamador) e devolve a URL
+// pública, que é a salva em alunos.foto_url. A `key` inclui instituição +
+// aluno + timestamp ("alunos/3/1234/1700000000.jpg"): nunca colide nem
+// sobrescreve uma foto antiga (a antiga é apagada à parte, ver removerFoto).
+async function enviarFoto(key, buffer, contentType) {
+  if (!configurado) {
+    throw new Error(
+      'Armazenamento de fotos não configurado (faltam variáveis FOTOS_* ou R2_* no .env).',
+    );
+  }
+  if (emDisco) {
+    const destino = caminhoNoDisco(key);
+    await fs.mkdir(path.dirname(destino), { recursive: true });
+    await fs.writeFile(destino, buffer);
+  } else {
+    await client.send(
+      new PutObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: key,
+        Body: buffer,
+        ContentType: contentType,
+        CacheControl: 'public, max-age=31536000, immutable',
+      }),
+    );
+  }
+  return `${PUBLIC_URL}/${key}`;
+}
+
+// Apaga a foto antiga ao trocar, a partir da URL salva no banco. Silencioso em
+// erro: uma falha aqui não pode impedir a troca, só deixa um arquivo órfão.
 async function removerFoto(url) {
-  if (!configurado || !url || !url.startsWith(R2_PUBLIC_URL)) return;
-  const key = url.slice(R2_PUBLIC_URL.length + 1);
+  if (!configurado || !url || !url.startsWith(`${PUBLIC_URL}/`)) return;
+  const key = url.slice(PUBLIC_URL.length + 1);
   try {
-    await client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
+    if (emDisco) await fs.unlink(caminhoNoDisco(key));
+    else await client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
   } catch (err) {
-    console.error('Erro ao remover foto antiga do R2:', err.message);
+    console.error('Erro ao remover foto antiga:', err.message);
   }
 }
 
