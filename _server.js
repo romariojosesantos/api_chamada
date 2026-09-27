@@ -12,6 +12,7 @@
 // cadeia (as declaradas abaixo da linha `app.use('/api', authMiddleware)`).
 require('dotenv').config();
 
+//mudei aqui
 const express = require('express');
 const cors = require('cors');
 const pool = require('./db');
