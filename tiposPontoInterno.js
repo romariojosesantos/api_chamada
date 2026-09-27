@@ -134,11 +134,9 @@ router.delete(
       [id],
     );
     if (total > 0) {
-      return res
-        .status(409)
-        .json({
-          error: `Esse tipo já tem ${total} registro(s) associado(s). Desative em vez de apagar, pra manter o histórico.`,
-        });
+      return res.status(409).json({
+        error: `Esse tipo já tem ${total} registro(s) associado(s). Desative em vez de apagar, pra manter o histórico.`,
+      });
     }
 
     await pool.query('DELETE FROM tipos_ponto_interno WHERE id = ?', [id]);

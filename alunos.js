@@ -2249,12 +2249,10 @@ router.delete(
       [id, req.id_instituicao],
     );
     if (alunos.length === 0) {
-      return res
-        .status(404)
-        .json({
-          error:
-            'Aluno não encontrado na lixeira. Só é possível excluir definitivamente um aluno que já foi excluído antes.',
-        });
+      return res.status(404).json({
+        error:
+          'Aluno não encontrado na lixeira. Só é possível excluir definitivamente um aluno que já foi excluído antes.',
+      });
     }
     const nomeAluno = alunos[0].nome;
 

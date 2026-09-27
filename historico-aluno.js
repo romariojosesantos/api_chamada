@@ -261,12 +261,10 @@ router.put(
     );
     if (!matricula) return res.status(404).json({ error: 'Matrícula não encontrada.' });
     if (matricula.data_fim) {
-      return res
-        .status(409)
-        .json({
-          error:
-            'Essa matrícula já foi encerrada e virou histórico — não pode mais ser editada, só excluída.',
-        });
+      return res.status(409).json({
+        error:
+          'Essa matrícula já foi encerrada e virou histórico — não pode mais ser editada, só excluída.',
+      });
     }
 
     // idatividades é sempre o que já está gravado — ignora qualquer valor
@@ -431,11 +429,9 @@ router.post(
     );
     if (!turma) return res.status(404).json({ error: 'A turma dessa matrícula não existe mais.' });
     if (turma.data_fim)
-      return res
-        .status(409)
-        .json({
-          error: `A turma "${turma.nome}" está encerrada — reabra a turma primeiro para depois reabrir esta matrícula.`,
-        });
+      return res.status(409).json({
+        error: `A turma "${turma.nome}" está encerrada — reabra a turma primeiro para depois reabrir esta matrícula.`,
+      });
 
     const [conflitos] = await pool.query(
       `SELECT idmatricula FROM matricula
@@ -443,12 +439,10 @@ router.post(
       [matricula.idaluno, matricula.dia_semana, matricula.horario, matriculaId],
     );
     if (conflitos.length > 0) {
-      return res
-        .status(409)
-        .json({
-          error:
-            'Esse aluno já tem uma matrícula ativa nesse mesmo dia/horário — encerre-a antes de reabrir esta.',
-        });
+      return res.status(409).json({
+        error:
+          'Esse aluno já tem uma matrícula ativa nesse mesmo dia/horário — encerre-a antes de reabrir esta.',
+      });
     }
 
     await pool.query(

@@ -126,11 +126,9 @@ router.patch(
           outros.map((p) => p.nome),
         );
         if (resultado.tipo === 'exato' || resultado.tipo === 'corrigido') {
-          return res
-            .status(409)
-            .json({
-              error: `Já existe um professor chamado "${resultado.tipo === 'corrigido' ? resultado.nome : nomeEnviado}".`,
-            });
+          return res.status(409).json({
+            error: `Já existe um professor chamado "${resultado.tipo === 'corrigido' ? resultado.nome : nomeEnviado}".`,
+          });
         }
         if (resultado.tipo === 'suspeita') avisoParecido = resultado.nome;
         nomeFinal = nomeEnviado;

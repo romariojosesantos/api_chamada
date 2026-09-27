@@ -86,11 +86,9 @@ router.post(
       [idInstituicao, chave],
     );
     if (jaExiste)
-      return res
-        .status(409)
-        .json({
-          error: `Já existe um perfil "${nome}" (ou um nome muito parecido) nesta instituição.`,
-        });
+      return res.status(409).json({
+        error: `Já existe um perfil "${nome}" (ou um nome muito parecido) nesta instituição.`,
+      });
 
     await pool.query(
       'INSERT INTO perfis_customizados (id_instituicao, chave, nome, criado_por) VALUES (?, ?, ?, ?)',
@@ -130,11 +128,9 @@ router.delete(
       [chave, idInstituicao],
     );
     if (total > 0) {
-      return res
-        .status(409)
-        .json({
-          error: `${total} usuário(s) ainda tem esse perfil nesta instituição. Mude o perfil deles antes (em Admin Usuários) de apagar "${perfil.nome}".`,
-        });
+      return res.status(409).json({
+        error: `${total} usuário(s) ainda tem esse perfil nesta instituição. Mude o perfil deles antes (em Admin Usuários) de apagar "${perfil.nome}".`,
+      });
     }
 
     await pool.query('DELETE FROM perfis_customizados WHERE id_instituicao = ? AND chave = ?', [

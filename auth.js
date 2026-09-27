@@ -365,11 +365,9 @@ router.post(
       } catch (e) {
         console.error('Erro ao notificar masters sobre novo cadastro pendente:', e);
       }
-      return res
-        .status(201)
-        .json({
-          message: 'Cadastro realizado. Aguarde aprovação do master para acessar o sistema.',
-        });
+      return res.status(201).json({
+        message: 'Cadastro realizado. Aguarde aprovação do master para acessar o sistema.',
+      });
     }
 
     const user = {
@@ -404,21 +402,17 @@ router.post(
     }
 
     if (rows[0].status === 'pendente') {
-      return res
-        .status(403)
-        .json({
-          error: 'Cadastro pendente de aprovação. Aguarde liberação do master.',
-          status: 'pendente',
-        });
+      return res.status(403).json({
+        error: 'Cadastro pendente de aprovação. Aguarde liberação do master.',
+        status: 'pendente',
+      });
     }
 
     if (rows[0].status !== 'ativo') {
-      return res
-        .status(403)
-        .json({
-          error: 'Conta inativa. Entre em contato com o administrador.',
-          status: rows[0].status,
-        });
+      return res.status(403).json({
+        error: 'Conta inativa. Entre em contato com o administrador.',
+        status: rows[0].status,
+      });
     }
 
     const user = await buildUserSession(rows[0]);

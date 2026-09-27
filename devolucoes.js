@@ -54,15 +54,13 @@ router.post(
       req.id_instituicao,
     );
 
-    res
-      .status(201)
-      .json({
-        id: result.insertId,
-        nome,
-        criado_em: new Date().toISOString(),
-        total_alunos: 0,
-        devolvidos: 0,
-      });
+    res.status(201).json({
+      id: result.insertId,
+      nome,
+      criado_em: new Date().toISOString(),
+      total_alunos: 0,
+      devolvidos: 0,
+    });
   }),
 );
 

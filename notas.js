@@ -375,11 +375,9 @@ router.post(
         const entry = participacao.get(item.id_aluno);
         const professoresDaCategoria = entry?.categorias.get(item.categoria);
         if (!professoresDaCategoria || !professoresDaCategoria.has(req.user.id_professor)) {
-          return res
-            .status(403)
-            .json({
-              error: `Você não dá aula pra esse inscrito em ${CATEGORIA_LABEL[item.categoria]}.`,
-            });
+          return res.status(403).json({
+            error: `Você não dá aula pra esse inscrito em ${CATEGORIA_LABEL[item.categoria]}.`,
+          });
         }
       }
       values.push([

@@ -95,17 +95,15 @@ router.post(
       req.id_instituicao,
     );
 
-    res
-      .status(201)
-      .json({
-        id: result.insertId,
-        id_aluno: alunoId,
-        nome_aluno: aluno.nome,
-        gravidade,
-        percentual_aplicado: percentual,
-        descricao,
-        data_ocorrencia: dataOcorrencia,
-      });
+    res.status(201).json({
+      id: result.insertId,
+      id_aluno: alunoId,
+      nome_aluno: aluno.nome,
+      gravidade,
+      percentual_aplicado: percentual,
+      descricao,
+      data_ocorrencia: dataOcorrencia,
+    });
   }),
 );
 

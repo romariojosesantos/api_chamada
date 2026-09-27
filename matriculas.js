@@ -566,11 +566,9 @@ router.post(
     // (turno "Noite") é sempre permitido, ver podeMatricular.
     const turnoAluno = alunos[0].turno ? String(alunos[0].turno).trim() : null;
     if (!podeMatricular(turnoAluno, turma.turno)) {
-      return res
-        .status(409)
-        .json({
-          error: `Conflito de turno: ${alunos[0].nome} é do turno ${turnoAluno}, mas essa turma é do turno ${turma.turno}.`,
-        });
+      return res.status(409).json({
+        error: `Conflito de turno: ${alunos[0].nome} é do turno ${turnoAluno}, mas essa turma é do turno ${turma.turno}.`,
+      });
     }
 
     const connection = await pool.getConnection();
@@ -725,11 +723,9 @@ router.post(
     // Mesma regra de turno usada em /matricular — faltava aqui, permitindo mover
     // um aluno pra uma turma de turno diferente sem aviso nenhum.
     if (!podeMatricular(aluno?.turno, turma.turno)) {
-      return res
-        .status(409)
-        .json({
-          error: `Conflito de turno: ${aluno?.nome || 'Aluno'} é do turno ${aluno?.turno}, mas essa turma é do turno ${turma.turno}.`,
-        });
+      return res.status(409).json({
+        error: `Conflito de turno: ${aluno?.nome || 'Aluno'} é do turno ${aluno?.turno}, mas essa turma é do turno ${turma.turno}.`,
+      });
     }
 
     const connection = await pool.getConnection();

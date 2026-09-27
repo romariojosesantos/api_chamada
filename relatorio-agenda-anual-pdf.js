@@ -474,12 +474,10 @@ function gerarRelatorioAgendaAnualPDF({ res, instituicaoNome, ano, diasSemAula, 
   itensLegendaCores.forEach((item, i) => {
     const x = MARGEM_ESQUERDA + i * larguraItemLegenda;
     doc.circle(x + 5, Y_LEGENDA_CORES + 5, 3.5).fill(item.cor);
-    doc
-      .fillColor(COR_TEXTO_CLARO)
-      .text(item.label, x + 12, Y_LEGENDA_CORES + 1, {
-        width: larguraItemLegenda - 14,
-        ellipsis: true,
-      });
+    doc.fillColor(COR_TEXTO_CLARO).text(item.label, x + 12, Y_LEGENDA_CORES + 1, {
+      width: larguraItemLegenda - 14,
+      ellipsis: true,
+    });
   });
 
   // --- Legenda cronológica (páginas seguintes): explica cada dia marcado,

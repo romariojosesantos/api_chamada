@@ -443,11 +443,9 @@ router.post(
 
     const pontoAberto = await buscarPontoAberto(idProfessor, data, req.id_instituicao);
     if (pontoAberto) {
-      return res
-        .status(409)
-        .json({
-          error: `Você já tem um registro em aberto em "${pontoAberto.nome}" — registre a saída antes de bater outro.`,
-        });
+      return res.status(409).json({
+        error: `Você já tem um registro em aberto em "${pontoAberto.nome}" — registre a saída antes de bater outro.`,
+      });
     }
 
     const agora = agoraBrasilia();
@@ -522,11 +520,9 @@ router.post(
 
     const pontoAberto = await buscarPontoAberto(idProfessor, data, req.id_instituicao);
     if (pontoAberto) {
-      return res
-        .status(409)
-        .json({
-          error: `Você já tem um registro em aberto em "${pontoAberto.nome}" — registre a saída antes de bater outro.`,
-        });
+      return res.status(409).json({
+        error: `Você já tem um registro em aberto em "${pontoAberto.nome}" — registre a saída antes de bater outro.`,
+      });
     }
 
     // Sempre cria uma linha NOVA (ao contrário de turma) — atividade interna
@@ -584,11 +580,9 @@ router.put(
     if (!ponto) return res.status(404).json({ error: 'Registro não encontrado.' });
 
     if (!(await podeEditarPonto(req, ponto))) {
-      return res
-        .status(403)
-        .json({
-          error: 'Só o coordenador da área dessa turma (ou master) pode corrigir esse registro.',
-        });
+      return res.status(403).json({
+        error: 'Só o coordenador da área dessa turma (ou master) pode corrigir esse registro.',
+      });
     }
 
     const { hora_entrada, hora_saida } = req.body;
@@ -614,11 +608,9 @@ router.delete(
     if (!ponto) return res.status(404).json({ error: 'Registro não encontrado.' });
 
     if (!(await podeEditarPonto(req, ponto))) {
-      return res
-        .status(403)
-        .json({
-          error: 'Só o coordenador da área dessa turma (ou master) pode apagar esse registro.',
-        });
+      return res.status(403).json({
+        error: 'Só o coordenador da área dessa turma (ou master) pode apagar esse registro.',
+      });
     }
 
     await pool.query('DELETE FROM pontos WHERE id = ?', [id]);

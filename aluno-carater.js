@@ -164,11 +164,9 @@ router.post(
       : PRINCIPIO_PADRAO_DIARIO;
 
     if (texto.length < 10)
-      return res
-        .status(400)
-        .json({
-          error: 'Escreva um pouco mais sobre o que você viveu (pelo menos 10 caracteres).',
-        });
+      return res.status(400).json({
+        error: 'Escreva um pouco mais sobre o que você viveu (pelo menos 10 caracteres).',
+      });
 
     await pool.query(
       `INSERT INTO atos_carater (id_instituicao, id_aluno, principio, origem, texto, status)
