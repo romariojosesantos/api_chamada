@@ -19,7 +19,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
-const { authMiddleware, masterMiddleware } = require('./auth');
+const { authMiddleware, masterMiddleware } = require('./src/middlewares/auth');
 const { logAuditEvent } = require('./audit');
 const {
   TELAS,

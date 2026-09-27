@@ -15,7 +15,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
-const { authMiddleware } = require('./auth');
+const { authMiddleware } = require('./src/middlewares/auth');
 const { escopoDeAcesso } = require('./escopoPonto');
 const { exigirRecurso } = require('./permissoes-middleware');
 const { AREAS_VALIDAS } = require('./areas');

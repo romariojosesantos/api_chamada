@@ -6,7 +6,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
-const { masterMiddleware } = require('./auth');
+const { masterMiddleware } = require('./src/middlewares/auth');
 const { logAuditEvent } = require('./audit');
 const { syncAlunoStatusFromMatriculas, encerrarMatriculasSeNaoAtivo } = require('./status-sync');
 

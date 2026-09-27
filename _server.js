@@ -34,7 +34,8 @@ const listasRouter = require('./listas');
 const termosRouter = require('./termos');
 const devolucoesRouter = require('./devolucoes');
 const pontosEmbarqueRouter = require('./pontos-embarque');
-const { router: authRouter, authMiddleware } = require('./auth');
+const authRouter = require('./src/modules/auth/auth.routes');
+const { authMiddleware } = require('./src/middlewares/auth');
 const { router: contatosEmergenciaRouter } = require('./contatos-emergencia');
 const diasSemAulaRouter = require('./dias-sem-aula');
 const notificacoesRouter = require('./notificacoes');
@@ -211,6 +212,11 @@ app.use('/api/ocorrencias', require('./ocorrencias'));
 
 // Middleware de Tratamento de Erros Global (Melhoria de UX/Estabilidade)
 app.use((err, req, res, next) => {
+  // Erros esperados (404, 409...): a mensagem é para o usuário, não é falha do servidor.
+  if (err instanceof AppError) {
+    return res.status(err.status).json({ error: err.message, ...err.extra });
+  }
+
   console.error(`[ERRO GLOBAL]: ${err.stack}`);
 
   // Tratar especificamente erros de validação do Joi
@@ -221,10 +227,9 @@ app.use((err, req, res, next) => {
     });
   }
 
-  // Erros esperados (AppError, ex.: 404) podem mostrar a mensagem ao cliente;
-  // o resto nunca expõe detalhes internos (ex.: mensagens do banco).
+  // Nunca expõe detalhes internos (ex.: mensagens do banco).
   res.status(err.status || 500).json({
-    error: err instanceof AppError ? err.message : 'Ocorreu um erro interno no servidor.',
+    error: 'Ocorreu um erro interno no servidor.',
     message: process.env.NODE_ENV === 'development' ? err.message : undefined,
   });
 });

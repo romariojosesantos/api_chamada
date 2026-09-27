@@ -12,7 +12,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
-const { authMiddleware } = require('./auth');
+const { authMiddleware } = require('./src/middlewares/auth');
 const { exigirRecurso } = require('./permissoes-middleware');
 
 router.use(authMiddleware);
