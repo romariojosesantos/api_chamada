@@ -17,8 +17,8 @@ const router = express.Router();
 // 1. Públicas
 router.use('/auth', require('../modules/auth/auth.routes'));
 // Chamados pelo cron da Vercel; protegidos por CRON_SECRET, não por login.
-router.use('/cron/lembrete-chamada', require('../../cron-lembrete-chamada'));
-router.use('/cron/saude-banco', require('../../cron-saude-banco'));
+router.use('/cron/lembrete-chamada', require('../jobs/lembrete-chamada'));
+router.use('/cron/saude-banco', require('../jobs/saude-banco'));
 
 // 2. Globais (login, sem instituição)
 // master consulta alunos de qualquer instituição
@@ -32,7 +32,7 @@ router.use(
   authMiddleware,
   require('../../estatisticas-comparativas'),
 );
-router.use('/db-health', authMiddleware, require('../../db-health').router);
+router.use('/db-health', authMiddleware, require('../modules/sistema/db-health.routes'));
 // Telas do aluno: o token de aluno já traz a instituição.
 router.use('/aluno', authMiddleware, require('../../aluno-gamificacao'));
 router.use('/aluno', authMiddleware, require('../../aluno-carater'));

@@ -18,7 +18,7 @@
 // que o problema não se repita.
 const express = require('express');
 const router = express.Router();
-const { medirSaudeBanco } = require('./db-health');
+const { medirSaudeBanco } = require('../modules/sistema/db-health.service');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 if (!CRON_SECRET) {
