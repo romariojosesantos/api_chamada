@@ -16,31 +16,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const pool = require('./db');
-const { hojeBrasil } = require('./data-brasil');
-
-// Cache simples em memória para endpoints estáticos. Só é útil localmente ou
-// dentro da mesma invocação serverless — na Vercel cada invocação é isolada, então
-// esse cache não é compartilhado entre requisições diferentes em produção.
-const cache = new Map();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
-
-const getCache = (key) => {
-  const item = cache.get(key);
-  if (!item) return null;
-  if (Date.now() > item.expiry) {
-    cache.delete(key);
-    return null;
-  }
-  return item.data;
-};
-
-const setCache = (key, data) => {
-  cache.set(key, { data, expiry: Date.now() + CACHE_TTL });
-};
-
-const clearCache = () => {
-  cache.clear();
-};
 
 // Inicializa o aplicativo Express
 const app = express();
@@ -75,6 +50,10 @@ const pontosRouter = require('./pontos');
 const tiposPontoInternoRouter = require('./tiposPontoInterno');
 const agendaEventosRouter = require('./agenda-eventos');
 const justificativasFaltaRouter = require('./justificativas-falta');
+const instituicoesRoutes = require('./src/routes/instituicoes.routes');
+const hojeRouter = require('./src/routes/hoje.routes');
+const filtrosRouter = require('./src/routes/filtros.routes');
+const AppError = require('./src/utils/AppError');
 
 // Middlewares
 app.use(cors({
@@ -153,50 +132,10 @@ app.use('/api/aluno', authMiddleware, require('./aluno-gamificacao'));
 // colega) — mesmo motivo acima, montado ao lado de aluno-gamificacao.
 app.use('/api/aluno', authMiddleware, require('./aluno-carater'));
 
-// Lista de instituições para o seletor do usuário logado: master vê todas, os
-// demais perfis só as instituições vinculadas a eles. Consulta
-// usuario_instituicoes NA HORA (nunca req.user.instituicoes, que vem do
-// TOKEN assinado no login — token dura 7 dias, então se um master desvincula
-// esse usuário de uma instituição, confiar no token deixaria o seletor ainda
-// listando ela por até 7 dias). Fica fora do bloco `app.use('/api',
-// authMiddleware)` porque usa authMiddleware diretamente, sem depender do
-// header x-institution-id (o usuário ainda não escolheu instituição neste
-// ponto do fluxo do front).
-app.get('/api/instituicoes/todas', authMiddleware, async (req, res) => {
-  try {
-    if (req.user.perfil === 'master') {
-      const cacheKey = 'instituicoes_todas';
-      const cached = getCache(cacheKey);
-      if (cached) {
-        return res.json(cached);
-      }
-
-      const [results] = await pool.query("SELECT id, nome FROM instituicoes ORDER BY nome ASC");
-      setCache(cacheKey, results);
-      return res.json(results);
-    }
-
-    const [vinculos] = await pool.query('SELECT id_instituicao FROM usuario_instituicoes WHERE id_usuario = ?', [req.user.id]);
-    const ids = vinculos.map(v => v.id_instituicao);
-    if (ids.length === 0) return res.json([]);
-
-    const [results] = await pool.query("SELECT id, nome FROM instituicoes WHERE id IN (?) ORDER BY nome ASC", [ids]);
-    res.json(results);
-  } catch (err) {
-    console.error("Erro em GET /api/instituicoes/todas:", err);
-    res.status(500).json({ error: 'Erro ao buscar lista de instituições: ' + err.message });
-  }
-});
-
-// Data de "hoje" segundo o servidor, no fuso de Brasília — nunca o relógio do
-// aparelho do usuário. Existe porque a tela de Chamada usava só o relógio do
-// navegador pra decidir a data padrão ao abrir; se o aparelho estiver com a
-// data errada (relógio desconfigurado, fuso trocado etc.), a chamada podia
-// ser lançada no dia errado sem ninguém perceber. Ver data-brasil.js pro
-// motivo de usar Intl com timeZone fixo em vez de `new Date()` puro.
-app.get('/api/hoje', authMiddleware, (req, res) => {
-  res.json({ hoje: hojeBrasil() });
-});
+// Seletor de instituição e data do servidor: exigem login, mas NÃO o
+// x-institution-id (o usuário ainda não escolheu instituição). Ver src/routes/.
+app.use('/api/instituicoes', authMiddleware, instituicoesRoutes.globalRouter);
+app.use('/api/hoje', authMiddleware, hojeRouter);
 
 app.use('/api', authMiddleware);
 
@@ -238,58 +177,9 @@ app.use('/api', async (req, res, next) => {
   }
 });
 
-// Rota para obter detalhes da instituição selecionada (ID vindo do header via middleware)
-app.get('/api/instituicao', async (req, res) => {
-  try {
-    const [results] = await pool.query("SELECT id, nome FROM instituicoes WHERE id = ?", [req.id_instituicao]);
-    if (results.length === 0) {
-      return res.status(404).json({ error: 'Instituição não encontrada.' });
-    }
-    res.json(results[0]);
-  } catch (err) {
-    console.error("Erro em GET /api/instituicao:", err);
-    res.status(500).json({ error: 'Erro ao buscar dados da instituição: ' + err.message });
-  }
-});
-
-// Rota para listar transportes únicos da instituição (para o dropdown de filtros)
-app.get('/api/transportes', async (req, res) => {
-  try {
-    const sql = `
-      SELECT DISTINCT TRIM(transporte) AS transporte
-      FROM alunos
-      WHERE id_instituicao = ? AND transporte IS NOT NULL AND TRIM(transporte) != ''
-      ORDER BY transporte ASC
-    `;
-    const [results] = await pool.query(sql, [req.id_instituicao]);
-    const lista = results.map(r => r.transporte).filter(Boolean);
-    res.json(lista);
-  } catch (err) {
-    console.error("Erro em GET /api/transportes:", err);
-    res.status(500).json({ error: 'Erro ao buscar transportes: ' + err.message });
-  }
-});
-
-// Rota para listar professores únicos da instituição (para o dropdown de filtros)
-// Só ativos: professor desativado (ver tela "Educadores") não deve poluir
-// autocomplete/filtro de telas que não sabem de status — continua aparecendo
-// nas turmas/relatórios onde já dava aula, só não entra em seleção nova.
-app.get('/api/professores', async (req, res) => {
-  try {
-    const sql = `
-      SELECT DISTINCT TRIM(nome) AS nome
-      FROM professores
-      WHERE id_instituicao = ? AND nome IS NOT NULL AND TRIM(nome) != '' AND ativo = 1
-      ORDER BY nome ASC
-    `;
-    const [results] = await pool.query(sql, [req.id_instituicao]);
-    const lista = results.map(r => r.nome).filter(Boolean);
-    res.json(lista);
-  } catch (err) {
-    console.error("Erro em GET /api/professores:", err);
-    res.status(500).json({ error: 'Erro ao buscar professores: ' + err.message });
-  }
-});
+// Dados da instituição selecionada e dropdowns de filtro (ver src/routes/).
+app.use('/api/instituicao', instituicoesRoutes.tenantRouter);
+app.use('/api', filtrosRouter); // /api/transportes e /api/professores
 
 // Modularização de Rotas (Transferido para roteadores específicos)
 app.use('/api/alunos', alunosRouter);
@@ -328,8 +218,10 @@ app.use((err, req, res, next) => {
     });
   }
 
+  // Erros esperados (AppError, ex.: 404) podem mostrar a mensagem ao cliente;
+  // o resto nunca expõe detalhes internos (ex.: mensagens do banco).
   res.status(err.status || 500).json({
-    error: 'Ocorreu um erro interno no servidor.',
+    error: err instanceof AppError ? err.message : 'Ocorreu um erro interno no servidor.',
     message: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
