@@ -141,7 +141,7 @@ router.put('/:id', masterMiddleware, asyncHandler(async (req, res) => {
 
   const statusNovo = status || 'ativo';
 
-  const [result] = await pool.query(
+  await pool.query(
     `UPDATE alunos
      SET nome = ?, data_nascimento = ?, sexo = ?, telefone = ?, turma = ?, turno = ?, transporte = ?, Inf = ?, status = ?
      WHERE id = ?`,
@@ -233,7 +233,7 @@ router.put('/matricula/:id', masterMiddleware, asyncHandler(async (req, res) => 
   const idatividades = matricula.idatividades;
   const horarioTurma = await resolverHorarioDaTurma(idatividades);
 
-  const [result] = await pool.query(
+  await pool.query(
     `UPDATE matricula
      SET turno = ?, horario = ?, dia_semana = ?, status = ?, data_inicio = ?, data_fim = ?, idatividades = ?
      WHERE idmatricula = ?`,

@@ -8,6 +8,7 @@
 // os arquivos por um import literal de 'express' (erro visto ao remover:
 // "No entrypoint found which imports express"). Sem essa linha, o deploy falha
 // no build mesmo com tudo funcionando localmente.
+// eslint-disable-next-line no-unused-vars -- import literal exigido pelo build da Vercel (ver acima)
 const express = require('express');
 const app = require('../_server');
 

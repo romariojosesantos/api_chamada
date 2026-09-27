@@ -26,7 +26,7 @@ const TURNOS_VALIDOS = ['Manhã', 'Tarde', 'Noite'];
 // a turma. Reaproveitado tanto pelo professor principal (validarECresolverProfessor
 // abaixo) quanto pelos co-professores (POST /:id/professores).
 async function resolverProfessor(req, idprofessor, professor_nome) {
-  let idProfessorFinal = idprofessor ? Number(idprofessor) : null;
+  const idProfessorFinal = idprofessor ? Number(idprofessor) : null;
   if (idProfessorFinal || !professor_nome || !String(professor_nome).trim()) return idProfessorFinal;
 
   const nomeProf = String(professor_nome).trim();

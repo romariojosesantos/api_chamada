@@ -7,7 +7,11 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node _server.js",
     "setup-db": "node setup-mysql.js",
-    "migrate-indexes": "node migrate-add-indexes.js"
+    "migrate-indexes": "node migrate-add-indexes.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "keywords": [],
   "author": "",
@@ -22,5 +26,12 @@
     "pdfkit": "^0.20.2",
     "resend": "^6.25.0",
     "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.9"
   }
 }

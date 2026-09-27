@@ -1111,7 +1111,7 @@ router.post('/upsert-bulk', exigir('criar'), asyncHandler(async (req, res) => {
     const matriculasToClose = [];
 
     for (const matricula of finalMatriculasValues) {
-      const [idaluno, idatividades, turno, horario, dia_semana, id_instituicao] = matricula;
+      const [idaluno, idatividades, turno, horario, dia_semana] = matricula;
       const key = `${idaluno}_${turno}_${horario}_${dia_semana}`;
       const existingMatricula = currentMatriculaMap.get(key);
 

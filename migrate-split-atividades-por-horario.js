@@ -48,7 +48,7 @@ async function main() {
     const manterNaOriginal = []; // 1 por atividade: { old_id, dia_semana, horario, turno }
     const criarNova = []; // as combinações extras: { old_id, nome, idprofessor, id_instituicao, dia_semana, horario, turno }
 
-    for (const [oldId, lista] of porAtividade) {
+    for (const [, lista] of porAtividade) {
       manterNaOriginal.push(lista[0]);
       for (let i = 1; i < lista.length; i++) {
         criarNova.push(lista[i]);

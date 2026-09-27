@@ -16,7 +16,7 @@ function distanciaLevenshtein(a, b) {
   if (m === 0) return n;
   if (n === 0) return m;
   const linhaAnterior = Array.from({ length: n + 1 }, (_, j) => j);
-  let linhaAtual = new Array(n + 1);
+  const linhaAtual = new Array(n + 1);
   for (let i = 1; i <= m; i++) {
     linhaAtual[0] = i;
     for (let j = 1; j <= n; j++) {

@@ -7,6 +7,7 @@
 // detectar o entrypoint da function, e sem essa linha o deploy falha ("No
 // entrypoint found which imports express") mesmo com o app funcionando localmente
 // (ver api/index.js, que é o entrypoint real configurado no vercel.json).
+// eslint-disable-next-line no-unused-vars -- import literal exigido pelo build da Vercel (ver acima)
 const express = require('express');
 const app = require('./_server');
 
