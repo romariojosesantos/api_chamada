@@ -19,6 +19,7 @@ test('token adulterado é recusado', () => {
   assert.equal(verifyToken(`${corpo}.${assinatura.slice(0, -1)}A`), null);
   assert.equal(verifyToken(''), null);
   assert.equal(verifyToken('sem-ponto'), null);
+  assert.equal(verifyToken('abc.def'), null); // assinatura de tamanho errado não pode lançar erro
 });
 
 test('senha: hash confere só com a senha certa e usa salt diferente a cada vez', () => {

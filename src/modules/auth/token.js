@@ -32,7 +32,12 @@ function signToken(payload) {
 function verifyToken(token) {
   if (!token || !token.includes('.')) return null;
   const [corpo, assinatura] = token.split('.');
-  if (!crypto.timingSafeEqual(Buffer.from(assinatura), Buffer.from(assinar(corpo)))) return null;
+  const recebida = Buffer.from(assinatura);
+  const esperada = Buffer.from(assinar(corpo));
+  // timingSafeEqual lança erro com tamanhos diferentes: token malformado é só inválido.
+  if (recebida.length !== esperada.length || !crypto.timingSafeEqual(recebida, esperada)) {
+    return null;
+  }
   const payload = JSON.parse(Buffer.from(corpo, 'base64url').toString('utf8'));
   if (!payload.exp || payload.exp < Date.now()) return null;
   return payload;
