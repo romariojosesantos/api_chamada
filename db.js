@@ -3,7 +3,7 @@
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
-// Em produção este backend roda como função serverless na Vercel (ver _server.js /
+// Em produção este backend roda como função serverless na Vercel (ver src/app.js /
 // api/index.js / vercel.json) — cada invocação é um processo curto e isolado, então
 // manter um pool grande de conexões "quentes" não ajuda e ainda esgota o limite de
 // conexões do MySQL quando várias invocações rodam em paralelo. `isVercel` detecta

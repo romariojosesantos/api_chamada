@@ -3,7 +3,7 @@
 // mas o público das listas é só quem está inativo, não ativo). Cada
 // instituição cria/apaga os seus próprios itens. Mesmo nível de proteção que
 // Listas/Termos: só authMiddleware/instituição genéricos (aplicados em
-// _server.js), controle de acesso por perfil é decidido no front (ver
+// src/routes/index.js), controle de acesso por perfil é decidido no front (ver
 // backend/telas.js).
 const express = require('express');
 const router = express.Router();

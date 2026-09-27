@@ -1,5 +1,5 @@
 // CRUD de professor (tela "Educadores") — diferente de GET /api/professores
-// em _server.js, que é só uma lista enxuta de nomes pro autocomplete/filtro de
+// em src/routes/index.js, que é só uma lista enxuta de nomes pro autocomplete/filtro de
 // outras telas. Aqui é a administração de verdade: criar, renomear, ativar/
 // desativar, apagar (só se nunca deu aula) e transferir turmas em massa de um
 // professor pra outro.

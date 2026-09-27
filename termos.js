@@ -1,7 +1,7 @@
 // CRUD de "Termos" — termos de responsabilidade que os pais dos inscritos
 // assinam (ex.: "Corajosamente Éticos", "Animais Peçonhentos"), cada
 // instituição cria/apaga os seus. Mesmo nível de proteção que Listas/Turmas:
-// só authMiddleware/instituição genéricos (aplicados em _server.js), controle
+// só authMiddleware/instituição genéricos (aplicados em src/routes/index.js), controle
 // de acesso por perfil é decidido no front (ver backend/telas.js).
 const express = require('express');
 const router = express.Router();

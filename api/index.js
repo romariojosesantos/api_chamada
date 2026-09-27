@@ -1,7 +1,5 @@
-// Entry point da função serverless da Vercel — vercel.json faz o rewrite de
-// "/(.*)" pra cá, então toda rota da API passa por aqui. A lógica real está em
-// _server.js; este arquivo só existe porque a Vercel exige um arquivo dentro de
-// api/ para criar a function.
+// Entry point da função serverless da Vercel: vercel.json manda toda rota para
+// cá. A aplicação é montada em src/app.js.
 //
 // O `require('express')` abaixo NÃO é usado diretamente neste arquivo, mas NÃO
 // PODE ser removido: o build da Vercel detecta o entrypoint da função varrendo
@@ -10,6 +8,6 @@
 // no build mesmo com tudo funcionando localmente.
 // eslint-disable-next-line no-unused-vars -- import literal exigido pelo build da Vercel (ver acima)
 const express = require('express');
-const app = require('../_server');
+const app = require('../src/app');
 
 module.exports = app;

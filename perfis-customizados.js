@@ -5,7 +5,7 @@
 // Perfis customizados são POR INSTITUIÇÃO (ver
 // migrate-permissoes-por-instituicao.js): cada instituição tem seu próprio
 // catálogo, criado e apagado independente das demais. Esta rota é montada
-// ANTES do middleware global de x-institution-id (ver _server.js), então lê
+// ANTES do middleware global de x-institution-id (ver src/routes/index.js), então lê
 // o header diretamente em vez de usar req.id_instituicao.
 const express = require('express');
 const router = express.Router();

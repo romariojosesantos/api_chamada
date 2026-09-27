@@ -1,7 +1,7 @@
 // CRUD de "Listas" — agrupamentos nomeados de alunos por instituição (tela
 // "Listas", estilo Apple Notas: título + busca pra adicionar aluno). Mesmo
 // nível de proteção que as outras telas "normais" (Turmas, Educadores): só
-// authMiddleware/instituição genéricos (aplicados em _server.js), controle
+// authMiddleware/instituição genéricos (aplicados em src/routes/index.js), controle
 // de acesso por perfil é decidido no front (ver backend/telas.js).
 const express = require('express');
 const router = express.Router();

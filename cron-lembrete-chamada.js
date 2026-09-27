@@ -5,7 +5,7 @@
 //
 // Rota disparada pelo cron da Vercel (ver "crons" em vercel.json), não por
 // usuário logado — por isso fica FORA do bloco de authMiddleware/
-// x-institution-id de _server.js (mesmo motivo/posição de estatisticas-
+// x-institution-id de src/routes/index.js (mesmo motivo/posição de estatisticas-
 // comparativas.js: essa rota olha TODAS as instituições de uma vez). Protegida
 // pelo cabeçalho que a própria Vercel envia (`Authorization: Bearer
 // $CRON_SECRET`) quando a variável de ambiente CRON_SECRET está configurada.

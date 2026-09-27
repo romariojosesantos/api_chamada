@@ -1,7 +1,7 @@
 // CRUD de "Pontos de Embarque" — lista de pontos (campo "Ponto" do cadastro
 // do aluno) que cada instituição mantém a sua própria. Mesmo nível de
 // proteção que Listas/Termos: só authMiddleware/instituição genéricos
-// (aplicados em _server.js), sem middleware de perfil — qualquer perfil com
+// (aplicados em src/routes/index.js), sem middleware de perfil — qualquer perfil com
 // acesso à tela de cadastro de aluno pode gerenciar.
 const express = require('express');
 const router = express.Router();

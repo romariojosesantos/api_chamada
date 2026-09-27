@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "test": "node --test",
-    "start": "node _server.js",
+    "start": "node server.js",
     "setup-db": "node scripts/setup-mysql.js",
     "migrate-indexes": "node migrations/migrate-add-indexes.js",
     "lint": "eslint .",

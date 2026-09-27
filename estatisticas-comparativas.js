@@ -1,7 +1,7 @@
 // Tela "Comparativo" (configurável pela tela de Permissões, ver backend/telas.js)
 // — compara dados gerais entre TODAS as instituições que o usuário logado tem
 // acesso, não só a que está selecionada no momento. Por isso este router é
-// montado em _server.js ANTES do middleware de x-institution-id (mesmo
+// montado em src/routes/index.js ANTES do middleware de x-institution-id (mesmo
 // motivo/posição de historico-aluno.js e permissoes.js): a rota não trabalha
 // "dentro" de uma instituição, ela enxerga várias de uma vez.
 //

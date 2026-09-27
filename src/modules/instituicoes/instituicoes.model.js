@@ -27,4 +27,18 @@ async function idsVinculadosAoUsuario(idUsuario) {
   return rows.map((r) => r.id_instituicao);
 }
 
-module.exports = { listarTodas, listarPorIds, buscarPorId, idsVinculadosAoUsuario };
+async function usuarioTemVinculo(idUsuario, idInstituicao) {
+  const [rows] = await pool.query(
+    'SELECT 1 FROM usuario_instituicoes WHERE id_usuario = ? AND id_instituicao = ? LIMIT 1',
+    [idUsuario, idInstituicao],
+  );
+  return rows.length > 0;
+}
+
+module.exports = {
+  listarTodas,
+  listarPorIds,
+  buscarPorId,
+  idsVinculadosAoUsuario,
+  usuarioTemVinculo,
+};

@@ -1,7 +1,7 @@
 // Checagem diária automática da saúde do pool de conexões MySQL — mesmo
 // padrão de cron-lembrete-chamada.js: disparada pelo cron da Vercel (ver
 // "crons" em vercel.json), não por usuário logado, por isso fica FORA do
-// bloco de authMiddleware/x-institution-id de _server.js. Protegida pelo
+// bloco de authMiddleware/x-institution-id de src/routes/index.js. Protegida pelo
 // cabeçalho que a própria Vercel envia (`Authorization: Bearer
 // $CRON_SECRET`) quando a variável de ambiente CRON_SECRET está configurada.
 //

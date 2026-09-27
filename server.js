@@ -1,14 +1,19 @@
-// Reexporta o app real (ver _server.js). Existe separado por compatibilidade —
-// alguma ferramenta/script pode esperar um "server.js" na raiz — mas toda a
-// lógica do servidor vive em _server.js.
+// Sobe a API localmente (`npm start`). Na Vercel quem responde é api/index.js.
 //
-// O `require('express')` abaixo não é usado diretamente aqui, mas não remova: o
-// build da Vercel varre os arquivos por um import literal de 'express' pra
-// detectar o entrypoint da function, e sem essa linha o deploy falha ("No
-// entrypoint found which imports express") mesmo com o app funcionando localmente
-// (ver api/index.js, que é o entrypoint real configurado no vercel.json).
-// eslint-disable-next-line no-unused-vars -- import literal exigido pelo build da Vercel (ver acima)
+// O require('express') abaixo não é usado aqui, mas não remova: o build da
+// Vercel procura um import literal de 'express' para detectar o entrypoint e
+// falha sem ele ("No entrypoint found which imports express").
+// eslint-disable-next-line no-unused-vars
 const express = require('express');
-const app = require('./_server');
+const app = require('./src/app');
+
+const PORT = process.env.PORT || 3001;
+
+if (require.main === module) {
+  // 0.0.0.0: acessível por outros aparelhos da mesma rede (pelo IP local).
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Servidor rodando na porta ${PORT}.`);
+  });
+}
 
 module.exports = app;

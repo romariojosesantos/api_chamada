@@ -1,5 +1,5 @@
 // Saúde do pool de conexões MySQL — só master (é infraestrutura, não dado de
-// uma instituição). Fica fora do bloco de x-institution-id em _server.js,
+// uma instituição). Fica fora do bloco de x-institution-id em src/routes/index.js,
 // mesma posição de estatisticas-comparativas.js/permissoes.js.
 //
 // Existe porque em produção (Vercel) cada invocação serverless abre só 1

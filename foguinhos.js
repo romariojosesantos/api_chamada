@@ -10,7 +10,7 @@
 // detalhe dia a dia em vez de só o agregado).
 //
 // Rota staff normal (montada depois de authMiddleware + x-institution-id em
-// _server.js) — não tem nada a ver com o token de aluno usado em
+// src/routes/index.js) — não tem nada a ver com o token de aluno usado em
 // aluno-gamificacao.js, que só serve pro próprio aluno ver os dados dele.
 const express = require('express');
 const router = express.Router();

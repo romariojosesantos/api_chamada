@@ -19,7 +19,7 @@ const { authMiddleware } = require('./src/middlewares/auth');
 const { hojeBrasil } = require('./src/utils/data-brasil');
 const { exigirRecurso } = require('./permissoes-middleware');
 
-// Redundante com o `app.use('/api', authMiddleware)` de _server.js (que já roda
+// Redundante com o `app.use('/api', authMiddleware)` de src/routes/index.js (que já roda
 // antes deste router ser montado), mas inofensivo — mantido por clareza/segurança
 // caso este router um dia seja montado em outro lugar sem esse middleware global.
 router.use(authMiddleware);

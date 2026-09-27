@@ -15,7 +15,7 @@
 //
 // Permissões são POR INSTITUIÇÃO (ver migrate-permissoes-por-instituicao.js) —
 // esta rota é montada ANTES do middleware global de x-institution-id (ver
-// _server.js), então lê o header diretamente em vez de usar req.id_instituicao.
+// src/routes/index.js), então lê o header diretamente em vez de usar req.id_instituicao.
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
@@ -147,7 +147,7 @@ router.put('/:perfil', async (req, res) => {
       );
     }
     // Esta rota é montada ANTES do middleware que popula req.id_instituicao
-    // (ver _server.js), por isso usa idInstituicao lido diretamente do header
+    // (ver src/routes/index.js), por isso usa idInstituicao lido diretamente do header
     // (ver obterIdInstituicao acima).
     await logAuditEvent(
       'PERMISSOES_PERFIL_ATUALIZADAS',

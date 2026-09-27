@@ -15,7 +15,7 @@
 // Permissões são POR INSTITUIÇÃO (ver migrate-permissoes-por-instituicao.js):
 // "monitor" na instituição 1 pode ter telas/recursos diferentes de "monitor"
 // na instituição 2. A checagem usa req.id_instituicao, populado pelo
-// middleware global de x-institution-id (ver _server.js) — como este
+// middleware global de x-institution-id (ver src/routes/index.js) — como este
 // middleware roda nas rotas de negócio, montadas DEPOIS dessa cadeia,
 // req.id_instituicao já está disponível na prática em todo lugar que usa
 // exigirRecurso. Única exceção conhecida: PUT /vincular-professor/usuarios/:id
