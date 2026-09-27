@@ -7,13 +7,9 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 
-const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-
 // Listar todas as matrículas/grade da instituição
-router.get(
-  '/',
-  asyncHandler(async (req, res) => {
-    const sql = `
+router.get('/', async (req, res) => {
+  const sql = `
     SELECT m.idmatricula, m.idaluno, m.idatividades, m.turno, m.horario, m.dia_semana, m.status, m.id_instituicao,
            a.nome as nome_aluno,
            a.turno as aluno_turno,
@@ -29,9 +25,8 @@ router.get(
     ORDER BY a.nome ASC
   `;
 
-    const [results] = await pool.query(sql, [req.id_instituicao]);
-    res.json(results);
-  }),
-);
+  const [results] = await pool.query(sql, [req.id_instituicao]);
+  res.json(results);
+});
 
 module.exports = router;

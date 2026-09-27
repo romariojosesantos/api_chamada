@@ -39,9 +39,6 @@ if (!TOKEN_SECRET) {
 }
 const EFFECTIVE_SECRET = TOKEN_SECRET || 'controle-presenca-secret-local';
 
-// Helper para envolver rotas assíncronas e capturar erros
-const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-
 // Hash de senha: scrypt com salt aleatório por usuário, formato armazenado "salt:hash".
 const hashPassword = (password) => {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -182,22 +179,16 @@ const authMiddleware = (req, res, next) => {
   next();
 };
 
-router.get(
-  '/instituicoes',
-  asyncHandler(async (req, res) => {
-    const [results] = await pool.query('SELECT id, nome FROM instituicoes ORDER BY nome ASC');
-    res.json(results);
-  }),
-);
+router.get('/instituicoes', async (req, res) => {
+  const [results] = await pool.query('SELECT id, nome FROM instituicoes ORDER BY nome ASC');
+  res.json(results);
+});
 
 // Usado pelo front para saber se ainda não existe nenhum usuário master (fluxo de setup inicial).
-router.get(
-  '/has-master',
-  asyncHandler(async (req, res) => {
-    const [rows] = await pool.query('SELECT id FROM usuarios WHERE perfil = ? LIMIT 1', ['master']);
-    res.json({ hasMaster: rows.length > 0 });
-  }),
-);
+router.get('/has-master', async (req, res) => {
+  const [rows] = await pool.query('SELECT id FROM usuarios WHERE perfil = ? LIMIT 1', ['master']);
+  res.json({ hasMaster: rows.length > 0 });
+});
 
 // --- Validação de campos de usuário (compartilhada entre register/admin create/admin update) ---
 // Retorna uma mensagem de erro (string) se algo for inválido, ou null se estiver tudo certo.
@@ -294,133 +285,127 @@ const notificarMastersNovoCadastro = async ({ id, nome, email, perfil }) => {
 // Autocadastro. Usuários não-master entram com status "pendente" e precisam ser
 // aprovados por um master antes de conseguir logar (ver /admin/usuarios/:id/aprovar).
 // O primeiro master do sistema é a exceção: já entra "ativo" e logado.
-router.post(
-  '/register',
-  asyncHandler(async (req, res) => {
-    const { nome, email, senha, perfil, id_instituicao } = req.body;
-    const cleanName = String(nome || '').trim();
-    const cleanEmail = String(email || '')
-      .trim()
-      .toLowerCase();
-    const cleanPassword = String(senha || '');
-    const cleanPerfil = String(perfil || 'monitor')
-      .trim()
-      .toLowerCase();
-    const institutionId = parseInt(id_instituicao);
+router.post('/register', async (req, res) => {
+  const { nome, email, senha, perfil, id_instituicao } = req.body;
+  const cleanName = String(nome || '').trim();
+  const cleanEmail = String(email || '')
+    .trim()
+    .toLowerCase();
+  const cleanPassword = String(senha || '');
+  const cleanPerfil = String(perfil || 'monitor')
+    .trim()
+    .toLowerCase();
+  const institutionId = parseInt(id_instituicao);
 
-    const erro = await validarCamposUsuario({
-      nome: cleanName,
-      email: cleanEmail,
-      senha: cleanPassword,
-      perfil: cleanPerfil,
-      idsInstituicoes: isNaN(institutionId) ? [] : [institutionId],
-    });
-    if (erro) return res.status(400).json({ error: erro });
-    if (cleanPerfil !== 'master' && isNaN(institutionId))
-      return res.status(400).json({ error: 'Selecione a instituição vinculada ao usuário.' });
+  const erro = await validarCamposUsuario({
+    nome: cleanName,
+    email: cleanEmail,
+    senha: cleanPassword,
+    perfil: cleanPerfil,
+    idsInstituicoes: isNaN(institutionId) ? [] : [institutionId],
+  });
+  if (erro) return res.status(400).json({ error: erro });
+  if (cleanPerfil !== 'master' && isNaN(institutionId))
+    return res.status(400).json({ error: 'Selecione a instituição vinculada ao usuário.' });
 
-    const [existing] = await pool.query('SELECT id FROM usuarios WHERE email = ? LIMIT 1', [
-      cleanEmail,
+  const [existing] = await pool.query('SELECT id FROM usuarios WHERE email = ? LIMIT 1', [
+    cleanEmail,
+  ]);
+  if (existing.length > 0)
+    return res.status(409).json({ error: 'Este e-mail já está cadastrado.' });
+
+  // Só pode existir um master no sistema — é ele quem aprova todos os outros cadastros.
+  if (cleanPerfil === 'master') {
+    const [masterCheck] = await pool.query('SELECT id FROM usuarios WHERE perfil = ? LIMIT 1', [
+      'master',
     ]);
-    if (existing.length > 0)
-      return res.status(409).json({ error: 'Este e-mail já está cadastrado.' });
-
-    // Só pode existir um master no sistema — é ele quem aprova todos os outros cadastros.
-    if (cleanPerfil === 'master') {
-      const [masterCheck] = await pool.query('SELECT id FROM usuarios WHERE perfil = ? LIMIT 1', [
-        'master',
-      ]);
-      if (masterCheck.length > 0) {
-        return res
-          .status(403)
-          .json({ error: 'Já existe um usuário master no sistema. Contate o administrador.' });
-      }
+    if (masterCheck.length > 0) {
+      return res
+        .status(403)
+        .json({ error: 'Já existe um usuário master no sistema. Contate o administrador.' });
     }
+  }
 
-    const senha_hash = hashPassword(cleanPassword);
-    const status = cleanPerfil === 'master' ? 'ativo' : 'pendente';
-    const [result] = await pool.query(
-      'INSERT INTO usuarios (nome, email, senha_hash, perfil, status) VALUES (?, ?, ?, ?, ?)',
-      [cleanName, cleanEmail, senha_hash, cleanPerfil, status],
+  const senha_hash = hashPassword(cleanPassword);
+  const status = cleanPerfil === 'master' ? 'ativo' : 'pendente';
+  const [result] = await pool.query(
+    'INSERT INTO usuarios (nome, email, senha_hash, perfil, status) VALUES (?, ?, ?, ?, ?)',
+    [cleanName, cleanEmail, senha_hash, cleanPerfil, status],
+  );
+  if (cleanPerfil !== 'master') {
+    await pool.query(
+      'INSERT IGNORE INTO usuario_instituicoes (id_usuario, id_instituicao) VALUES (?, ?)',
+      [result.insertId, institutionId],
     );
-    if (cleanPerfil !== 'master') {
-      await pool.query(
-        'INSERT IGNORE INTO usuario_instituicoes (id_usuario, id_instituicao) VALUES (?, ?)',
-        [result.insertId, institutionId],
-      );
-    }
+  }
 
-    if (status === 'pendente') {
-      // Precisa de await antes de responder: em ambiente serverless (Vercel) a
-      // função pode ser congelada assim que a resposta é enviada, matando no
-      // meio do caminho qualquer envio de e-mail "fire-and-forget" que ainda
-      // não tivesse terminado — por isso não dá pra só disparar e seguir.
-      try {
-        await notificarMastersNovoCadastro({
-          id: result.insertId,
-          nome: cleanName,
-          email: cleanEmail,
-          perfil: cleanPerfil,
-        });
-      } catch (e) {
-        console.error('Erro ao notificar masters sobre novo cadastro pendente:', e);
-      }
-      return res.status(201).json({
-        message: 'Cadastro realizado. Aguarde aprovação do master para acessar o sistema.',
+  if (status === 'pendente') {
+    // Precisa de await antes de responder: em ambiente serverless (Vercel) a
+    // função pode ser congelada assim que a resposta é enviada, matando no
+    // meio do caminho qualquer envio de e-mail "fire-and-forget" que ainda
+    // não tivesse terminado — por isso não dá pra só disparar e seguir.
+    try {
+      await notificarMastersNovoCadastro({
+        id: result.insertId,
+        nome: cleanName,
+        email: cleanEmail,
+        perfil: cleanPerfil,
       });
+    } catch (e) {
+      console.error('Erro ao notificar masters sobre novo cadastro pendente:', e);
     }
+    return res.status(201).json({
+      message: 'Cadastro realizado. Aguarde aprovação do master para acessar o sistema.',
+    });
+  }
 
-    const user = {
-      id: result.insertId,
-      nome: cleanName,
-      email: cleanEmail,
-      perfil: cleanPerfil,
-      instituicoes: cleanPerfil === 'master' ? [] : [institutionId],
-    };
-    const token = signToken(user);
+  const user = {
+    id: result.insertId,
+    nome: cleanName,
+    email: cleanEmail,
+    perfil: cleanPerfil,
+    instituicoes: cleanPerfil === 'master' ? [] : [institutionId],
+  };
+  const token = signToken(user);
 
-    res.status(201).json({ message: 'Usuário registrado com sucesso.', token, user });
-  }),
-);
+  res.status(201).json({ message: 'Usuário registrado com sucesso.', token, user });
+});
 
-router.post(
-  '/login',
-  asyncHandler(async (req, res) => {
-    const email = String(req.body.email || '')
-      .trim()
-      .toLowerCase();
-    const senha = String(req.body.senha || '');
+router.post('/login', async (req, res) => {
+  const email = String(req.body.email || '')
+    .trim()
+    .toLowerCase();
+  const senha = String(req.body.senha || '');
 
-    const [rows] = await pool.query(
-      'SELECT id, nome, email, senha_hash, perfil, status, id_professor, area_coordenacao FROM usuarios WHERE email = ? LIMIT 1',
-      [email],
-    );
-    // Mensagem de erro deliberadamente genérica (não diz se foi o e-mail ou a senha
-    // que errou) para não ajudar a enumerar quais e-mails estão cadastrados.
-    if (rows.length === 0 || !verifyPassword(senha, rows[0].senha_hash)) {
-      return res.status(401).json({ error: 'E-mail ou senha inválidos.' });
-    }
+  const [rows] = await pool.query(
+    'SELECT id, nome, email, senha_hash, perfil, status, id_professor, area_coordenacao FROM usuarios WHERE email = ? LIMIT 1',
+    [email],
+  );
+  // Mensagem de erro deliberadamente genérica (não diz se foi o e-mail ou a senha
+  // que errou) para não ajudar a enumerar quais e-mails estão cadastrados.
+  if (rows.length === 0 || !verifyPassword(senha, rows[0].senha_hash)) {
+    return res.status(401).json({ error: 'E-mail ou senha inválidos.' });
+  }
 
-    if (rows[0].status === 'pendente') {
-      return res.status(403).json({
-        error: 'Cadastro pendente de aprovação. Aguarde liberação do master.',
-        status: 'pendente',
-      });
-    }
+  if (rows[0].status === 'pendente') {
+    return res.status(403).json({
+      error: 'Cadastro pendente de aprovação. Aguarde liberação do master.',
+      status: 'pendente',
+    });
+  }
 
-    if (rows[0].status !== 'ativo') {
-      return res.status(403).json({
-        error: 'Conta inativa. Entre em contato com o administrador.',
-        status: rows[0].status,
-      });
-    }
+  if (rows[0].status !== 'ativo') {
+    return res.status(403).json({
+      error: 'Conta inativa. Entre em contato com o administrador.',
+      status: rows[0].status,
+    });
+  }
 
-    const user = await buildUserSession(rows[0]);
-    const token = signToken(user);
+  const user = await buildUserSession(rows[0]);
+  const token = signToken(user);
 
-    res.json({ message: 'Login realizado com sucesso.', token, user });
-  }),
-);
+  res.json({ message: 'Login realizado com sucesso.', token, user });
+});
 
 // Login de aluno via código de acesso — sem e-mail/senha, pensado pra criança/
 // adolescente digitar fácil (a equipe gera o código pela tela de Matrículas e
@@ -428,115 +413,100 @@ router.post(
 // vez de id de usuarios) — a rota de gamificação que consome esse token não
 // passa pelo middleware genérico de x-institution-id (ver _server.js), já que
 // o aluno não escolhe instituição, ela já vem embutida no token.
-router.post(
-  '/aluno-login',
-  asyncHandler(async (req, res) => {
-    const codigo = String(req.body.codigo_acesso || '').trim();
-    if (!codigo) return res.status(400).json({ error: 'Informe o código de acesso.' });
+router.post('/aluno-login', async (req, res) => {
+  const codigo = String(req.body.codigo_acesso || '').trim();
+  if (!codigo) return res.status(400).json({ error: 'Informe o código de acesso.' });
 
-    const [rows] = await pool.query(
-      "SELECT id, nome, id_instituicao FROM alunos WHERE codigo_acesso = ? AND excluido_em IS NULL AND status = 'ativo'",
-      [codigo],
-    );
-    if (rows.length === 0) return res.status(401).json({ error: 'Código de acesso inválido.' });
+  const [rows] = await pool.query(
+    "SELECT id, nome, id_instituicao FROM alunos WHERE codigo_acesso = ? AND excluido_em IS NULL AND status = 'ativo'",
+    [codigo],
+  );
+  if (rows.length === 0) return res.status(401).json({ error: 'Código de acesso inválido.' });
 
-    const aluno = rows[0];
-    const user = {
-      aluno_id: aluno.id,
-      nome: aluno.nome,
-      perfil: 'aluno',
-      id_instituicao: aluno.id_instituicao,
-    };
-    const token = signToken(user);
+  const aluno = rows[0];
+  const user = {
+    aluno_id: aluno.id,
+    nome: aluno.nome,
+    perfil: 'aluno',
+    id_instituicao: aluno.id_instituicao,
+  };
+  const token = signToken(user);
 
-    res.json({ message: 'Login realizado com sucesso.', token, user });
-  }),
-);
+  res.json({ message: 'Login realizado com sucesso.', token, user });
+});
 
 // Usado pelo front para revalidar a sessão ao carregar a página (token salvo
 // no localStorage) — ramifica por perfil porque token de aluno não tem `id`
 // de usuarios pra consultar (ver POST /aluno-login acima).
-router.get(
-  '/me',
-  authMiddleware,
-  asyncHandler(async (req, res) => {
-    if (req.user.perfil === 'aluno') {
-      const [rows] = await pool.query(
-        "SELECT id, nome, id_instituicao FROM alunos WHERE id = ? AND excluido_em IS NULL AND status = 'ativo'",
-        [req.user.aluno_id],
-      );
-      if (rows.length === 0) return res.status(401).json({ error: 'Aluno não encontrado.' });
-      const aluno = rows[0];
-      return res.json({
-        user: {
-          aluno_id: aluno.id,
-          nome: aluno.nome,
-          perfil: 'aluno',
-          id_instituicao: aluno.id_instituicao,
-        },
-      });
-    }
-
+router.get('/me', authMiddleware, async (req, res) => {
+  if (req.user.perfil === 'aluno') {
     const [rows] = await pool.query(
-      'SELECT id, nome, email, perfil, status, id_professor, area_coordenacao FROM usuarios WHERE id = ? LIMIT 1',
-      [req.user.id],
+      "SELECT id, nome, id_instituicao FROM alunos WHERE id = ? AND excluido_em IS NULL AND status = 'ativo'",
+      [req.user.aluno_id],
     );
-    if (rows.length === 0) return res.status(401).json({ error: 'Usuário não encontrado.' });
-    const user = await buildUserSession(rows[0]);
-    res.json({ user: { ...user, status: rows[0].status } });
-  }),
-);
+    if (rows.length === 0) return res.status(401).json({ error: 'Aluno não encontrado.' });
+    const aluno = rows[0];
+    return res.json({
+      user: {
+        aluno_id: aluno.id,
+        nome: aluno.nome,
+        perfil: 'aluno',
+        id_instituicao: aluno.id_instituicao,
+      },
+    });
+  }
+
+  const [rows] = await pool.query(
+    'SELECT id, nome, email, perfil, status, id_professor, area_coordenacao FROM usuarios WHERE id = ? LIMIT 1',
+    [req.user.id],
+  );
+  if (rows.length === 0) return res.status(401).json({ error: 'Usuário não encontrado.' });
+  const user = await buildUserSession(rows[0]);
+  res.json({ user: { ...user, status: rows[0].status } });
+});
 
 // Telas/recursos liberados pro perfil do usuário logado NA INSTITUIÇÃO ATIVA
 // (header x-institution-id) — como permissões agora podem divergir por
 // instituição (ver migrate-permissoes-por-instituicao.js), isso não fica mais
 // cravado no token do login; o front chama de novo toda vez que troca de
 // instituição (ver InstitutionContext.js).
-router.get(
-  '/minhas-permissoes',
-  authMiddleware,
-  asyncHandler(async (req, res) => {
-    if (req.user.perfil === 'aluno')
-      return res.json({ telas_permitidas: [], recursos_permitidos: {} });
-    const idInstituicao = parseInt(req.headers['x-institution-id']);
-    if (req.user.perfil !== 'master' && isNaN(idInstituicao)) {
-      return res.status(400).json({ error: 'Cabeçalho "x-institution-id" é obrigatório.' });
-    }
-    const telas_permitidas = await carregarTelasPermitidas(req.user.perfil, idInstituicao);
-    const recursos_permitidos = await carregarRecursosPermitidos(
-      req.user.perfil,
-      telas_permitidas,
-      idInstituicao,
-    );
-    res.json({ telas_permitidas, recursos_permitidos });
-  }),
-);
+router.get('/minhas-permissoes', authMiddleware, async (req, res) => {
+  if (req.user.perfil === 'aluno')
+    return res.json({ telas_permitidas: [], recursos_permitidos: {} });
+  const idInstituicao = parseInt(req.headers['x-institution-id']);
+  if (req.user.perfil !== 'master' && isNaN(idInstituicao)) {
+    return res.status(400).json({ error: 'Cabeçalho "x-institution-id" é obrigatório.' });
+  }
+  const telas_permitidas = await carregarTelasPermitidas(req.user.perfil, idInstituicao);
+  const recursos_permitidos = await carregarRecursosPermitidos(
+    req.user.perfil,
+    telas_permitidas,
+    idInstituicao,
+  );
+  res.json({ telas_permitidas, recursos_permitidos });
+});
 
-router.post(
-  '/change-password',
-  authMiddleware,
-  asyncHandler(async (req, res) => {
-    const senhaAtual = String(req.body.senhaAtual || '');
-    const novaSenha = String(req.body.novaSenha || '');
+router.post('/change-password', authMiddleware, async (req, res) => {
+  const senhaAtual = String(req.body.senhaAtual || '');
+  const novaSenha = String(req.body.novaSenha || '');
 
-    if (novaSenha.length < 6)
-      return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
+  if (novaSenha.length < 6)
+    return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
 
-    const [rows] = await pool.query(
-      'SELECT senha_hash FROM usuarios WHERE id = ? AND status = ? LIMIT 1',
-      [req.user.id, 'ativo'],
-    );
-    if (rows.length === 0 || !verifyPassword(senhaAtual, rows[0].senha_hash)) {
-      return res.status(401).json({ error: 'Senha atual incorreta.' });
-    }
+  const [rows] = await pool.query(
+    'SELECT senha_hash FROM usuarios WHERE id = ? AND status = ? LIMIT 1',
+    [req.user.id, 'ativo'],
+  );
+  if (rows.length === 0 || !verifyPassword(senhaAtual, rows[0].senha_hash)) {
+    return res.status(401).json({ error: 'Senha atual incorreta.' });
+  }
 
-    await pool.query(
-      'UPDATE usuarios SET senha_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [hashPassword(novaSenha), req.user.id],
-    );
-    res.json({ message: 'Senha alterada com sucesso.' });
-  }),
-);
+  await pool.query(
+    'UPDATE usuarios SET senha_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [hashPassword(novaSenha), req.user.id],
+  );
+  res.json({ message: 'Senha alterada com sucesso.' });
+});
 
 // --- Redefinição de senha por e-mail (usuário deslogado, esqueceu a senha) ---
 // Reaproveita hashPassword/verifyPassword (scrypt) pra guardar e conferir o
@@ -544,93 +514,86 @@ router.post(
 const RESET_CODE_TTL_MS = 15 * 60 * 1000; // código válido por 15 minutos
 const RESET_REQUEST_COOLDOWN_MS = 60 * 1000; // evita pedir um código novo a cada poucos segundos
 
-router.post(
-  '/forgot-password',
-  asyncHandler(async (req, res) => {
-    const email = String(req.body.email || '')
-      .trim()
-      .toLowerCase();
-    // Resposta sempre igual, exista ou não o e-mail — não dá pra usar essa rota
-    // pra descobrir quais e-mails estão cadastrados no sistema.
-    const respostaGenerica = {
-      message: 'Se este e-mail estiver cadastrado, um código de verificação foi enviado.',
-    };
-    if (!email) return res.status(400).json({ error: 'Informe o e-mail.' });
+router.post('/forgot-password', async (req, res) => {
+  const email = String(req.body.email || '')
+    .trim()
+    .toLowerCase();
+  // Resposta sempre igual, exista ou não o e-mail — não dá pra usar essa rota
+  // pra descobrir quais e-mails estão cadastrados no sistema.
+  const respostaGenerica = {
+    message: 'Se este e-mail estiver cadastrado, um código de verificação foi enviado.',
+  };
+  if (!email) return res.status(400).json({ error: 'Informe o e-mail.' });
 
-    const [rows] = await pool.query(
-      'SELECT id, nome, status, reset_codigo_expira FROM usuarios WHERE email = ? LIMIT 1',
-      [email],
-    );
-    if (rows.length === 0 || rows[0].status !== 'ativo') return res.json(respostaGenerica);
-    const usuario = rows[0];
+  const [rows] = await pool.query(
+    'SELECT id, nome, status, reset_codigo_expira FROM usuarios WHERE email = ? LIMIT 1',
+    [email],
+  );
+  if (rows.length === 0 || rows[0].status !== 'ativo') return res.json(respostaGenerica);
+  const usuario = rows[0];
 
-    if (usuario.reset_codigo_expira) {
-      const criadoEm = new Date(usuario.reset_codigo_expira).getTime() - RESET_CODE_TTL_MS;
-      if (Date.now() - criadoEm < RESET_REQUEST_COOLDOWN_MS) return res.json(respostaGenerica);
+  if (usuario.reset_codigo_expira) {
+    const criadoEm = new Date(usuario.reset_codigo_expira).getTime() - RESET_CODE_TTL_MS;
+    if (Date.now() - criadoEm < RESET_REQUEST_COOLDOWN_MS) return res.json(respostaGenerica);
+  }
+
+  const codigo = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  const expira = new Date(Date.now() + RESET_CODE_TTL_MS);
+  await pool.query(
+    'UPDATE usuarios SET reset_codigo_hash = ?, reset_codigo_expira = ? WHERE id = ?',
+    [hashPassword(codigo), expira, usuario.id],
+  );
+
+  if (resend) {
+    try {
+      await resend.emails.send({
+        from: RESEND_FROM,
+        to: email,
+        subject: 'Código para redefinir sua senha — Atos On',
+        html: `<p>Olá, ${usuario.nome}.</p><p>Seu código de verificação é:</p><p style="font-size:28px;font-weight:bold;letter-spacing:6px;">${codigo}</p><p>Ele expira em 15 minutos. Se você não pediu essa redefinição, ignore este e-mail.</p>`,
+      });
+    } catch (e) {
+      console.error('Erro ao enviar e-mail de redefinição de senha:', e);
     }
-
-    const codigo = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
-    const expira = new Date(Date.now() + RESET_CODE_TTL_MS);
-    await pool.query(
-      'UPDATE usuarios SET reset_codigo_hash = ?, reset_codigo_expira = ? WHERE id = ?',
-      [hashPassword(codigo), expira, usuario.id],
+  } else {
+    console.warn(
+      `[AVISO] RESEND_API_KEY não configurada — código gerado mas não enviado por e-mail (${email}): ${codigo}`,
     );
+  }
 
-    if (resend) {
-      try {
-        await resend.emails.send({
-          from: RESEND_FROM,
-          to: email,
-          subject: 'Código para redefinir sua senha — Atos On',
-          html: `<p>Olá, ${usuario.nome}.</p><p>Seu código de verificação é:</p><p style="font-size:28px;font-weight:bold;letter-spacing:6px;">${codigo}</p><p>Ele expira em 15 minutos. Se você não pediu essa redefinição, ignore este e-mail.</p>`,
-        });
-      } catch (e) {
-        console.error('Erro ao enviar e-mail de redefinição de senha:', e);
-      }
-    } else {
-      console.warn(
-        `[AVISO] RESEND_API_KEY não configurada — código gerado mas não enviado por e-mail (${email}): ${codigo}`,
-      );
-    }
+  res.json(respostaGenerica);
+});
 
-    res.json(respostaGenerica);
-  }),
-);
+router.post('/reset-password', async (req, res) => {
+  const email = String(req.body.email || '')
+    .trim()
+    .toLowerCase();
+  const codigo = String(req.body.codigo || '').trim();
+  const novaSenha = String(req.body.novaSenha || '');
+  const erroGenerico = { error: 'Código inválido ou expirado.' };
 
-router.post(
-  '/reset-password',
-  asyncHandler(async (req, res) => {
-    const email = String(req.body.email || '')
-      .trim()
-      .toLowerCase();
-    const codigo = String(req.body.codigo || '').trim();
-    const novaSenha = String(req.body.novaSenha || '');
-    const erroGenerico = { error: 'Código inválido ou expirado.' };
+  if (novaSenha.length < 6)
+    return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
+  if (!codigo) return res.status(400).json(erroGenerico);
 
-    if (novaSenha.length < 6)
-      return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
-    if (!codigo) return res.status(400).json(erroGenerico);
+  const [rows] = await pool.query(
+    'SELECT id, reset_codigo_hash, reset_codigo_expira FROM usuarios WHERE email = ? AND status = ? LIMIT 1',
+    [email, 'ativo'],
+  );
+  if (rows.length === 0 || !rows[0].reset_codigo_hash || !rows[0].reset_codigo_expira)
+    return res.status(400).json(erroGenerico);
 
-    const [rows] = await pool.query(
-      'SELECT id, reset_codigo_hash, reset_codigo_expira FROM usuarios WHERE email = ? AND status = ? LIMIT 1',
-      [email, 'ativo'],
-    );
-    if (rows.length === 0 || !rows[0].reset_codigo_hash || !rows[0].reset_codigo_expira)
-      return res.status(400).json(erroGenerico);
+  const usuario = rows[0];
+  if (new Date(usuario.reset_codigo_expira).getTime() < Date.now())
+    return res.status(400).json(erroGenerico);
+  if (!verifyPassword(codigo, usuario.reset_codigo_hash)) return res.status(400).json(erroGenerico);
 
-    const usuario = rows[0];
-    if (new Date(usuario.reset_codigo_expira).getTime() < Date.now())
-      return res.status(400).json(erroGenerico);
-    if (!verifyPassword(codigo, usuario.reset_codigo_hash))
-      return res.status(400).json(erroGenerico);
-
-    await pool.query(
-      'UPDATE usuarios SET senha_hash = ?, reset_codigo_hash = NULL, reset_codigo_expira = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [hashPassword(novaSenha), usuario.id],
-    );
-    res.json({ message: 'Senha redefinida com sucesso.' });
-  }),
-);
+  await pool.query(
+    'UPDATE usuarios SET senha_hash = ?, reset_codigo_hash = NULL, reset_codigo_expira = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [hashPassword(novaSenha), usuario.id],
+  );
+  res.json({ message: 'Senha redefinida com sucesso.' });
+});
 
 // --- Aprovação de cadastro por link de e-mail (sem precisar estar logado). ---
 // Valida o token (ver notificarMastersNovoCadastro) antes de expor ou alterar
@@ -642,56 +605,50 @@ const validarTokenAprovacao = (token) => {
   return payload;
 };
 
-router.get(
-  '/aprovar-cadastro/:token',
-  asyncHandler(async (req, res) => {
-    const payload = validarTokenAprovacao(req.params.token);
-    if (!payload) return res.status(400).json({ error: 'Link inválido ou expirado.' });
+router.get('/aprovar-cadastro/:token', async (req, res) => {
+  const payload = validarTokenAprovacao(req.params.token);
+  if (!payload) return res.status(400).json({ error: 'Link inválido ou expirado.' });
 
-    const [rows] = await pool.query(
-      `SELECT u.nome, u.email, u.perfil, u.status,
+  const [rows] = await pool.query(
+    `SELECT u.nome, u.email, u.perfil, u.status,
             GROUP_CONCAT(i.nome ORDER BY i.nome SEPARATOR ', ') AS instituicoes
      FROM usuarios u
      LEFT JOIN usuario_instituicoes ui ON ui.id_usuario = u.id
      LEFT JOIN instituicoes i ON i.id = ui.id_instituicao
      WHERE u.id = ?
      GROUP BY u.id`,
-      [payload.usuarioId],
+    [payload.usuarioId],
+  );
+  if (rows.length === 0) return res.status(404).json({ error: 'Cadastro não encontrado.' });
+
+  res.json({
+    nome: rows[0].nome,
+    email: rows[0].email,
+    perfil: rows[0].perfil,
+    instituicao: rows[0].instituicoes || null,
+    jaAprovado: rows[0].status !== 'pendente',
+  });
+});
+
+router.post('/aprovar-cadastro/:token', async (req, res) => {
+  const payload = validarTokenAprovacao(req.params.token);
+  if (!payload) return res.status(400).json({ error: 'Link inválido ou expirado.' });
+
+  const [rows] = await pool.query('SELECT status FROM usuarios WHERE id = ? LIMIT 1', [
+    payload.usuarioId,
+  ]);
+  if (rows.length === 0) return res.status(404).json({ error: 'Cadastro não encontrado.' });
+  // Idempotente: se já foi aprovado (por outro master, ou clique duplo no link),
+  // responde sucesso do mesmo jeito em vez de erro — o resultado desejado já existe.
+  if (rows[0].status === 'pendente') {
+    await pool.query(
+      'UPDATE usuarios SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      ['ativo', payload.usuarioId],
     );
-    if (rows.length === 0) return res.status(404).json({ error: 'Cadastro não encontrado.' });
+  }
 
-    res.json({
-      nome: rows[0].nome,
-      email: rows[0].email,
-      perfil: rows[0].perfil,
-      instituicao: rows[0].instituicoes || null,
-      jaAprovado: rows[0].status !== 'pendente',
-    });
-  }),
-);
-
-router.post(
-  '/aprovar-cadastro/:token',
-  asyncHandler(async (req, res) => {
-    const payload = validarTokenAprovacao(req.params.token);
-    if (!payload) return res.status(400).json({ error: 'Link inválido ou expirado.' });
-
-    const [rows] = await pool.query('SELECT status FROM usuarios WHERE id = ? LIMIT 1', [
-      payload.usuarioId,
-    ]);
-    if (rows.length === 0) return res.status(404).json({ error: 'Cadastro não encontrado.' });
-    // Idempotente: se já foi aprovado (por outro master, ou clique duplo no link),
-    // responde sucesso do mesmo jeito em vez de erro — o resultado desejado já existe.
-    if (rows[0].status === 'pendente') {
-      await pool.query(
-        'UPDATE usuarios SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        ['ativo', payload.usuarioId],
-      );
-    }
-
-    res.json({ message: 'Cadastro aprovado com sucesso.' });
-  }),
-);
+  res.json({ message: 'Cadastro aprovado com sucesso.' });
+});
 
 // Middleware: exige que o usuário autenticado tenha perfil "master".
 // Deve vir sempre depois de authMiddleware (depende de req.user já estar populado).
@@ -709,90 +666,69 @@ const masterMiddleware = (req, res, next) => {
 // cadastro de professor correspondente. Diferente de GET /api/professores
 // (rota pública de instituição, só devolve nomes): aqui devolve o id de
 // verdade, que é o que vai pra usuarios.id_professor.
-router.get(
-  '/admin/professores',
-  authMiddleware,
-  masterMiddleware,
-  asyncHandler(async (req, res) => {
-    const idInstituicao = parseInt(req.query.id_instituicao);
-    if (isNaN(idInstituicao))
-      return res.status(400).json({ error: 'id_instituicao é obrigatório.' });
+router.get('/admin/professores', authMiddleware, masterMiddleware, async (req, res) => {
+  const idInstituicao = parseInt(req.query.id_instituicao);
+  if (isNaN(idInstituicao)) return res.status(400).json({ error: 'id_instituicao é obrigatório.' });
 
-    const [rows] = await pool.query(
-      'SELECT id, nome, id_instituicao FROM professores WHERE id_instituicao = ? ORDER BY nome ASC',
-      [idInstituicao],
-    );
-    res.json(rows);
-  }),
-);
+  const [rows] = await pool.query(
+    'SELECT id, nome, id_instituicao FROM professores WHERE id_instituicao = ? ORDER BY nome ASC',
+    [idInstituicao],
+  );
+  res.json(rows);
+});
 
-router.get(
-  '/admin/usuarios',
-  authMiddleware,
-  masterMiddleware,
-  asyncHandler(async (req, res) => {
-    const [users] = await pool.query(
-      `SELECT u.id, u.nome, u.email, u.perfil, u.status, u.created_at, u.id_professor, u.area_coordenacao, p.nome AS nome_professor
+router.get('/admin/usuarios', authMiddleware, masterMiddleware, async (req, res) => {
+  const [users] = await pool.query(
+    `SELECT u.id, u.nome, u.email, u.perfil, u.status, u.created_at, u.id_professor, u.area_coordenacao, p.nome AS nome_professor
      FROM usuarios u
      LEFT JOIN professores p ON p.id = u.id_professor
      WHERE u.status != ? ORDER BY u.nome ASC`,
-      ['pendente'],
-    );
-    const result = [];
-    for (const user of users) {
-      const instituicoes =
-        user.perfil === 'master' ? [] : await loadUserInstitutions(user.id, user.perfil);
-      result.push({ ...user, instituicoes });
-    }
-    res.json(result);
-  }),
-);
+    ['pendente'],
+  );
+  const result = [];
+  for (const user of users) {
+    const instituicoes =
+      user.perfil === 'master' ? [] : await loadUserInstitutions(user.id, user.perfil);
+    result.push({ ...user, instituicoes });
+  }
+  res.json(result);
+});
 
-router.get(
-  '/admin/usuarios/pendentes',
-  authMiddleware,
-  masterMiddleware,
-  asyncHandler(async (req, res) => {
-    const [users] = await pool.query(
-      'SELECT id, nome, email, perfil, status, created_at FROM usuarios WHERE status = ? ORDER BY created_at ASC',
-      ['pendente'],
-    );
-    const result = [];
-    for (const user of users) {
-      const instituicoes =
-        user.perfil === 'master' ? [] : await loadUserInstitutions(user.id, user.perfil);
-      result.push({ ...user, instituicoes });
-    }
-    res.json(result);
-  }),
-);
+router.get('/admin/usuarios/pendentes', authMiddleware, masterMiddleware, async (req, res) => {
+  const [users] = await pool.query(
+    'SELECT id, nome, email, perfil, status, created_at FROM usuarios WHERE status = ? ORDER BY created_at ASC',
+    ['pendente'],
+  );
+  const result = [];
+  for (const user of users) {
+    const instituicoes =
+      user.perfil === 'master' ? [] : await loadUserInstitutions(user.id, user.perfil);
+    result.push({ ...user, instituicoes });
+  }
+  res.json(result);
+});
 
-router.put(
-  '/admin/usuarios/:id/aprovar',
-  authMiddleware,
-  masterMiddleware,
-  asyncHandler(async (req, res) => {
-    const userId = parseInt(req.params.id);
-    if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
+router.put('/admin/usuarios/:id/aprovar', authMiddleware, masterMiddleware, async (req, res) => {
+  const userId = parseInt(req.params.id);
+  if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
 
-    const [rows] = await pool.query('SELECT status FROM usuarios WHERE id = ? LIMIT 1', [userId]);
-    if (rows.length === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
-    if (rows[0].status !== 'pendente')
-      return res.status(400).json({ error: 'Este usuário não está pendente de aprovação.' });
+  const [rows] = await pool.query('SELECT status FROM usuarios WHERE id = ? LIMIT 1', [userId]);
+  if (rows.length === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  if (rows[0].status !== 'pendente')
+    return res.status(400).json({ error: 'Este usuário não está pendente de aprovação.' });
 
-    await pool.query(
-      'UPDATE usuarios SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      ['ativo', userId],
-    );
-    res.json({ message: 'Usuário aprovado com sucesso.' });
-  }),
-);
+  await pool.query('UPDATE usuarios SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [
+    'ativo',
+    userId,
+  ]);
+  res.json({ message: 'Usuário aprovado com sucesso.' });
+});
 
 router.delete(
   '/admin/usuarios/:id/rejeitar',
   authMiddleware,
   masterMiddleware,
-  asyncHandler(async (req, res) => {
+  async (req, res) => {
     const userId = parseInt(req.params.id);
     if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
 
@@ -804,179 +740,164 @@ router.delete(
     await pool.query('DELETE FROM usuario_instituicoes WHERE id_usuario = ?', [userId]);
     await pool.query('DELETE FROM usuarios WHERE id = ?', [userId]);
     res.json({ message: 'Cadastro rejeitado e removido com sucesso.' });
-  }),
+  },
 );
 
 // Criação direta de usuário pelo master (pula o fluxo de aprovação — já entra ativo,
 // pois não recebe status 'pendente' aqui).
-router.post(
-  '/admin/usuarios',
-  authMiddleware,
-  masterMiddleware,
-  asyncHandler(async (req, res) => {
-    const { nome, email, senha, perfil, instituicoes, id_professor, area_coordenacao } = req.body;
-    const cleanName = String(nome || '').trim();
-    const cleanEmail = String(email || '')
-      .trim()
-      .toLowerCase();
-    const cleanPassword = String(senha || '');
-    const cleanPerfil = String(perfil || 'monitor')
-      .trim()
-      .toLowerCase();
-    const selectedInstitutions = Array.isArray(instituicoes)
-      ? instituicoes.map(Number).filter(Boolean)
-      : [];
+router.post('/admin/usuarios', authMiddleware, masterMiddleware, async (req, res) => {
+  const { nome, email, senha, perfil, instituicoes, id_professor, area_coordenacao } = req.body;
+  const cleanName = String(nome || '').trim();
+  const cleanEmail = String(email || '')
+    .trim()
+    .toLowerCase();
+  const cleanPassword = String(senha || '');
+  const cleanPerfil = String(perfil || 'monitor')
+    .trim()
+    .toLowerCase();
+  const selectedInstitutions = Array.isArray(instituicoes)
+    ? instituicoes.map(Number).filter(Boolean)
+    : [];
 
-    const erro = await validarCamposUsuario({
-      nome: cleanName,
-      email: cleanEmail,
-      senha: cleanPassword,
-      perfil: cleanPerfil,
-      idsInstituicoes: selectedInstitutions,
-    });
-    if (erro) return res.status(400).json({ error: erro });
-    if (cleanPerfil !== 'master' && selectedInstitutions.length === 0)
-      return res.status(400).json({ error: 'Vincule ao menos uma instituição ao usuário.' });
+  const erro = await validarCamposUsuario({
+    nome: cleanName,
+    email: cleanEmail,
+    senha: cleanPassword,
+    perfil: cleanPerfil,
+    idsInstituicoes: selectedInstitutions,
+  });
+  if (erro) return res.status(400).json({ error: erro });
+  if (cleanPerfil !== 'master' && selectedInstitutions.length === 0)
+    return res.status(400).json({ error: 'Vincule ao menos uma instituição ao usuário.' });
 
-    const [existing] = await pool.query('SELECT id FROM usuarios WHERE email = ? LIMIT 1', [
+  const [existing] = await pool.query('SELECT id FROM usuarios WHERE email = ? LIMIT 1', [
+    cleanEmail,
+  ]);
+  if (existing.length > 0)
+    return res.status(409).json({ error: 'Este e-mail já está cadastrado.' });
+
+  const { idProfessorFinal, erro: erroProfessor } = await resolverIdProfessor(
+    cleanPerfil,
+    id_professor,
+    selectedInstitutions,
+  );
+  if (erroProfessor) return res.status(400).json({ error: erroProfessor });
+  const { areaCoordenacaoFinal, erro: erroArea } = resolverAreaCoordenacao(
+    cleanPerfil,
+    area_coordenacao,
+  );
+  if (erroArea) return res.status(400).json({ error: erroArea });
+
+  const [result] = await pool.query(
+    'INSERT INTO usuarios (nome, email, senha_hash, perfil, id_professor, area_coordenacao) VALUES (?, ?, ?, ?, ?, ?)',
+    [
+      cleanName,
       cleanEmail,
-    ]);
-    if (existing.length > 0)
-      return res.status(409).json({ error: 'Este e-mail já está cadastrado.' });
-
-    const { idProfessorFinal, erro: erroProfessor } = await resolverIdProfessor(
+      hashPassword(cleanPassword),
       cleanPerfil,
-      id_professor,
-      selectedInstitutions,
-    );
-    if (erroProfessor) return res.status(400).json({ error: erroProfessor });
-    const { areaCoordenacaoFinal, erro: erroArea } = resolverAreaCoordenacao(
-      cleanPerfil,
-      area_coordenacao,
-    );
-    if (erroArea) return res.status(400).json({ error: erroArea });
+      idProfessorFinal,
+      areaCoordenacaoFinal,
+    ],
+  );
+  const userId = result.insertId;
 
-    const [result] = await pool.query(
-      'INSERT INTO usuarios (nome, email, senha_hash, perfil, id_professor, area_coordenacao) VALUES (?, ?, ?, ?, ?, ?)',
-      [
-        cleanName,
-        cleanEmail,
-        hashPassword(cleanPassword),
-        cleanPerfil,
-        idProfessorFinal,
-        areaCoordenacaoFinal,
-      ],
-    );
-    const userId = result.insertId;
-
-    for (const idInst of selectedInstitutions) {
-      await pool.query(
-        'INSERT IGNORE INTO usuario_instituicoes (id_usuario, id_instituicao) VALUES (?, ?)',
-        [userId, idInst],
-      );
-    }
-
-    res.status(201).json({ message: 'Usuário criado com sucesso.', id: userId });
-  }),
-);
-
-router.put(
-  '/admin/usuarios/:id',
-  authMiddleware,
-  masterMiddleware,
-  asyncHandler(async (req, res) => {
-    const userId = parseInt(req.params.id);
-    const { nome, email, perfil, instituicoes, status, id_professor, area_coordenacao } = req.body;
-    const cleanName = String(nome || '').trim();
-    const cleanEmail = String(email || '')
-      .trim()
-      .toLowerCase();
-    const cleanPerfil = String(perfil || 'monitor')
-      .trim()
-      .toLowerCase();
-    const selectedInstitutions = Array.isArray(instituicoes)
-      ? instituicoes.map(Number).filter(Boolean)
-      : [];
-    const cleanStatus = String(status || '')
-      .trim()
-      .toLowerCase();
-
-    if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
-    const erro = await validarCamposUsuario({
-      nome: cleanName,
-      email: cleanEmail,
-      senha: '',
-      perfil: cleanPerfil,
-      exigirSenha: false,
-      idsInstituicoes: selectedInstitutions,
-    });
-    if (erro) return res.status(400).json({ error: erro });
-    if (cleanPerfil !== 'master' && selectedInstitutions.length === 0)
-      return res.status(400).json({ error: 'Vincule ao menos uma instituição ao usuário.' });
-    if (cleanStatus && !['ativo', 'inativo', 'pendente'].includes(cleanStatus))
-      return res.status(400).json({ error: 'Status inválido.' });
-
-    const [existing] = await pool.query(
-      'SELECT id FROM usuarios WHERE email = ? AND id != ? LIMIT 1',
-      [cleanEmail, userId],
-    );
-    if (existing.length > 0)
-      return res.status(409).json({ error: 'Este e-mail já está cadastrado.' });
-
-    const { idProfessorFinal, erro: erroProfessor } = await resolverIdProfessor(
-      cleanPerfil,
-      id_professor,
-      selectedInstitutions,
-    );
-    if (erroProfessor) return res.status(400).json({ error: erroProfessor });
-    const { areaCoordenacaoFinal, erro: erroArea } = resolverAreaCoordenacao(
-      cleanPerfil,
-      area_coordenacao,
-    );
-    if (erroArea) return res.status(400).json({ error: erroArea });
-
-    const updates = [cleanName, cleanEmail, cleanPerfil, idProfessorFinal, areaCoordenacaoFinal];
-    let statusSql = '';
-    if (cleanStatus) {
-      updates.push(cleanStatus);
-      statusSql = ', status = ?';
-    }
-
+  for (const idInst of selectedInstitutions) {
     await pool.query(
-      `UPDATE usuarios SET nome = ?, email = ?, perfil = ?, id_professor = ?, area_coordenacao = ?${statusSql}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [...updates, userId],
+      'INSERT IGNORE INTO usuario_instituicoes (id_usuario, id_instituicao) VALUES (?, ?)',
+      [userId, idInst],
     );
-    // Vínculos de instituição são substituídos por completo (apaga tudo e recria) em
-    // vez de calcular um diff — mais simples e o volume de linhas por usuário é pequeno.
-    await pool.query('DELETE FROM usuario_instituicoes WHERE id_usuario = ?', [userId]);
-    for (const idInst of selectedInstitutions) {
-      await pool.query(
-        'INSERT IGNORE INTO usuario_instituicoes (id_usuario, id_instituicao) VALUES (?, ?)',
-        [userId, idInst],
-      );
-    }
+  }
 
-    res.json({ message: 'Usuário atualizado com sucesso.' });
-  }),
-);
+  res.status(201).json({ message: 'Usuário criado com sucesso.', id: userId });
+});
 
-router.put(
-  '/admin/usuarios/:id/senha',
-  authMiddleware,
-  masterMiddleware,
-  asyncHandler(async (req, res) => {
-    const userId = parseInt(req.params.id);
-    const novaSenha = String(req.body.senha || '');
-    if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
-    if (novaSenha.length < 6)
-      return res.status(400).json({ error: 'A senha deve ter pelo menos 6 caracteres.' });
+router.put('/admin/usuarios/:id', authMiddleware, masterMiddleware, async (req, res) => {
+  const userId = parseInt(req.params.id);
+  const { nome, email, perfil, instituicoes, status, id_professor, area_coordenacao } = req.body;
+  const cleanName = String(nome || '').trim();
+  const cleanEmail = String(email || '')
+    .trim()
+    .toLowerCase();
+  const cleanPerfil = String(perfil || 'monitor')
+    .trim()
+    .toLowerCase();
+  const selectedInstitutions = Array.isArray(instituicoes)
+    ? instituicoes.map(Number).filter(Boolean)
+    : [];
+  const cleanStatus = String(status || '')
+    .trim()
+    .toLowerCase();
+
+  if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
+  const erro = await validarCamposUsuario({
+    nome: cleanName,
+    email: cleanEmail,
+    senha: '',
+    perfil: cleanPerfil,
+    exigirSenha: false,
+    idsInstituicoes: selectedInstitutions,
+  });
+  if (erro) return res.status(400).json({ error: erro });
+  if (cleanPerfil !== 'master' && selectedInstitutions.length === 0)
+    return res.status(400).json({ error: 'Vincule ao menos uma instituição ao usuário.' });
+  if (cleanStatus && !['ativo', 'inativo', 'pendente'].includes(cleanStatus))
+    return res.status(400).json({ error: 'Status inválido.' });
+
+  const [existing] = await pool.query(
+    'SELECT id FROM usuarios WHERE email = ? AND id != ? LIMIT 1',
+    [cleanEmail, userId],
+  );
+  if (existing.length > 0)
+    return res.status(409).json({ error: 'Este e-mail já está cadastrado.' });
+
+  const { idProfessorFinal, erro: erroProfessor } = await resolverIdProfessor(
+    cleanPerfil,
+    id_professor,
+    selectedInstitutions,
+  );
+  if (erroProfessor) return res.status(400).json({ error: erroProfessor });
+  const { areaCoordenacaoFinal, erro: erroArea } = resolverAreaCoordenacao(
+    cleanPerfil,
+    area_coordenacao,
+  );
+  if (erroArea) return res.status(400).json({ error: erroArea });
+
+  const updates = [cleanName, cleanEmail, cleanPerfil, idProfessorFinal, areaCoordenacaoFinal];
+  let statusSql = '';
+  if (cleanStatus) {
+    updates.push(cleanStatus);
+    statusSql = ', status = ?';
+  }
+
+  await pool.query(
+    `UPDATE usuarios SET nome = ?, email = ?, perfil = ?, id_professor = ?, area_coordenacao = ?${statusSql}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [...updates, userId],
+  );
+  // Vínculos de instituição são substituídos por completo (apaga tudo e recria) em
+  // vez de calcular um diff — mais simples e o volume de linhas por usuário é pequeno.
+  await pool.query('DELETE FROM usuario_instituicoes WHERE id_usuario = ?', [userId]);
+  for (const idInst of selectedInstitutions) {
     await pool.query(
-      'UPDATE usuarios SET senha_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [hashPassword(novaSenha), userId],
+      'INSERT IGNORE INTO usuario_instituicoes (id_usuario, id_instituicao) VALUES (?, ?)',
+      [userId, idInst],
     );
-    res.json({ message: 'Senha redefinida com sucesso.' });
-  }),
-);
+  }
+
+  res.json({ message: 'Usuário atualizado com sucesso.' });
+});
+
+router.put('/admin/usuarios/:id/senha', authMiddleware, masterMiddleware, async (req, res) => {
+  const userId = parseInt(req.params.id);
+  const novaSenha = String(req.body.senha || '');
+  if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
+  if (novaSenha.length < 6)
+    return res.status(400).json({ error: 'A senha deve ter pelo menos 6 caracteres.' });
+  await pool.query(
+    'UPDATE usuarios SET senha_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [hashPassword(novaSenha), userId],
+  );
+  res.json({ message: 'Senha redefinida com sucesso.' });
+});
 
 // Middleware: exige perfil master OU coordenador. Deve vir depois de authMiddleware.
 const coordenadorOuMasterMiddleware = (req, res, next) => {
@@ -997,7 +918,7 @@ router.get(
   '/vincular-professor/usuarios',
   authMiddleware,
   coordenadorOuMasterMiddleware,
-  asyncHandler(async (req, res) => {
+  async (req, res) => {
     const ehMaster = req.user.perfil === 'master';
     if (!ehMaster && req.user.instituicoes.length === 0) return res.json([]);
 
@@ -1015,14 +936,14 @@ router.get(
       result.push({ ...user, instituicoes });
     }
     res.json(result);
-  }),
+  },
 );
 
 router.get(
   '/vincular-professor/professores',
   authMiddleware,
   coordenadorOuMasterMiddleware,
-  asyncHandler(async (req, res) => {
+  async (req, res) => {
     const idInstituicao = parseInt(req.query.id_instituicao);
     if (isNaN(idInstituicao))
       return res.status(400).json({ error: 'id_instituicao é obrigatório.' });
@@ -1034,7 +955,7 @@ router.get(
       [idInstituicao],
     );
     res.json(rows);
-  }),
+  },
 );
 
 router.put(
@@ -1042,7 +963,7 @@ router.put(
   authMiddleware,
   coordenadorOuMasterMiddleware,
   exigirRecurso('/vincular-professor', 'editar'),
-  asyncHandler(async (req, res) => {
+  async (req, res) => {
     const userId = parseInt(req.params.id);
     const { id_professor } = req.body;
     if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
@@ -1074,7 +995,7 @@ router.put(
       [idProfessorFinal, userId],
     );
     res.json({ message: 'Vínculo atualizado com sucesso.' });
-  }),
+  },
 );
 
 module.exports = { router, authMiddleware, masterMiddleware };

@@ -8,108 +8,92 @@ const pool = require('./db');
 const { logAuditEvent } = require('./audit');
 const { exigirRecurso } = require('./permissoes-middleware');
 
-const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const exigir = (recurso) => exigirRecurso('/gerenciar-matriculas', recurso);
 
 // Listar contatos de emergência de um aluno
-router.get(
-  '/aluno/:alunoId',
-  asyncHandler(async (req, res) => {
-    const alunoId = parseInt(req.params.alunoId);
-    if (isNaN(alunoId)) return res.status(400).json({ error: 'ID do aluno inválido.' });
+router.get('/aluno/:alunoId', async (req, res) => {
+  const alunoId = parseInt(req.params.alunoId);
+  if (isNaN(alunoId)) return res.status(400).json({ error: 'ID do aluno inválido.' });
 
-    const [rows] = await pool.query(
-      'SELECT id, id_aluno, nome, telefone, parentesco FROM contatos_emergencia WHERE id_aluno = ? AND id_instituicao = ? ORDER BY id',
-      [alunoId, req.id_instituicao],
-    );
-    res.json(rows);
-  }),
-);
+  const [rows] = await pool.query(
+    'SELECT id, id_aluno, nome, telefone, parentesco FROM contatos_emergencia WHERE id_aluno = ? AND id_instituicao = ? ORDER BY id',
+    [alunoId, req.id_instituicao],
+  );
+  res.json(rows);
+});
 
 // Criar contato de emergência
-router.post(
-  '/',
-  exigir('criar'),
-  asyncHandler(async (req, res) => {
-    const { id_aluno, nome, telefone, parentesco } = req.body;
-    const alunoId = parseInt(id_aluno);
+router.post('/', exigir('criar'), async (req, res) => {
+  const { id_aluno, nome, telefone, parentesco } = req.body;
+  const alunoId = parseInt(id_aluno);
 
-    if (isNaN(alunoId)) return res.status(400).json({ error: 'ID do aluno inválido.' });
-    if (!nome || !nome.trim())
-      return res.status(400).json({ error: 'Nome do contato é obrigatório.' });
-    if (!telefone || !telefone.trim())
-      return res.status(400).json({ error: 'Telefone do contato é obrigatório.' });
+  if (isNaN(alunoId)) return res.status(400).json({ error: 'ID do aluno inválido.' });
+  if (!nome || !nome.trim())
+    return res.status(400).json({ error: 'Nome do contato é obrigatório.' });
+  if (!telefone || !telefone.trim())
+    return res.status(400).json({ error: 'Telefone do contato é obrigatório.' });
 
-    const [result] = await pool.query(
-      'INSERT INTO contatos_emergencia (id_aluno, nome, telefone, parentesco, id_instituicao) VALUES (?, ?, ?, ?, ?)',
-      [alunoId, nome.trim(), telefone.trim(), parentesco?.trim() || null, req.id_instituicao],
-    );
+  const [result] = await pool.query(
+    'INSERT INTO contatos_emergencia (id_aluno, nome, telefone, parentesco, id_instituicao) VALUES (?, ?, ?, ?, ?)',
+    [alunoId, nome.trim(), telefone.trim(), parentesco?.trim() || null, req.id_instituicao],
+  );
 
-    await logAuditEvent(
-      'CONTATO_EMERGENCIA_CRIADO',
-      `Contato de emergência criado para aluno ID ${alunoId}`,
-      req.id_instituicao,
-    );
-    res
-      .status(201)
-      .json({ id: result.insertId, message: 'Contato de emergência criado com sucesso.' });
-  }),
-);
+  await logAuditEvent(
+    'CONTATO_EMERGENCIA_CRIADO',
+    `Contato de emergência criado para aluno ID ${alunoId}`,
+    req.id_instituicao,
+  );
+  res
+    .status(201)
+    .json({ id: result.insertId, message: 'Contato de emergência criado com sucesso.' });
+});
 
 // Atualizar contato de emergência
-router.put(
-  '/:id',
-  exigir('editar'),
-  asyncHandler(async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { nome, telefone, parentesco } = req.body;
+router.put('/:id', exigir('editar'), async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { nome, telefone, parentesco } = req.body;
 
-    if (isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
-    if (!nome || !nome.trim())
-      return res.status(400).json({ error: 'Nome do contato é obrigatório.' });
-    if (!telefone || !telefone.trim())
-      return res.status(400).json({ error: 'Telefone do contato é obrigatório.' });
+  if (isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+  if (!nome || !nome.trim())
+    return res.status(400).json({ error: 'Nome do contato é obrigatório.' });
+  if (!telefone || !telefone.trim())
+    return res.status(400).json({ error: 'Telefone do contato é obrigatório.' });
 
-    const [result] = await pool.query(
-      'UPDATE contatos_emergencia SET nome = ?, telefone = ?, parentesco = ? WHERE id = ? AND id_instituicao = ?',
-      [nome.trim(), telefone.trim(), parentesco?.trim() || null, id, req.id_instituicao],
-    );
+  const [result] = await pool.query(
+    'UPDATE contatos_emergencia SET nome = ?, telefone = ?, parentesco = ? WHERE id = ? AND id_instituicao = ?',
+    [nome.trim(), telefone.trim(), parentesco?.trim() || null, id, req.id_instituicao],
+  );
 
-    if (result.affectedRows === 0)
-      return res.status(404).json({ error: 'Contato de emergência não encontrado.' });
+  if (result.affectedRows === 0)
+    return res.status(404).json({ error: 'Contato de emergência não encontrado.' });
 
-    await logAuditEvent(
-      'CONTATO_EMERGENCIA_ATUALIZADO',
-      `Contato de emergência ID ${id} atualizado`,
-      req.id_instituicao,
-    );
-    res.json({ message: 'Contato de emergência atualizado com sucesso.' });
-  }),
-);
+  await logAuditEvent(
+    'CONTATO_EMERGENCIA_ATUALIZADO',
+    `Contato de emergência ID ${id} atualizado`,
+    req.id_instituicao,
+  );
+  res.json({ message: 'Contato de emergência atualizado com sucesso.' });
+});
 
 // Deletar contato de emergência
-router.delete(
-  '/:id',
-  exigir('excluir'),
-  asyncHandler(async (req, res) => {
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+router.delete('/:id', exigir('excluir'), async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
 
-    const [result] = await pool.query(
-      'DELETE FROM contatos_emergencia WHERE id = ? AND id_instituicao = ?',
-      [id, req.id_instituicao],
-    );
+  const [result] = await pool.query(
+    'DELETE FROM contatos_emergencia WHERE id = ? AND id_instituicao = ?',
+    [id, req.id_instituicao],
+  );
 
-    if (result.affectedRows === 0)
-      return res.status(404).json({ error: 'Contato de emergência não encontrado.' });
+  if (result.affectedRows === 0)
+    return res.status(404).json({ error: 'Contato de emergência não encontrado.' });
 
-    await logAuditEvent(
-      'CONTATO_EMERGENCIA_DELETADO',
-      `Contato de emergência ID ${id} deletado`,
-      req.id_instituicao,
-    );
-    res.json({ message: 'Contato de emergência removido com sucesso.' });
-  }),
-);
+  await logAuditEvent(
+    'CONTATO_EMERGENCIA_DELETADO',
+    `Contato de emergência ID ${id} deletado`,
+    req.id_instituicao,
+  );
+  res.json({ message: 'Contato de emergência removido com sucesso.' });
+});
 
 module.exports = { router };

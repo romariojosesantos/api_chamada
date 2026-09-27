@@ -15,8 +15,6 @@ const pool = require('./db');
 const { criarNotificacao } = require('./notificacoes-service');
 const { hojeBrasil } = require('./src/utils/data-brasil');
 
-const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-
 const CRON_SECRET = process.env.CRON_SECRET;
 if (!CRON_SECRET) {
   if (process.env.NODE_ENV === 'production') {
@@ -37,27 +35,25 @@ END`;
 
 const PERIODO_LABEL = { manha: 'Manhã', tarde: 'Tarde', noite: 'Noite' };
 
-router.get(
-  '/',
-  asyncHandler(async (req, res) => {
-    if (CRON_SECRET) {
-      const auth = req.headers.authorization;
-      if (auth !== `Bearer ${CRON_SECRET}`) {
-        return res.status(401).json({ error: 'Não autorizado.' });
-      }
+router.get('/', async (req, res) => {
+  if (CRON_SECRET) {
+    const auth = req.headers.authorization;
+    if (auth !== `Bearer ${CRON_SECRET}`) {
+      return res.status(401).json({ error: 'Não autorizado.' });
     }
+  }
 
-    const hoje = hojeBrasil();
-    const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-    const diaDaSemana = dias[new Date(`${hoje}T12:00:00`).getDay()];
+  const hoje = hojeBrasil();
+  const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  const diaDaSemana = dias[new Date(`${hoje}T12:00:00`).getDay()];
 
-    // Pra cada instituição+período, quantos alunos esperados hoje ainda estão
-    // SEM nenhum registro de presença (mesma condição de "já registrado" usada
-    // em POST /api/presenca/finalizar — NULL conta como fallback só fora da
-    // noite, pelo mesmo motivo documentado lá: chamada da noite separada é
-    // recente, registro antigo sem período nunca pode ter sido dela).
-    const [pendentesRows] = await pool.query(
-      `SELECT m.id_instituicao, ${PERIODO_DA_MATRICULA_SQL} AS periodo, COUNT(DISTINCT a.id) AS pendentes
+  // Pra cada instituição+período, quantos alunos esperados hoje ainda estão
+  // SEM nenhum registro de presença (mesma condição de "já registrado" usada
+  // em POST /api/presenca/finalizar — NULL conta como fallback só fora da
+  // noite, pelo mesmo motivo documentado lá: chamada da noite separada é
+  // recente, registro antigo sem período nunca pode ter sido dela).
+  const [pendentesRows] = await pool.query(
+    `SELECT m.id_instituicao, ${PERIODO_DA_MATRICULA_SQL} AS periodo, COUNT(DISTINCT a.id) AS pendentes
      FROM matricula m
      JOIN alunos a ON a.id = m.idaluno AND a.status = 'ativo' AND a.excluido_em IS NULL
      WHERE m.status = 'matriculado' AND m.data_fim IS NULL
@@ -75,50 +71,49 @@ router.get(
        )
      GROUP BY m.id_instituicao, periodo
      HAVING periodo IS NOT NULL AND pendentes > 0`,
-      [diaDaSemana, hoje, hoje, hoje],
-    );
+    [diaDaSemana, hoje, hoje, hoje],
+  );
 
-    const porInstituicao = new Map();
-    pendentesRows.forEach((r) => {
-      if (!porInstituicao.has(r.id_instituicao)) porInstituicao.set(r.id_instituicao, []);
-      porInstituicao.get(r.id_instituicao).push({ periodo: r.periodo, pendentes: r.pendentes });
-    });
+  const porInstituicao = new Map();
+  pendentesRows.forEach((r) => {
+    if (!porInstituicao.has(r.id_instituicao)) porInstituicao.set(r.id_instituicao, []);
+    porInstituicao.get(r.id_instituicao).push({ periodo: r.periodo, pendentes: r.pendentes });
+  });
 
-    const notificadas = [];
-    for (const [idInstituicao, turnos] of porInstituicao.entries()) {
-      // Evita duplicar se essa rota for chamada mais de uma vez no mesmo dia.
-      // Janela relativa (últimas 20h) usando só o relógio do PRÓPRIO MySQL
-      // (NOW()) de propósito — comparar contra uma data calculada no Node
-      // (`hoje`, em America/Sao_Paulo) e o `created_at` do banco depende dos
-      // dois relógios (Node e servidor MySQL) estarem sincronizados; num
-      // ambiente de teste com o relógio local adiantado/atrasado isso diverge e
-      // a notificação duplicava. Como esse cron só roda 1x/dia (ver vercel.json),
-      // uma janela de 20h é suficiente pra pegar "já notifiquei hoje" sem
-      // depender de fuso horário nenhum.
-      const [[jaNotificado]] = await pool.query(
-        `SELECT id FROM notificacoes
+  const notificadas = [];
+  for (const [idInstituicao, turnos] of porInstituicao.entries()) {
+    // Evita duplicar se essa rota for chamada mais de uma vez no mesmo dia.
+    // Janela relativa (últimas 20h) usando só o relógio do PRÓPRIO MySQL
+    // (NOW()) de propósito — comparar contra uma data calculada no Node
+    // (`hoje`, em America/Sao_Paulo) e o `created_at` do banco depende dos
+    // dois relógios (Node e servidor MySQL) estarem sincronizados; num
+    // ambiente de teste com o relógio local adiantado/atrasado isso diverge e
+    // a notificação duplicava. Como esse cron só roda 1x/dia (ver vercel.json),
+    // uma janela de 20h é suficiente pra pegar "já notifiquei hoje" sem
+    // depender de fuso horário nenhum.
+    const [[jaNotificado]] = await pool.query(
+      `SELECT id FROM notificacoes
        WHERE id_instituicao = ? AND tipo = 'chamada_pendente'
          AND created_at >= NOW() - INTERVAL 20 HOUR
        LIMIT 1`,
-        [idInstituicao],
-      );
-      if (jaNotificado) continue;
+      [idInstituicao],
+    );
+    if (jaNotificado) continue;
 
-      const resumo = turnos
-        .map((t) => `${PERIODO_LABEL[t.periodo] || t.periodo} (${t.pendentes})`)
-        .join(', ');
+    const resumo = turnos
+      .map((t) => `${PERIODO_LABEL[t.periodo] || t.periodo} (${t.pendentes})`)
+      .join(', ');
 
-      await criarNotificacao({
-        tipo: 'chamada_pendente',
-        titulo: 'Chamada de hoje não finalizada',
-        mensagem: `Ainda tem inscrito sem nenhum registro de presença hoje: ${resumo}. Finalize a chamada em cada turno pendente.`,
-        id_instituicao: idInstituicao,
-      });
-      notificadas.push({ id_instituicao: idInstituicao, turnos });
-    }
+    await criarNotificacao({
+      tipo: 'chamada_pendente',
+      titulo: 'Chamada de hoje não finalizada',
+      mensagem: `Ainda tem inscrito sem nenhum registro de presença hoje: ${resumo}. Finalize a chamada em cada turno pendente.`,
+      id_instituicao: idInstituicao,
+    });
+    notificadas.push({ id_instituicao: idInstituicao, turnos });
+  }
 
-    res.json({ data: hoje, instituicoes_notificadas: notificadas });
-  }),
-);
+  res.json({ data: hoje, instituicoes_notificadas: notificadas });
+});
 
 module.exports = router;

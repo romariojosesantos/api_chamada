@@ -11,8 +11,6 @@ const { authMiddleware, masterMiddleware } = require('./auth');
 const { logAuditEvent } = require('./audit');
 const { AREAS_VALIDAS } = require('./areas');
 
-const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-
 // Labels padrão — usados pra qualquer área que por algum motivo não tenha
 // linha em areas_config ainda (ex.: logo após a migração, antes do seed, ou
 // uma área nova adicionada no código no futuro).
@@ -24,53 +22,41 @@ const LABELS_PADRAO = {
   capelania: 'Capelania',
 };
 
-router.get(
-  '/',
-  authMiddleware,
-  asyncHandler(async (req, res) => {
-    const [rows] = await pool.query('SELECT area, label FROM areas_config');
-    const labels = { ...LABELS_PADRAO };
-    for (const r of rows) labels[r.area] = r.label;
-    res.json(labels);
-  }),
-);
+router.get('/', authMiddleware, async (req, res) => {
+  const [rows] = await pool.query('SELECT area, label FROM areas_config');
+  const labels = { ...LABELS_PADRAO };
+  for (const r of rows) labels[r.area] = r.label;
+  res.json(labels);
+});
 
-router.put(
-  '/',
-  authMiddleware,
-  masterMiddleware,
-  asyncHandler(async (req, res) => {
-    const entradas = Object.entries(req.body || {}).filter(([area]) =>
-      AREAS_VALIDAS.includes(area),
+router.put('/', authMiddleware, masterMiddleware, async (req, res) => {
+  const entradas = Object.entries(req.body || {}).filter(([area]) => AREAS_VALIDAS.includes(area));
+  if (entradas.length === 0) return res.status(400).json({ error: 'Nenhuma área válida enviada.' });
+
+  for (const [, label] of entradas) {
+    const limpo = String(label || '').trim();
+    if (!limpo) return res.status(400).json({ error: 'Nenhum nome pode ficar em branco.' });
+    if (limpo.length > 50)
+      return res.status(400).json({ error: `"${limpo}" passa de 50 caracteres.` });
+  }
+
+  for (const [area, label] of entradas) {
+    await pool.query(
+      'INSERT INTO areas_config (area, label) VALUES (?, ?) ON DUPLICATE KEY UPDATE label = VALUES(label)',
+      [area, String(label).trim()],
     );
-    if (entradas.length === 0)
-      return res.status(400).json({ error: 'Nenhuma área válida enviada.' });
+  }
 
-    for (const [, label] of entradas) {
-      const limpo = String(label || '').trim();
-      if (!limpo) return res.status(400).json({ error: 'Nenhum nome pode ficar em branco.' });
-      if (limpo.length > 50)
-        return res.status(400).json({ error: `"${limpo}" passa de 50 caracteres.` });
-    }
+  await logAuditEvent(
+    'AREAS_LABELS_ATUALIZADOS',
+    entradas.map(([area, label]) => `${area}: "${label.trim()}"`).join('; '),
+    null,
+  );
 
-    for (const [area, label] of entradas) {
-      await pool.query(
-        'INSERT INTO areas_config (area, label) VALUES (?, ?) ON DUPLICATE KEY UPDATE label = VALUES(label)',
-        [area, String(label).trim()],
-      );
-    }
-
-    await logAuditEvent(
-      'AREAS_LABELS_ATUALIZADOS',
-      entradas.map(([area, label]) => `${area}: "${label.trim()}"`).join('; '),
-      null,
-    );
-
-    const [rows] = await pool.query('SELECT area, label FROM areas_config');
-    const labels = { ...LABELS_PADRAO };
-    for (const r of rows) labels[r.area] = r.label;
-    res.json(labels);
-  }),
-);
+  const [rows] = await pool.query('SELECT area, label FROM areas_config');
+  const labels = { ...LABELS_PADRAO };
+  for (const r of rows) labels[r.area] = r.label;
+  res.json(labels);
+});
 
 module.exports = router;

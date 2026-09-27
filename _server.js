@@ -15,6 +15,7 @@ require('dotenv').config();
 //mudei aqui
 const express = require('express');
 const cors = require('cors');
+const corsOptions = require('./src/config/cors');
 const pool = require('./db');
 
 // Inicializa o aplicativo Express
@@ -56,28 +57,7 @@ const filtrosRouter = require('./src/routes/filtros.routes');
 const AppError = require('./src/utils/AppError');
 
 // Middlewares
-app.use(
-  cors({
-    origin:
-      process.env.NODE_ENV === 'production'
-        ? [
-            'https://controle-de-presenca-ten.vercel.app',
-            'https://api-chamada.vercel.app',
-            'https://atoson.com.br',
-            'https://www.atoson.com.br',
-          ] // Domínios permitidos em produção
-        : '*',
-    allowedHeaders: [
-      'Content-Type',
-      'x-institution-id',
-      'Authorization',
-      'Pragma',
-      'Cache-Control',
-      'Expires',
-    ],
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  }),
-);
+app.use(cors(corsOptions));
 
 // Middleware para desativar o cache do navegador (Crucial para iPhone/Safari)
 // Isso garante que o celular sempre busque a informação mais recente do banco de dados.

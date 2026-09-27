@@ -14,8 +14,6 @@ const router = express.Router();
 const pool = require('./db');
 const { agoraBrasil } = require('./src/utils/data-brasil');
 
-const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-
 async function medirSaudeBanco() {
   const [[maxConn]] = await pool.query("SHOW VARIABLES LIKE 'max_connections'");
   const [[atual]] = await pool.query("SHOW STATUS LIKE 'Threads_connected'");
@@ -40,14 +38,11 @@ async function medirSaudeBanco() {
   };
 }
 
-router.get(
-  '/',
-  asyncHandler(async (req, res) => {
-    if (req.user.perfil !== 'master') {
-      return res.status(403).json({ error: 'Rota restrita a master.' });
-    }
-    res.json(await medirSaudeBanco());
-  }),
-);
+router.get('/', async (req, res) => {
+  if (req.user.perfil !== 'master') {
+    return res.status(403).json({ error: 'Rota restrita a master.' });
+  }
+  res.json(await medirSaudeBanco());
+});
 
 module.exports = { router, medirSaudeBanco };

@@ -20,8 +20,6 @@ const express = require('express');
 const router = express.Router();
 const { medirSaudeBanco } = require('./db-health');
 
-const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-
 const CRON_SECRET = process.env.CRON_SECRET;
 if (!CRON_SECRET) {
   if (process.env.NODE_ENV === 'production') {
@@ -36,29 +34,26 @@ if (!CRON_SECRET) {
 
 const LIMITE_ALERTA_PCT = 70;
 
-router.get(
-  '/',
-  asyncHandler(async (req, res) => {
-    if (CRON_SECRET) {
-      const auth = req.headers.authorization;
-      if (auth !== `Bearer ${CRON_SECRET}`) {
-        return res.status(401).json({ error: 'Não autorizado.' });
-      }
+router.get('/', async (req, res) => {
+  if (CRON_SECRET) {
+    const auth = req.headers.authorization;
+    if (auth !== `Bearer ${CRON_SECRET}`) {
+      return res.status(401).json({ error: 'Não autorizado.' });
     }
+  }
 
-    const saude = await medirSaudeBanco();
-    console.log(
-      `[SAÚDE DB] ${saude.threads_connected}/${saude.max_connections} conexões (${saude.pct_atual}%) — pico histórico: ${saude.max_used_connections}`,
+  const saude = await medirSaudeBanco();
+  console.log(
+    `[SAÚDE DB] ${saude.threads_connected}/${saude.max_connections} conexões (${saude.pct_atual}%) — pico histórico: ${saude.max_used_connections}`,
+  );
+
+  if (saude.pct_atual >= LIMITE_ALERTA_PCT) {
+    console.warn(
+      `[ALERTA SAÚDE DB] Conexões em ${saude.pct_atual}% do limite (${saude.threads_connected}/${saude.max_connections}) — considere revisar o uso do banco.`,
     );
+  }
 
-    if (saude.pct_atual >= LIMITE_ALERTA_PCT) {
-      console.warn(
-        `[ALERTA SAÚDE DB] Conexões em ${saude.pct_atual}% do limite (${saude.threads_connected}/${saude.max_connections}) — considere revisar o uso do banco.`,
-      );
-    }
-
-    res.json(saude);
-  }),
-);
+  res.json(saude);
+});
 
 module.exports = router;

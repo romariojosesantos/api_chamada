@@ -36,7 +36,6 @@ const { escopoDeAcesso } = require('./escopoPonto');
 const { exigirRecurso } = require('./permissoes-middleware');
 const { gerarRelatorioPontoPDF } = require('./relatorio-ponto-pdf');
 
-const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const exigir = (recurso) => exigirRecurso('/pontos', recurso);
 
 const DIAS_SEMANA_POR_INDICE = [
@@ -142,23 +141,21 @@ async function podeEditarPonto(req, ponto) {
 // Turmas do educador logado — sempre pra HOJE (Brasília), nunca outro dia
 // (ver comentário no topo do arquivo). Só as que caem no dia da semana de
 // hoje, com o status do ponto de hoje já embutido (null = ainda não bateu).
-router.get(
-  '/turmas',
-  asyncHandler(async (req, res) => {
-    const idProfessor = exigirProfessor(req, res);
-    if (!idProfessor) return;
+router.get('/turmas', async (req, res) => {
+  const idProfessor = exigirProfessor(req, res);
+  if (!idProfessor) return;
 
-    const data = hojeBrasilia();
-    const diaSemana = diaSemanaDaData(data);
+  const data = hojeBrasilia();
+  const diaSemana = diaSemanaDaData(data);
 
-    // "É do professor" = principal (idprofessor) OU co-professor (ver
-    // atividade_professores, co-docência) — mesma regra repetida em todo lugar
-    // deste arquivo que decide o que um professor pode ver/bater.
-    const ehDoProfessor =
-      'atv.idprofessor = ? OR atv.idatividades IN (SELECT idatividades FROM atividade_professores WHERE idprofessor = ?)';
+  // "É do professor" = principal (idprofessor) OU co-professor (ver
+  // atividade_professores, co-docência) — mesma regra repetida em todo lugar
+  // deste arquivo que decide o que um professor pode ver/bater.
+  const ehDoProfessor =
+    'atv.idprofessor = ? OR atv.idatividades IN (SELECT idatividades FROM atividade_professores WHERE idprofessor = ?)';
 
-    const [turmas] = await pool.query(
-      `SELECT atv.idatividades AS id_atividade, atv.nome, atv.horario, atv.turno,
+  const [turmas] = await pool.query(
+    `SELECT atv.idatividades AS id_atividade, atv.nome, atv.horario, atv.turno,
             pt.id AS id_ponto,
             DATE_FORMAT(pt.hora_entrada, '%Y-%m-%dT%H:%i:%s') AS hora_entrada,
             DATE_FORMAT(pt.hora_saida, '%Y-%m-%dT%H:%i:%s') AS hora_saida
@@ -166,26 +163,26 @@ router.get(
      LEFT JOIN pontos pt ON pt.id_atividade = atv.idatividades AND pt.id_professor = ? AND pt.data = ?
      WHERE atv.id_instituicao = ? AND (${ehDoProfessor}) AND atv.dia_semana = ? AND atv.data_fim IS NULL
      ORDER BY atv.horario ASC, atv.nome ASC`,
-      [idProfessor, data, req.id_instituicao, idProfessor, idProfessor, diaSemana],
-    );
+    [idProfessor, data, req.id_instituicao, idProfessor, idProfessor, diaSemana],
+  );
 
-    // Atividades internas (Planejamento, Reuniões, ...) — sem horário fixo, só
-    // das áreas onde esse educador dá aula ATUALMENTE (qualquer dia da semana,
-    // não só hoje — por isso sem filtro de dia_semana aqui, diferente da
-    // consulta de turmas acima). `atv.data_fim IS NULL` é essencial: sem isso,
-    // um educador que já deu aula em outra área no passado (turma já encerrada)
-    // continuava vendo os tipos internos daquela área pra sempre, mesmo depois
-    // de não dar mais aula lá — bug real, reproduzido e confirmado nesta sessão
-    // (um educador só de "Arte e Cultura" enxergava tipo de "Educação por
-    // Princípios" por causa de uma turma antiga já encerrada). Ao contrário de
-    // turma (1x por dia), uma atividade interna pode ser batida VÁRIAS vezes no
-    // mesmo dia (ex.: Planejamento de manhã, encerra, novo Planejamento à
-    // tarde) — por isso o join só traz a sessão em ABERTO de hoje
-    // (`hora_saida IS NULL`), se existir alguma; sessões já encerradas hoje não
-    // aparecem aqui (ficam só no histórico), pra sempre poder abrir uma nova em
-    // vez de mostrar a última como "concluída" e travada.
-    const [tipos] = await pool.query(
-      `SELECT t.id AS id_tipo_interno, t.nome, t.area, pt.id AS id_ponto,
+  // Atividades internas (Planejamento, Reuniões, ...) — sem horário fixo, só
+  // das áreas onde esse educador dá aula ATUALMENTE (qualquer dia da semana,
+  // não só hoje — por isso sem filtro de dia_semana aqui, diferente da
+  // consulta de turmas acima). `atv.data_fim IS NULL` é essencial: sem isso,
+  // um educador que já deu aula em outra área no passado (turma já encerrada)
+  // continuava vendo os tipos internos daquela área pra sempre, mesmo depois
+  // de não dar mais aula lá — bug real, reproduzido e confirmado nesta sessão
+  // (um educador só de "Arte e Cultura" enxergava tipo de "Educação por
+  // Princípios" por causa de uma turma antiga já encerrada). Ao contrário de
+  // turma (1x por dia), uma atividade interna pode ser batida VÁRIAS vezes no
+  // mesmo dia (ex.: Planejamento de manhã, encerra, novo Planejamento à
+  // tarde) — por isso o join só traz a sessão em ABERTO de hoje
+  // (`hora_saida IS NULL`), se existir alguma; sessões já encerradas hoje não
+  // aparecem aqui (ficam só no histórico), pra sempre poder abrir uma nova em
+  // vez de mostrar a última como "concluída" e travada.
+  const [tipos] = await pool.query(
+    `SELECT t.id AS id_tipo_interno, t.nome, t.area, pt.id AS id_ponto,
             DATE_FORMAT(pt.hora_entrada, '%Y-%m-%dT%H:%i:%s') AS hora_entrada,
             DATE_FORMAT(pt.hora_saida, '%Y-%m-%dT%H:%i:%s') AS hora_saida
      FROM tipos_ponto_interno t
@@ -193,12 +190,11 @@ router.get(
      WHERE t.id_instituicao = ? AND t.ativo = 1
        AND t.area IN (SELECT DISTINCT area FROM atividades atv WHERE (${ehDoProfessor}) AND atv.data_fim IS NULL AND id_instituicao = ?)
      ORDER BY t.area ASC, t.nome ASC`,
-      [idProfessor, data, req.id_instituicao, idProfessor, idProfessor, req.id_instituicao],
-    );
+    [idProfessor, data, req.id_instituicao, idProfessor, idProfessor, req.id_instituicao],
+  );
 
-    res.json({ data, dia_semana: diaSemana, turmas, atividades_internas: tipos });
-  }),
-);
+  res.json({ data, dia_semana: diaSemana, turmas, atividades_internas: tipos });
+});
 
 // Histórico do próprio educador (o "espelho de ponto" dele) — só consulta,
 // não tem botão de corrigir (ver comentário no topo do arquivo).
@@ -211,19 +207,17 @@ router.get(
 // ficava indefinida. `hora_entrada` é o horário REAL de cada sessão, então
 // ordena certo pros dois casos (turma e interno) sem precisar de dois
 // critérios diferentes.
-router.get(
-  '/meu-historico',
-  asyncHandler(async (req, res) => {
-    const idProfessor = exigirProfessor(req, res);
-    if (!idProfessor) return;
+router.get('/meu-historico', async (req, res) => {
+  const idProfessor = exigirProfessor(req, res);
+  if (!idProfessor) return;
 
-    const dataInicio = String(req.query.data_inicio || '').trim();
-    const dataFim = String(req.query.data_fim || '').trim();
-    if (!dataInicio || !dataFim)
-      return res.status(400).json({ error: 'Informe data_inicio e data_fim.' });
+  const dataInicio = String(req.query.data_inicio || '').trim();
+  const dataFim = String(req.query.data_fim || '').trim();
+  if (!dataInicio || !dataFim)
+    return res.status(400).json({ error: 'Informe data_inicio e data_fim.' });
 
-    const [rows] = await pool.query(
-      `SELECT pt.id, pt.data,
+  const [rows] = await pool.query(
+    `SELECT pt.id, pt.data,
             DATE_FORMAT(pt.hora_entrada, '%Y-%m-%dT%H:%i:%s') AS hora_entrada,
             DATE_FORMAT(pt.hora_saida, '%Y-%m-%dT%H:%i:%s') AS hora_saida,
             COALESCE(atv.nome, tpi.nome) AS nome_turma,
@@ -234,41 +228,38 @@ router.get(
      LEFT JOIN tipos_ponto_interno tpi ON tpi.id = pt.id_tipo_interno
      WHERE pt.id_professor = ? AND pt.id_instituicao = ? AND pt.data BETWEEN ? AND ?
      ORDER BY pt.data DESC, pt.hora_entrada DESC`,
-      [idProfessor, req.id_instituicao, dataInicio, dataFim],
-    );
-    res.json(rows);
-  }),
-);
+    [idProfessor, req.id_instituicao, dataInicio, dataFim],
+  );
+  res.json(rows);
+});
 
 // Visão agregada: master e coordenador geral veem tudo; coordenador de área
 // só vê (e só edita) a área dele — o filtro de área é forçado, nunca aceita
 // ver outra.
-router.get(
-  '/',
-  asyncHandler(async (req, res) => {
-    const escopo = escopoDeAcesso(req);
-    if (escopo === null) {
-      return res.status(403).json({ error: 'Sem acesso à visão geral de registros.' });
-    }
+router.get('/', async (req, res) => {
+  const escopo = escopoDeAcesso(req);
+  if (escopo === null) {
+    return res.status(403).json({ error: 'Sem acesso à visão geral de registros.' });
+  }
 
-    const dataInicio = String(req.query.data_inicio || '').trim();
-    const dataFim = String(req.query.data_fim || '').trim();
-    if (!dataInicio || !dataFim)
-      return res.status(400).json({ error: 'Informe data_inicio e data_fim.' });
+  const dataInicio = String(req.query.data_inicio || '').trim();
+  const dataFim = String(req.query.data_fim || '').trim();
+  if (!dataInicio || !dataFim)
+    return res.status(400).json({ error: 'Informe data_inicio e data_fim.' });
 
-    const params = [req.id_instituicao, dataInicio, dataFim];
-    let filtros = '';
-    if (req.query.id_professor) {
-      filtros += ' AND pt.id_professor = ?';
-      params.push(req.query.id_professor);
-    }
-    if (escopo) {
-      filtros += ' AND COALESCE(atv.area, tpi.area) = ?';
-      params.push(escopo);
-    }
+  const params = [req.id_instituicao, dataInicio, dataFim];
+  let filtros = '';
+  if (req.query.id_professor) {
+    filtros += ' AND pt.id_professor = ?';
+    params.push(req.query.id_professor);
+  }
+  if (escopo) {
+    filtros += ' AND COALESCE(atv.area, tpi.area) = ?';
+    params.push(escopo);
+  }
 
-    const [rows] = await pool.query(
-      `SELECT pt.id, pt.id_atividade, pt.data,
+  const [rows] = await pool.query(
+    `SELECT pt.id, pt.id_atividade, pt.data,
             DATE_FORMAT(pt.hora_entrada, '%Y-%m-%dT%H:%i:%s') AS hora_entrada,
             DATE_FORMAT(pt.hora_saida, '%Y-%m-%dT%H:%i:%s') AS hora_saida,
             pt.id_professor, p.nome AS nome_professor,
@@ -281,41 +272,37 @@ router.get(
      LEFT JOIN tipos_ponto_interno tpi ON tpi.id = pt.id_tipo_interno
      WHERE pt.id_instituicao = ? AND pt.data BETWEEN ? AND ?${filtros}
      ORDER BY pt.data DESC, p.nome ASC, pt.hora_entrada DESC`,
-      params,
-    );
-    res.json(rows);
-  }),
-);
+    params,
+  );
+  res.json(rows);
+});
 
 // Popula o filtro por educador na visão agregada — mesma regra de acesso.
-router.get(
-  '/educadores',
-  asyncHandler(async (req, res) => {
-    const escopo = escopoDeAcesso(req);
-    if (escopo === null) {
-      return res.status(403).json({ error: 'Sem acesso à visão geral de registros.' });
-    }
+router.get('/educadores', async (req, res) => {
+  const escopo = escopoDeAcesso(req);
+  if (escopo === null) {
+    return res.status(403).json({ error: 'Sem acesso à visão geral de registros.' });
+  }
 
-    const params = [req.id_instituicao];
-    let filtroArea = '';
-    if (escopo) {
-      filtroArea = ' AND COALESCE(atv.area, tpi.area) = ?';
-      params.push(escopo);
-    }
+  const params = [req.id_instituicao];
+  let filtroArea = '';
+  if (escopo) {
+    filtroArea = ' AND COALESCE(atv.area, tpi.area) = ?';
+    params.push(escopo);
+  }
 
-    const [rows] = await pool.query(
-      `SELECT DISTINCT p.id, p.nome
+  const [rows] = await pool.query(
+    `SELECT DISTINCT p.id, p.nome
      FROM pontos pt
      JOIN professores p ON p.id = pt.id_professor
      LEFT JOIN atividades atv ON atv.idatividades = pt.id_atividade
      LEFT JOIN tipos_ponto_interno tpi ON tpi.id = pt.id_tipo_interno
      WHERE pt.id_instituicao = ?${filtroArea}
      ORDER BY p.nome ASC`,
-      params,
-    );
-    res.json(rows);
-  }),
-);
+    params,
+  );
+  res.json(rows);
+});
 
 // Relatório de Ponto em PDF, no papel timbrado do Instituto — substitui a
 // planilha Excel que a tela de Pontos dos Educadores gerava antes (ver
@@ -324,34 +311,31 @@ router.get(
 // obrigatório porque o relatório é montado como uma folha de ponto individual
 // (cabeçalho com nome/e-mail do prestador, subtotal por dia, assinatura no
 // final) — não faz sentido misturar duas pessoas num único documento desses.
-router.get(
-  '/relatorio-pdf',
-  exigir('exportar'),
-  asyncHandler(async (req, res) => {
-    const escopo = escopoDeAcesso(req);
-    if (escopo === null) {
-      return res.status(403).json({ error: 'Sem acesso à visão geral de registros.' });
-    }
+router.get('/relatorio-pdf', exigir('exportar'), async (req, res) => {
+  const escopo = escopoDeAcesso(req);
+  if (escopo === null) {
+    return res.status(403).json({ error: 'Sem acesso à visão geral de registros.' });
+  }
 
-    const dataInicio = String(req.query.data_inicio || '').trim();
-    const dataFim = String(req.query.data_fim || '').trim();
-    const idProfessor = String(req.query.id_professor || '').trim();
-    if (!dataInicio || !dataFim)
-      return res.status(400).json({ error: 'Informe data_inicio e data_fim.' });
-    if (!idProfessor)
-      return res
-        .status(400)
-        .json({ error: 'Selecione um educador — o relatório em PDF é sempre individual.' });
+  const dataInicio = String(req.query.data_inicio || '').trim();
+  const dataFim = String(req.query.data_fim || '').trim();
+  const idProfessor = String(req.query.id_professor || '').trim();
+  if (!dataInicio || !dataFim)
+    return res.status(400).json({ error: 'Informe data_inicio e data_fim.' });
+  if (!idProfessor)
+    return res
+      .status(400)
+      .json({ error: 'Selecione um educador — o relatório em PDF é sempre individual.' });
 
-    const params = [req.id_instituicao, dataInicio, dataFim, idProfessor];
-    let filtroArea = '';
-    if (escopo) {
-      filtroArea = ' AND COALESCE(atv.area, tpi.area) = ?';
-      params.push(escopo);
-    }
+  const params = [req.id_instituicao, dataInicio, dataFim, idProfessor];
+  let filtroArea = '';
+  if (escopo) {
+    filtroArea = ' AND COALESCE(atv.area, tpi.area) = ?';
+    params.push(escopo);
+  }
 
-    const [rows] = await pool.query(
-      `SELECT pt.data,
+  const [rows] = await pool.query(
+    `SELECT pt.data,
             DATE_FORMAT(pt.hora_entrada, '%Y-%m-%dT%H:%i:%s') AS hora_entrada,
             DATE_FORMAT(pt.hora_saida, '%Y-%m-%dT%H:%i:%s') AS hora_saida,
             COALESCE(atv.nome, tpi.nome) AS nome_turma
@@ -360,132 +344,123 @@ router.get(
      LEFT JOIN tipos_ponto_interno tpi ON tpi.id = pt.id_tipo_interno
      WHERE pt.id_instituicao = ? AND pt.data BETWEEN ? AND ? AND pt.id_professor = ?${filtroArea}
      ORDER BY pt.data ASC, pt.hora_entrada ASC`,
-      params,
-    );
+    params,
+  );
 
-    const [[professor]] = await pool.query(
-      'SELECT nome, nome_completo FROM professores WHERE id = ? AND id_instituicao = ?',
-      [idProfessor, req.id_instituicao],
-    );
-    if (!professor) return res.status(404).json({ error: 'Educador não encontrado.' });
-    // Relatório formal usa o nome COMPLETO quando cadastrado (ver
-    // professores.js e migrate-add-professor-nome-completo.js) — o `nome` curto
-    // continua sendo só o de exibição casual no resto do sistema.
-    const nomeRelatorio = professor.nome_completo || professor.nome;
+  const [[professor]] = await pool.query(
+    'SELECT nome, nome_completo FROM professores WHERE id = ? AND id_instituicao = ?',
+    [idProfessor, req.id_instituicao],
+  );
+  if (!professor) return res.status(404).json({ error: 'Educador não encontrado.' });
+  // Relatório formal usa o nome COMPLETO quando cadastrado (ver
+  // professores.js e migrate-add-professor-nome-completo.js) — o `nome` curto
+  // continua sendo só o de exibição casual no resto do sistema.
+  const nomeRelatorio = professor.nome_completo || professor.nome;
 
-    // E-mail vem do login vinculado (professores não tem coluna de e-mail
-    // própria) — nem todo educador tem uma conta de usuário, então fica em
-    // branco nesse caso (o relatório trata isso como "—").
-    const [[usuario]] = await pool.query(
-      "SELECT email FROM usuarios WHERE id_professor = ? AND perfil = 'professor' LIMIT 1",
-      [idProfessor],
-    );
-    const [[instituicao]] = await pool.query('SELECT nome FROM instituicoes WHERE id = ?', [
-      req.id_instituicao,
-    ]);
+  // E-mail vem do login vinculado (professores não tem coluna de e-mail
+  // própria) — nem todo educador tem uma conta de usuário, então fica em
+  // branco nesse caso (o relatório trata isso como "—").
+  const [[usuario]] = await pool.query(
+    "SELECT email FROM usuarios WHERE id_professor = ? AND perfil = 'professor' LIMIT 1",
+    [idProfessor],
+  );
+  const [[instituicao]] = await pool.query('SELECT nome FROM instituicoes WHERE id = ?', [
+    req.id_instituicao,
+  ]);
 
-    const nomeArquivo = `RegistroAtividades_${professor.nome.replace(/[^a-zA-Z0-9]+/g, '_')}_${dataInicio}_a_${dataFim}.pdf`;
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
+  const nomeArquivo = `RegistroAtividades_${professor.nome.replace(/[^a-zA-Z0-9]+/g, '_')}_${dataInicio}_a_${dataFim}.pdf`;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
 
-    gerarRelatorioPontoPDF({
-      res,
-      instituicaoNome: instituicao?.nome || '',
-      professorNome: nomeRelatorio,
-      professorEmail: usuario?.email || '',
-      dataInicio,
-      dataFim,
-      rows,
-    });
-  }),
-);
+  gerarRelatorioPontoPDF({
+    res,
+    instituicaoNome: instituicao?.nome || '',
+    professorNome: nomeRelatorio,
+    professorEmail: usuario?.email || '',
+    dataInicio,
+    dataFim,
+    rows,
+  });
+});
 
 // Bater ponto de entrada numa turma — só vale pra HOJE (Brasília); cria a
 // linha se não existir, ou marca a entrada se a linha já existia sem entrada.
-router.post(
-  '/bater',
-  exigir('criar'),
-  asyncHandler(async (req, res) => {
-    const idProfessor = exigirProfessor(req, res);
-    if (!idProfessor) return;
+router.post('/bater', exigir('criar'), async (req, res) => {
+  const idProfessor = exigirProfessor(req, res);
+  if (!idProfessor) return;
 
-    const { id_atividade } = req.body;
-    if (!id_atividade) return res.status(400).json({ error: 'Informe id_atividade.' });
+  const { id_atividade } = req.body;
+  if (!id_atividade) return res.status(400).json({ error: 'Informe id_atividade.' });
 
-    const data = hojeBrasilia();
-    const diaSemana = diaSemanaDaData(data);
+  const data = hojeBrasilia();
+  const diaSemana = diaSemanaDaData(data);
 
-    const [[turma]] = await pool.query(
-      'SELECT idatividades, dia_semana, idprofessor FROM atividades WHERE idatividades = ? AND id_instituicao = ? AND data_fim IS NULL',
-      [id_atividade, req.id_instituicao],
+  const [[turma]] = await pool.query(
+    'SELECT idatividades, dia_semana, idprofessor FROM atividades WHERE idatividades = ? AND id_instituicao = ? AND data_fim IS NULL',
+    [id_atividade, req.id_instituicao],
+  );
+  if (!turma) return res.status(404).json({ error: 'Turma não encontrada.' });
+  if (turma.idprofessor !== idProfessor) {
+    const [[ehCoProfessor]] = await pool.query(
+      'SELECT 1 FROM atividade_professores WHERE idatividades = ? AND idprofessor = ?',
+      [id_atividade, idProfessor],
     );
-    if (!turma) return res.status(404).json({ error: 'Turma não encontrada.' });
-    if (turma.idprofessor !== idProfessor) {
-      const [[ehCoProfessor]] = await pool.query(
-        'SELECT 1 FROM atividade_professores WHERE idatividades = ? AND idprofessor = ?',
-        [id_atividade, idProfessor],
-      );
-      if (!ehCoProfessor) return res.status(403).json({ error: 'Essa turma não é sua.' });
-    }
-    if (turma.dia_semana !== diaSemana) {
-      return res
-        .status(400)
-        .json({ error: `Essa turma acontece na(o) ${turma.dia_semana}, não hoje (${diaSemana}).` });
-    }
+    if (!ehCoProfessor) return res.status(403).json({ error: 'Essa turma não é sua.' });
+  }
+  if (turma.dia_semana !== diaSemana) {
+    return res
+      .status(400)
+      .json({ error: `Essa turma acontece na(o) ${turma.dia_semana}, não hoje (${diaSemana}).` });
+  }
 
-    const [[existente]] = await pool.query(
-      'SELECT id, hora_entrada FROM pontos WHERE id_professor = ? AND id_atividade = ? AND data = ?',
-      [idProfessor, id_atividade, data],
-    );
-    if (existente?.hora_entrada) {
-      return res.status(409).json({ error: 'Você já bateu ponto de entrada nessa aula hoje.' });
-    }
+  const [[existente]] = await pool.query(
+    'SELECT id, hora_entrada FROM pontos WHERE id_professor = ? AND id_atividade = ? AND data = ?',
+    [idProfessor, id_atividade, data],
+  );
+  if (existente?.hora_entrada) {
+    return res.status(409).json({ error: 'Você já bateu ponto de entrada nessa aula hoje.' });
+  }
 
-    const pontoAberto = await buscarPontoAberto(idProfessor, data, req.id_instituicao);
-    if (pontoAberto) {
-      return res.status(409).json({
-        error: `Você já tem um registro em aberto em "${pontoAberto.nome}" — registre a saída antes de bater outro.`,
-      });
-    }
+  const pontoAberto = await buscarPontoAberto(idProfessor, data, req.id_instituicao);
+  if (pontoAberto) {
+    return res.status(409).json({
+      error: `Você já tem um registro em aberto em "${pontoAberto.nome}" — registre a saída antes de bater outro.`,
+    });
+  }
 
-    const agora = agoraBrasilia();
-    if (existente) {
-      await pool.query('UPDATE pontos SET hora_entrada = ? WHERE id = ?', [agora, existente.id]);
-      return res.json({ message: 'Entrada registrada.', id: existente.id });
-    }
-    const [result] = await pool.query(
-      'INSERT INTO pontos (id_instituicao, id_professor, id_atividade, data, hora_entrada) VALUES (?, ?, ?, ?, ?)',
-      [req.id_instituicao, idProfessor, id_atividade, data, agora],
-    );
-    res.status(201).json({ message: 'Entrada registrada.', id: result.insertId });
-  }),
-);
+  const agora = agoraBrasilia();
+  if (existente) {
+    await pool.query('UPDATE pontos SET hora_entrada = ? WHERE id = ?', [agora, existente.id]);
+    return res.json({ message: 'Entrada registrada.', id: existente.id });
+  }
+  const [result] = await pool.query(
+    'INSERT INTO pontos (id_instituicao, id_professor, id_atividade, data, hora_entrada) VALUES (?, ?, ?, ?, ?)',
+    [req.id_instituicao, idProfessor, id_atividade, data, agora],
+  );
+  res.status(201).json({ message: 'Entrada registrada.', id: result.insertId });
+});
 
 // Registrar saída — a linha já precisa existir (hoje) com entrada e sem saída.
-router.post(
-  '/saida',
-  exigir('editar'),
-  asyncHandler(async (req, res) => {
-    const idProfessor = exigirProfessor(req, res);
-    if (!idProfessor) return;
+router.post('/saida', exigir('editar'), async (req, res) => {
+  const idProfessor = exigirProfessor(req, res);
+  if (!idProfessor) return;
 
-    const { id_atividade } = req.body;
-    if (!id_atividade) return res.status(400).json({ error: 'Informe id_atividade.' });
+  const { id_atividade } = req.body;
+  if (!id_atividade) return res.status(400).json({ error: 'Informe id_atividade.' });
 
-    const data = hojeBrasilia();
-    const [[ponto]] = await pool.query(
-      'SELECT id, hora_entrada, hora_saida FROM pontos WHERE id_professor = ? AND id_atividade = ? AND data = ? AND id_instituicao = ?',
-      [idProfessor, id_atividade, data, req.id_instituicao],
-    );
-    if (!ponto || !ponto.hora_entrada)
-      return res.status(400).json({ error: 'Registre a entrada primeiro.' });
-    if (ponto.hora_saida)
-      return res.status(409).json({ error: 'Você já registrou a saída dessa aula.' });
+  const data = hojeBrasilia();
+  const [[ponto]] = await pool.query(
+    'SELECT id, hora_entrada, hora_saida FROM pontos WHERE id_professor = ? AND id_atividade = ? AND data = ? AND id_instituicao = ?',
+    [idProfessor, id_atividade, data, req.id_instituicao],
+  );
+  if (!ponto || !ponto.hora_entrada)
+    return res.status(400).json({ error: 'Registre a entrada primeiro.' });
+  if (ponto.hora_saida)
+    return res.status(409).json({ error: 'Você já registrou a saída dessa aula.' });
 
-    await pool.query('UPDATE pontos SET hora_saida = ? WHERE id = ?', [agoraBrasilia(), ponto.id]);
-    res.json({ message: 'Saída registrada.', id: ponto.id });
-  }),
-);
+  await pool.query('UPDATE pontos SET hora_saida = ? WHERE id = ?', [agoraBrasilia(), ponto.id]);
+  res.json({ message: 'Saída registrada.', id: ponto.id });
+});
 
 // Bater ponto de entrada numa atividade INTERNA (Planejamento, Reuniões,
 // Monitorias, Ensaios, Outros — cadastradas por coordenador em
@@ -494,128 +469,112 @@ router.post(
 // aceita um tipo de uma área onde esse professor já deu aula alguma vez
 // (mesmo filtro de GET /turmas). Grava só id_tipo_interno (id_atividade fica
 // NULL) — nunca as duas colunas preenchidas.
-router.post(
-  '/bater-interno',
-  exigir('criar'),
-  asyncHandler(async (req, res) => {
-    const idProfessor = exigirProfessor(req, res);
-    if (!idProfessor) return;
+router.post('/bater-interno', exigir('criar'), async (req, res) => {
+  const idProfessor = exigirProfessor(req, res);
+  if (!idProfessor) return;
 
-    const { id_tipo_interno } = req.body;
-    if (!id_tipo_interno) return res.status(400).json({ error: 'Informe id_tipo_interno.' });
+  const { id_tipo_interno } = req.body;
+  if (!id_tipo_interno) return res.status(400).json({ error: 'Informe id_tipo_interno.' });
 
-    const [[tipo]] = await pool.query(
-      `SELECT t.id FROM tipos_ponto_interno t
+  const [[tipo]] = await pool.query(
+    `SELECT t.id FROM tipos_ponto_interno t
      WHERE t.id = ? AND t.id_instituicao = ? AND t.ativo = 1
        AND t.area IN (
          SELECT DISTINCT area FROM atividades atv
          WHERE id_instituicao = ? AND (atv.idprofessor = ? OR atv.idatividades IN (SELECT idatividades FROM atividade_professores WHERE idprofessor = ?))
        )`,
-      [id_tipo_interno, req.id_instituicao, req.id_instituicao, idProfessor, idProfessor],
-    );
-    if (!tipo)
-      return res.status(403).json({ error: 'Você não tem acesso a esse tipo de atividade.' });
+    [id_tipo_interno, req.id_instituicao, req.id_instituicao, idProfessor, idProfessor],
+  );
+  if (!tipo)
+    return res.status(403).json({ error: 'Você não tem acesso a esse tipo de atividade.' });
 
-    const data = hojeBrasilia();
+  const data = hojeBrasilia();
 
-    const pontoAberto = await buscarPontoAberto(idProfessor, data, req.id_instituicao);
-    if (pontoAberto) {
-      return res.status(409).json({
-        error: `Você já tem um registro em aberto em "${pontoAberto.nome}" — registre a saída antes de bater outro.`,
-      });
-    }
+  const pontoAberto = await buscarPontoAberto(idProfessor, data, req.id_instituicao);
+  if (pontoAberto) {
+    return res.status(409).json({
+      error: `Você já tem um registro em aberto em "${pontoAberto.nome}" — registre a saída antes de bater outro.`,
+    });
+  }
 
-    // Sempre cria uma linha NOVA (ao contrário de turma) — atividade interna
-    // pode ser batida várias vezes no mesmo dia (manhã e tarde, por exemplo),
-    // então reaproveitar uma linha já encerrada hoje apagaria aquela sessão
-    // anterior. Só é seguro porque a checagem de ponto aberto acima já garante
-    // que não existe nenhuma sessão pendurada (dessa ou de outra atividade) na
-    // hora de abrir uma nova.
-    const [result] = await pool.query(
-      'INSERT INTO pontos (id_instituicao, id_professor, id_tipo_interno, data, hora_entrada) VALUES (?, ?, ?, ?, ?)',
-      [req.id_instituicao, idProfessor, id_tipo_interno, data, agoraBrasilia()],
-    );
-    res.status(201).json({ message: 'Entrada registrada.', id: result.insertId });
-  }),
-);
+  // Sempre cria uma linha NOVA (ao contrário de turma) — atividade interna
+  // pode ser batida várias vezes no mesmo dia (manhã e tarde, por exemplo),
+  // então reaproveitar uma linha já encerrada hoje apagaria aquela sessão
+  // anterior. Só é seguro porque a checagem de ponto aberto acima já garante
+  // que não existe nenhuma sessão pendurada (dessa ou de outra atividade) na
+  // hora de abrir uma nova.
+  const [result] = await pool.query(
+    'INSERT INTO pontos (id_instituicao, id_professor, id_tipo_interno, data, hora_entrada) VALUES (?, ?, ?, ?, ?)',
+    [req.id_instituicao, idProfessor, id_tipo_interno, data, agoraBrasilia()],
+  );
+  res.status(201).json({ message: 'Entrada registrada.', id: result.insertId });
+});
 
 // Registrar saída de atividade interna — pega a sessão em ABERTO de hoje
 // (pode haver outras já encerradas mais cedo no mesmo dia, ver /bater-interno
 // acima — por isso o filtro `hora_saida IS NULL` é essencial aqui, não é só
 // estilo: sem ele a busca poderia pegar uma sessão antiga já fechada em vez
 // da que está rodando agora).
-router.post(
-  '/saida-interno',
-  exigir('editar'),
-  asyncHandler(async (req, res) => {
-    const idProfessor = exigirProfessor(req, res);
-    if (!idProfessor) return;
+router.post('/saida-interno', exigir('editar'), async (req, res) => {
+  const idProfessor = exigirProfessor(req, res);
+  if (!idProfessor) return;
 
-    const { id_tipo_interno } = req.body;
-    if (!id_tipo_interno) return res.status(400).json({ error: 'Informe id_tipo_interno.' });
+  const { id_tipo_interno } = req.body;
+  if (!id_tipo_interno) return res.status(400).json({ error: 'Informe id_tipo_interno.' });
 
-    const data = hojeBrasilia();
-    const [[ponto]] = await pool.query(
-      'SELECT id FROM pontos WHERE id_professor = ? AND id_tipo_interno = ? AND data = ? AND id_instituicao = ? AND hora_entrada IS NOT NULL AND hora_saida IS NULL ORDER BY hora_entrada DESC LIMIT 1',
-      [idProfessor, id_tipo_interno, data, req.id_instituicao],
-    );
-    if (!ponto) return res.status(400).json({ error: 'Registre a entrada primeiro.' });
+  const data = hojeBrasilia();
+  const [[ponto]] = await pool.query(
+    'SELECT id FROM pontos WHERE id_professor = ? AND id_tipo_interno = ? AND data = ? AND id_instituicao = ? AND hora_entrada IS NOT NULL AND hora_saida IS NULL ORDER BY hora_entrada DESC LIMIT 1',
+    [idProfessor, id_tipo_interno, data, req.id_instituicao],
+  );
+  if (!ponto) return res.status(400).json({ error: 'Registre a entrada primeiro.' });
 
-    await pool.query('UPDATE pontos SET hora_saida = ? WHERE id = ?', [agoraBrasilia(), ponto.id]);
-    res.json({ message: 'Saída registrada.', id: ponto.id });
-  }),
-);
+  await pool.query('UPDATE pontos SET hora_saida = ? WHERE id = ?', [agoraBrasilia(), ponto.id]);
+  res.json({ message: 'Saída registrada.', id: ponto.id });
+});
 
 // Corrigir horários manualmente — só coordenador (geral ou da área dessa
 // turma) ou master (ver podeEditarPonto).
-router.put(
-  '/:id',
-  exigir('editar'),
-  asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const [[ponto]] = await pool.query(
-      'SELECT id, id_professor, id_atividade, id_tipo_interno FROM pontos WHERE id = ? AND id_instituicao = ?',
-      [id, req.id_instituicao],
-    );
-    if (!ponto) return res.status(404).json({ error: 'Registro não encontrado.' });
+router.put('/:id', exigir('editar'), async (req, res) => {
+  const { id } = req.params;
+  const [[ponto]] = await pool.query(
+    'SELECT id, id_professor, id_atividade, id_tipo_interno FROM pontos WHERE id = ? AND id_instituicao = ?',
+    [id, req.id_instituicao],
+  );
+  if (!ponto) return res.status(404).json({ error: 'Registro não encontrado.' });
 
-    if (!(await podeEditarPonto(req, ponto))) {
-      return res.status(403).json({
-        error: 'Só o coordenador da área dessa turma (ou master) pode corrigir esse registro.',
-      });
-    }
+  if (!(await podeEditarPonto(req, ponto))) {
+    return res.status(403).json({
+      error: 'Só o coordenador da área dessa turma (ou master) pode corrigir esse registro.',
+    });
+  }
 
-    const { hora_entrada, hora_saida } = req.body;
-    await pool.query('UPDATE pontos SET hora_entrada = ?, hora_saida = ? WHERE id = ?', [
-      hora_entrada || null,
-      hora_saida || null,
-      id,
-    ]);
-    res.json({ message: 'Registro atualizado.' });
-  }),
-);
+  const { hora_entrada, hora_saida } = req.body;
+  await pool.query('UPDATE pontos SET hora_entrada = ?, hora_saida = ? WHERE id = ?', [
+    hora_entrada || null,
+    hora_saida || null,
+    id,
+  ]);
+  res.json({ message: 'Registro atualizado.' });
+});
 
 // Apagar um registro equivocado (mesma regra de posse do PUT).
-router.delete(
-  '/:id',
-  exigir('excluir'),
-  asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const [[ponto]] = await pool.query(
-      'SELECT id, id_professor, id_atividade, id_tipo_interno FROM pontos WHERE id = ? AND id_instituicao = ?',
-      [id, req.id_instituicao],
-    );
-    if (!ponto) return res.status(404).json({ error: 'Registro não encontrado.' });
+router.delete('/:id', exigir('excluir'), async (req, res) => {
+  const { id } = req.params;
+  const [[ponto]] = await pool.query(
+    'SELECT id, id_professor, id_atividade, id_tipo_interno FROM pontos WHERE id = ? AND id_instituicao = ?',
+    [id, req.id_instituicao],
+  );
+  if (!ponto) return res.status(404).json({ error: 'Registro não encontrado.' });
 
-    if (!(await podeEditarPonto(req, ponto))) {
-      return res.status(403).json({
-        error: 'Só o coordenador da área dessa turma (ou master) pode apagar esse registro.',
-      });
-    }
+  if (!(await podeEditarPonto(req, ponto))) {
+    return res.status(403).json({
+      error: 'Só o coordenador da área dessa turma (ou master) pode apagar esse registro.',
+    });
+  }
 
-    await pool.query('DELETE FROM pontos WHERE id = ?', [id]);
-    res.json({ message: 'Registro removido.' });
-  }),
-);
+  await pool.query('DELETE FROM pontos WHERE id = ?', [id]);
+  res.json({ message: 'Registro removido.' });
+});
 
 module.exports = router;
