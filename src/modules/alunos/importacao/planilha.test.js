@@ -4,13 +4,19 @@ const p = require('./planilha');
 const { montarMatriculas, separarConflitosDeTurno } = require('./matriculas');
 
 test('lerCorpo aceita lista, { alunos, atividades } e aluno único', () => {
-  assert.deepEqual(p.lerCorpo([{ nome: 'A' }]), { alunos: [{ nome: 'A' }], atividades: [] });
-  assert.deepEqual(p.lerCorpo({ alunos: [{ nome: 'A' }], atividades: [{ nome: 'T' }] }), {
-    alunos: [{ nome: 'A' }],
-    atividades: [{ nome: 'T' }],
-  });
-  assert.deepEqual(p.lerCorpo({ nome: 'A' }).alunos, [{ nome: 'A' }]);
+  assert.deepEqual(p.lerCorpo([{ nome: 'A' }]).alunos, [{ nome: 'A' }]);
+  const completo = p.lerCorpo({ alunos: [{ nome: 'A' }], atividades: [{ nome: 'T' }] });
+  assert.deepEqual(completo.atividades, [{ nome: 'T' }]);
+  assert.deepEqual(p.lerCorpo({ ALUNO: 'A' }).alunos, [{ ALUNO: 'A' }]);
   assert.throws(() => p.lerCorpo([]), { status: 400 });
+});
+
+test('lerCorpo ignora linhas sem nome e conta quantas foram', () => {
+  const r = p.lerCorpo([{ nome: 'Ana' }, { turno: 'Manhã' }, { nome: '   ' }]);
+  assert.deepEqual(r.alunos, [{ nome: 'Ana' }]);
+  assert.equal(r.recebidas, 3);
+  assert.equal(r.semNome, 2);
+  assert.throws(() => p.lerCorpo([{ turno: 'Manhã' }]), { status: 400 });
 });
 
 test('lerMatriculas encontra as colunas de dia + horário', () => {

@@ -22,7 +22,18 @@ function lerCorpo(body) {
     alunos = [body];
   }
   if (alunos.length === 0) throw new AppError('Nenhum dado enviado.', 400);
-  return { alunos, atividades };
+
+  // Linha sem nome não identifica ninguém (antes virava um aluno "undefined").
+  const comNome = alunos.filter((linha) => nomeOriginalDaLinha(linha) !== '');
+  if (comNome.length === 0) {
+    throw new AppError('Nenhuma linha da planilha tem o nome do aluno.', 400);
+  }
+  return {
+    alunos: comNome,
+    atividades,
+    recebidas: alunos.length,
+    semNome: alunos.length - comNome.length,
+  };
 }
 
 // A planilha já usou os cabeçalhos "nome", "ALUNO" e "Aluno".

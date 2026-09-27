@@ -156,7 +156,6 @@ async function importar(db, alunos, atividades, idInstituicao) {
   );
 
   return {
-    total_recebido: alunos.length,
     alunos_afetados: alunosAfetados,
     matriculas_afetadas: matriculasAfetadas,
     status_explicitos_aplicados: statusExplicitos.length,
@@ -178,14 +177,14 @@ async function importar(db, alunos, atividades, idInstituicao) {
 }
 
 async function importarPlanilha(body, idInstituicao) {
-  const { alunos, atividades } = planilha.lerCorpo(body);
+  const { alunos, atividades, recebidas, semNome } = planilha.lerCorpo(body);
 
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
     const resumo = await importar(connection, alunos, atividades, idInstituicao);
     await connection.commit();
-    return resumo;
+    return { total_recebido: recebidas, linhas_sem_nome_ignoradas: semNome, ...resumo };
   } catch (err) {
     console.error('Erro no upsert-bulk:', err);
     await connection.rollback();
