@@ -35,6 +35,18 @@ async function exigirDiaLetivo(data, idInstituicao, erro) {
   }
 }
 
+// Chamada só existe para hoje ou dias que já passaram. Sem essa trava, um
+// aparelho com a data errada (ou o seletor de data do celular, que ignora o
+// `max`) gravava presença em dias que ainda não aconteceram, e ela aparecia
+// já marcada quando o dia chegasse. "Hoje" é o de Brasília, nunca o do aparelho.
+function exigirDataNaoFutura(data) {
+  if (String(data).slice(0, 10) > hojeBrasil()) {
+    throw new AppError('Não é possível registrar chamada de um dia que ainda não aconteceu.', 400, {
+      isDataFutura: true,
+    });
+  }
+}
+
 // Filtro por data é opcional (`data` exata, ou `dataInicio`+`dataFim`) — sem
 // nenhum, devolve o histórico inteiro. A Chamada faz poll a cada 15s só do dia
 // atual, então nunca deve chamar sem filtro.
@@ -48,6 +60,7 @@ function listar(filtros, idInstituicao) {
 // Sem `periodo` (chamada antiga/turno não mapeado) grava NULL, como antes da
 // coluna existir.
 async function salvarChamada({ data, periodo, chamadas }, idInstituicao) {
+  exigirDataNaoFutura(data);
   await exigirDiaLetivo(data, idInstituicao, 'Não é possível registrar presença neste dia');
 
   return emTransacao(async (db) => {
@@ -99,6 +112,7 @@ async function registrarAdicaoManual({ alunoId, data, turno, transporte }, idIns
   if (!alunoId || !data || !turno) {
     throw new AppError('aluno_id, data e turno são obrigatórios.', 400);
   }
+  exigirDataNaoFutura(data);
 
   const aluno = await model.buscarAluno(alunoId, idInstituicao);
   if (!aluno) throw new AppError('Aluno não encontrado.', 404);
@@ -168,6 +182,8 @@ async function adicoesManuais(mesPedido, idInstituicao) {
 // 'manha'/'tarde' um registro antigo sem período conta como "já registrado";
 // pra 'noite' nunca (ver condicaoPeriodo em presenca.model.js).
 async function finalizarTurno(data, turno, idInstituicao) {
+  // Finalizar um dia futuro lançaria falta para todos os esperados nele.
+  exigirDataNaoFutura(data);
   await exigirDiaLetivo(data, idInstituicao, 'Não é possível finalizar chamada neste dia');
 
   const esperados = await model.idsEsperados(
