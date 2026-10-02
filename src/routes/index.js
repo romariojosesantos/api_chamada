@@ -22,19 +22,13 @@ router.use('/cron/saude-banco', require('../jobs/saude-banco'));
 
 // 2. Globais (login, sem instituição)
 // master consulta alunos de qualquer instituição
-router.use(
-  '/historico-aluno',
-  authMiddleware,
-  require('../modules/alunos/historico/historico.routes'),
+router.use('/historico-aluno', authMiddleware, require('../modules/alunos/historico/historico.routes'),
 );
 // login e perfil master checados dentro dos próprios roteadores
 router.use('/permissoes', require('../modules/permissoes/permissoes.routes'));
 router.use('/perfis-customizados', require('../modules/permissoes/perfis-customizados.routes'));
 router.use('/areas', require('../modules/areas/areas.routes')); // nomes das áreas valem para o sistema todo
-router.use(
-  '/estatisticas-comparativas',
-  authMiddleware,
-  require('../modules/relatorios/comparativo.routes'),
+router.use('/estatisticas-comparativas', authMiddleware, require('../modules/relatorios/comparativo.routes'),
 );
 router.use('/db-health', authMiddleware, require('../modules/sistema/db-health.routes'));
 // Telas do aluno: o token de aluno já traz a instituição.
@@ -62,10 +56,7 @@ router.use('/pontos-embarque', require('../modules/pontos-embarque/pontos-embarq
 router.use('/contatos-emergencia', require('../modules/alunos/contatos/contatos.routes').router);
 router.use('/dias-sem-aula', require('../modules/calendario/dias-sem-aula.routes'));
 router.use('/agenda-eventos', require('../modules/agenda/agenda.routes'));
-router.use(
-  '/justificativas-falta',
-  require('../modules/justificativas-falta/justificativas-falta.routes'),
-);
+router.use('/justificativas-falta', require('../modules/justificativas-falta/justificativas-falta.routes'),);
 router.use('/notas', require('../modules/notas/notas.routes'));
 router.use('/pontos', require('../modules/pontos/pontos.routes'));
 router.use('/tipos-ponto-interno', require('../modules/pontos/tipos-interno.routes'));
